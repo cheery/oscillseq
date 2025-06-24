@@ -111,6 +111,20 @@ class SequencerEditor:
     FPS = 30
     BARS_VISIBLE = 4
     STAVE_HEIGHT = 3 * 12
+    PATTERNS = [
+        "r",
+        "n",
+        "2nn",
+        "3nnn",
+        "22nn2nn",
+        "5nnnnn",
+        "32nn2nn2nn",
+        "7nnnnnnn",
+        "222nn2nn22nn2nn",
+        "33nnn3nnn3nnn",
+        "52nn2nn2nn2nn2nn",
+        "bnnnnnnnnnnn",
+    ]
 
     def calculate_lanes(self, offset=0):
         max_lanes = 1 + max(
@@ -2017,12 +2031,88 @@ class SequencerEditor:
                     color = colors[self.accidental + 2]
                 pygame.draw.rect(self.screen, color, rect, 1)
 
+        band1 = ["bb", "b", "n", "s", "ss"]
+        band2 = ["draw", "r", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11"]
+        px = 0
+        py = self.SCREEN_HEIGHT - 64
+        for i, text in enumerate(band1):
+            selected = (self.accidental == i-2)
+            rect = pygame.Rect(px, py, 32, 32)
+            pygame.draw.rect(self.screen, (100, 100 + 50 * selected, 100), rect, 0)
+            pygame.draw.rect(self.screen, (200, 200, 200), rect, 1)
+            text = self.font.render(text, True, (200, 200, 200))
+            self.screen.blit(text, (px + 16 - text.get_width()/2, py + 16 - text.get_height()/2))
+            px += 32
+        px = 0
+        py = self.SCREEN_HEIGHT - 32
+        for i, text in enumerate(band2):
+            if i == 0:
+                selected = (self.note_tool == "draw")
+            else:
+                selected = (self.note_tool == "split" and self.pattern == self.PATTERNS[i-1])
+            rect = pygame.Rect(px, py, 32, 32)
+            pygame.draw.rect(self.screen, (100, 100 + 50 * selected, 100), rect, 0)
+            pygame.draw.rect(self.screen, (200, 200, 200), rect, 1)
+            text = self.font.render(text, True, (200, 200, 200))
+            self.screen.blit(text, (px + 16 - text.get_width()/2, py + 16 - text.get_height()/2))
+            px += 32
+        px = self.SCREEN_WIDTH / 2
+        py = self.SCREEN_HEIGHT - 32
+        band3 = ["r -> n"]
+        for i, text in enumerate(band3):
+            rect = pygame.Rect(px, py, 64, 32)
+            pygame.draw.rect(self.screen, (100, 100 + 50 * selected, 100), rect, 0)
+            pygame.draw.rect(self.screen, (200, 200, 200), rect, 1)
+            text = self.font.render(text, True, (200, 200, 200))
+            self.screen.blit(text, (px + 32 - text.get_width()/2, py + 16 - text.get_height()/2))
+            px += 64
+
     def handle_note_editor_mouse(self, ev):
         w = (self.SCREEN_WIDTH - self.MARGIN) / self.BARS_VISIBLE
         setup = self.note_editor()
         if setup is None:
             return
         brush, df, graph = setup
+
+        if ev.type == pygame.MOUSEBUTTONUP and ev.pos[1] >= self.SCREEN_HEIGHT - 64:
+            return
+        band1 = ["bb", "b", "n", "s", "ss"]
+        band2 = ["draw", "r", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11"]
+        px = 0
+        py = self.SCREEN_HEIGHT - 64
+        for i, text in enumerate(band1):
+            rect = pygame.Rect(px, py, 32, 32)
+            if rect.collidepoint(ev.pos) and ev.type == pygame.MOUSEBUTTONDOWN:
+                acc = i-2
+                if self.accidental == acc:
+                    self.accidental = None
+                else:
+                    self.accidental = acc
+                return
+            px += 32
+        px = 0
+        py = self.SCREEN_HEIGHT - 32
+        for i, text in enumerate(band2):
+            rect = pygame.Rect(px, py, 32, 32)
+            if rect.collidepoint(ev.pos) and ev.type == pygame.MOUSEBUTTONDOWN:
+                if i == 0:
+                    self.note_tool = "draw"
+                else:
+                    self.note_tool = "split"
+                    self.pattern = self.PATTERNS[i-1]
+                return
+            px += 32
+        px = self.SCREEN_WIDTH / 2
+        py = self.SCREEN_HEIGHT - 32
+        band3 = ["r -> n"]
+        for i, text in enumerate(band3):
+            rect = pygame.Rect(px, py, 64, 32)
+            if rect.collidepoint(ev.pos) and ev.type == pygame.MOUSEBUTTONDOWN:
+                if i == 0:
+                    self.remove_rests()
+                return
+            px += 64
+
         x = self.MARGIN
         y = self.SCREEN_HEIGHT/4
         y += 3*brush.tree.depth + 23
@@ -2259,20 +2349,7 @@ class SequencerEditor:
                         "222nn2nn22nn2nn",
             ][n]
         elif ev.key == pygame.K_q:
-            setup = self.note_editor()
-            if setup is None:
-                return
-            brush, df, graph = setup
-            ix = 0
-            for leaf in brush.tree.leaves:
-                if leaf.label == "n":
-                    ix += 1
-                if leaf.label == "r":
-                    leaf.label = "n"
-                    for name, gen in brush.generators.items():
-                        if isinstance(gen, PolyGen):
-                            gen.argslists.insert(ix, [{}])
-                    ix += 1
+            self.remove_rests()
 
         elif ev.key == pygame.K_t:
             setup = self.note_editor()
@@ -2282,6 +2359,23 @@ class SequencerEditor:
             tree = measure.simplify(brush.tree.copy())
             if tree and tree.is_valid():
                 brush.tree = tree
+
+    def remove_rests(self):
+        setup = self.note_editor()
+        if setup is None:
+            return
+        brush, df, graph = setup
+        ix = 0
+        for leaf in brush.tree.leaves:
+            if leaf.label == "n":
+                ix += 1
+            if leaf.label == "r":
+                leaf.label = "n"
+                for name, gen in brush.generators.items():
+                    if isinstance(gen, PolyGen):
+                        gen.argslists.insert(ix, [{}])
+                ix += 1
+
 
     def modify_control_point(self, amount):
         cp = self.get_brush()
