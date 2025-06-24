@@ -1095,6 +1095,17 @@ class SequencerEditor:
             brush = self.get_brush()
             if isinstance(brush, ControlPoint):
                 brush.transition = not brush.transition
+            elif isinstance(brush, Clap):
+                brush.duration += 1
+                a = adjust_boundaries(self.doc)
+                self.bar_head -= a
+                self.bar_tail -= a
+                self.bar = min(self.bar_head, self.bar)
+                self.bar = max(self.bar_head - self.BARS_VISIBLE + 1, self.bar)
+        elif ev.key == pygame.K_MINUS:
+            brush = self.get_brush()
+            if isinstance(brush, Clap):
+                brush.duration = max(1, brush.duration-1)
         elif ev.key == pygame.K_j:
             self.modify_control_point(+1)
         elif ev.key == pygame.K_m:
