@@ -10,7 +10,7 @@ def read_desc(filename):
         spec = spec.strip()
         if ' ' in spec:
             rate, mode, elem, channel_count = spec.split(' ')
-            ty = bus(rate, mode, simple(elem), channel_count)
+            ty = bus(rate, mode, simple(elem), int(channel_count))
         else:
             ty = simple(spec)
         return name, ty
@@ -32,6 +32,10 @@ class bus:
         self.mode = mode # in/out/in-feedback
         self.elem = elem
         self.channel_count = channel_count
+
+    def sans_mode(self):
+        assert isinstance(self.elem, simple)
+        return f"{self.rate} {self.elem.to_text()} {self.channel_count}"
 
     def to_text(self):
         assert isinstance(self.elem, simple)

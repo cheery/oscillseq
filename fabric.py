@@ -2,6 +2,8 @@ from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from typing import List, Dict, Set, Optional, Callable, Tuple, Any, Union, DefaultDict
 from descriptors import simple, bus, read_desc
+from supriya import synthdef
+from supriya.ugens import In, Out
 import supriya
 import os
 import music
@@ -54,8 +56,13 @@ class Cell:
     pos : Tuple[int, int]
     params : Dict[str, Union[int, float, str, music.Pitch]]
 
+@dataclass
+class Relay:
+    i : int
+    o : int
+
 class Fabric:
-    def __init__(self, server, buses, cells, definitions_):
+    def __init__(self, server, cells, connections, definitions_):
         definitions = {}
         synthdefs = []
         for cell in cells:
@@ -66,22 +73,96 @@ class Fabric:
         server.add_synthdefs(*synthdefs)
         server.sync()
 
-        self.cells = topological_sort(cells, definitions)
+        W = []
+        R = ['output']
+        for cell in cells:
+            d = definitions[cell.definition]
+            R.extend(f"{cell.label}:{name}" for name in d.inputs)
+            W.extend(f"{cell.label}:{name}" for name in d.outputs)
+        E = connections
+        assignment, relays = bus_assignment(W,R,E)
+        cells = cells + [Relay(*ii) for ii in relays]
+        self.cells = topological_sort(cells, definitions, assignment)
+
+        self.bus_groups = []
+
+        def retrieve_type(name):
+            cell_label, param_name = name.split(':')
+            for cell in cells:
+                if cell.label == cell_label:
+                    d = definitions[cell.definition]
+                    for n, ty in d.desc:
+                        if n == param_name:
+                            return ty
+
+        def allocate_by_type(name):
+            bustype = retrieve_type(name)
+            bgroup = server.add_bus_group(bustype.rate, bustype.channel_count)
+            self.bus_groups.append(bgroup)
+            return bgroup
+
+        dummies = {}
+        def dummy_bus_by_type(name):
+            bustype = retrieve_type(name)
+            sm = bustype.sans_mode()
+            if sm not in dummies:
+                dummmies[sm] = server.add_bus_group(bustype.rate, bustype.channel_count)
+                self.bus_groups.append(dummies[sm])
+            return dummies[sm]
+
+        output_busi = assignment['output']
+        buses = {output_busi: 0}
+        for name, busi in assignment.items():
+            if ":" not in name:
+                continue
+            if busi not in buses and busi >= 0:
+                buses[busi] = allocate_by_type(name)
+
+        self.busmap = defaultdict(dict)
+        for name, busi in assignment.items():
+            if ":" not in name:
+                continue
+            cell_label, param_name = name.split(':')
+            if busi >= 0:
+                self.busmap[cell_label][param_name] = buses[busi]
+            else:
+                self.busmap[cell_label][param_name] = dummy_bus_by_type(name)
+
+        relaydefs = {}
+        def relay_synthdef(calculation_rate, count):
+            if (calculation_rate, count) not in relaydefs:
+                if calculation_rate == supriya.CalculationRate.AUDIO:
+                    in_fn = In.ar
+                    out_fn = Out.ar
+                elif calculation_rate == supriya.CalculationRate.CONTROL:
+                    in_fn = In.kr
+                    out_fn = Out.kr
+                @synthdef()
+                def relay_synth(input_bus, output_bus):
+                    out_fn(source=in_fn(bus=input_bus, channel_count=count))
+                server.add_synthdefs(relay_synth)
+                server.sync()
+                relaydefs[(calculation_rate, count)] = relay_synth
+            return relaydefs[(calculation_rate, count)]
+
         self.definitions = definitions
-        self.busmap = {label: server.add_bus_group(rate, count)
-                       for label, (rate, _, count) in buses.items()}
-        self.busmap['output'] = 0
         self.synths = {}
         self.root = server.add_group()
         for c in reversed(self.cells):
-            d = self.definitions[c.definition]
-            params = self.map_params(c.params)
-            if c.multi:
-                subgroup = self.root.add_group()
-                self.synths[c.label] = c, subgroup
+            if isinstance(c, Relay):
+                b = buses[c.i]
+                sd = relay_synthdef(b.calculation_rate, b.count)
+                self.root.add_synth(sd, input_bus=b, output_bus=buses[c.o])
             else:
-                synth = self.root.add_synth(d.synthdef, **params)
-                self.synths[c.label] = c, synth
+                d = self.definitions[c.definition]
+                params = self.map_params(c.params)
+                params.update(self.busmap[c.label])
+                if c.multi:
+                    subgroup = self.root.add_group()
+                    self.synths[c.label] = c, subgroup
+                else:
+                    synth = self.root.add_synth(d.synthdef, **params)
+                    self.synths[c.label] = c, synth
 
     def close(self):
         self.root.free()
@@ -91,8 +172,6 @@ class Fabric:
                 for n, v in params.items()}
 
     def map_param(self, param):
-        if isinstance(param, str):
-            return self.busmap[param]
         if isinstance(param, music.Pitch):
             return int(param)
         return param
@@ -104,34 +183,40 @@ class Fabric:
         c, g = self.synths[label]
         d = self.definitions[c.definition]
         params = self.map_params(c.params)
+        params.update(self.busmap[label])
         params.update(args)
         return g.add_synth(d.synthdef, **self.map_params(params))
 
-def topological_sort(cells: List[Cell], definitions: Dict[str, Definition]) -> List[Cell]:
+def topological_sort(cells, definitions, assignment):
     var_to_producers : DefaultDict[str, List[int]] = defaultdict(list)
     for idx, cell in enumerate(cells):
-        defn = definitions[cell.definition]
-        for out_param in defn.outputs:
-            if out_param not in cell.params:
-                continue
-            var_name = cell.params[out_param]
-            var_to_producers[var_name].append(idx)
+        if isinstance(cell, Relay):
+            var_to_producers[cell.o].append(idx)
+        else:
+            defn = definitions[cell.definition]
+            for out_param in defn.outputs:
+                if (a := assignment[f"{cell.label}:{out_param}"]) >= 0:
+                    var_to_producers[a].append(idx)
 
     num_cells = len(cells)
     adj : Dict[int, Set[int]] = {i: set() for i in range(num_cells)}
     indegree = [0] * num_cells
 
+    def mark(idx, a):
+        for producer_idx in var_to_producers.get(a, []):
+            if producer_idx != idx:
+                if idx not in adj[producer_idx]:
+                    adj[producer_idx].add(idx)
+                    indegree[idx] += 1
+
     for idx, cell in enumerate(cells):
-        defn = definitions[cell.definition]
-        for in_param in defn.inputs:
-            if in_param not in cell.params:
-                continue
-            var_name = cell.params[in_param]
-            for producer_idx in var_to_producers.get(var_name, []):
-                if producer_idx != idx:
-                    if idx not in adj[producer_idx]:
-                        adj[producer_idx].add(idx)
-                        indegree[idx] += 1
+        if isinstance(cell, Relay):
+            mark(idx, cell.i)
+        else:
+            defn = definitions[cell.definition]
+            for in_param in defn.inputs:
+                if (a := assignment[f"{cell.label}:{in_param}"]) >= 0:
+                    mark(idx, a)
 
     ready = deque(i for i, deg in enumerate(indegree) if deg == 0)
     sorted_order : List[Cell] = []
@@ -203,8 +288,8 @@ def bus_assignment(W, R, E):
     additional = []
     relays = []
 
-    DUMMY_W = set()
-    DUMMY_R = set()
+    W_DUMMY = set()
+    R_DUMMY = set()
 
     W_SET = set(W)
     R_SET = set(R)
@@ -214,7 +299,7 @@ def bus_assignment(W, R, E):
         ix    = [i for i, (U, V) in enumerate(bicliques) if u in U]
         group = [U for U, V in bicliques if u in U]
         if len(group) == 0:
-            DUMMY_W.add(u)
+            W_DUMMY.add(u)
         elif len(group) >= 2:
             NU = set.intersection(*group)
             for z, U in zip(ix, group):
@@ -228,7 +313,7 @@ def bus_assignment(W, R, E):
         ix    = [i for i, (U, V) in enumerate(bicliques) if v in V]
         group = [V for U, V in bicliques if v in V]
         if len(group) == 0:
-            DUMMY_R.add(v)
+            R_DUMMY.add(v)
         elif len(group) >= 2:
             NV = set.intersection(*group)
             for z, V in zip(ix, group):
@@ -237,15 +322,14 @@ def bus_assignment(W, R, E):
             additional.append((set(), NV))
             R_SET.difference_update(NV)
 
-    w_assignment = {}
-    r_assignment = {}
+    assignment = {}
     for i, (U, V) in enumerate(bicliques + additional):
-        w_assignment.update({u: i for u in U})
-        r_assignment.update({v: i for v in V})
+        assignment.update({u: i for u in U})
+        assignment.update({v: i for v in V})
     for u in W_DUMMY:
-        w_assignment[u] = -1
+        assignment[u] = -1
     for v in R_DUMMY:
-        r_assignment[v] = -1
-    return w_assignment, r_assignment, relays
+        assignment[v] = -1
+    return assignment, relays
 
 
