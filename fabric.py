@@ -71,7 +71,8 @@ class Fabric:
                 definitions[cell.definition] = d
                 synthdefs.append(d.synthdef)
         server.add_synthdefs(*synthdefs)
-        server.sync()
+        if not isinstance(server, supriya.Score):
+            server.sync()
 
         W = []
         R = ['output']
@@ -141,7 +142,8 @@ class Fabric:
                 def relay_synth(input_bus, output_bus):
                     out_fn(bus=output_bus, source=in_fn(bus=input_bus, channel_count=count))
                 server.add_synthdefs(relay_synth)
-                server.sync()
+                if not isinstance(server, supriya.Score):
+                    server.sync()
                 relaydefs[(calculation_rate, count)] = relay_synth
             return relaydefs[(calculation_rate, count)]
 

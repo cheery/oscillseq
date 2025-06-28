@@ -4,9 +4,9 @@ from model import Entity, ControlPoint, Key, Clip, ConstGen, PolyGen, Clap, Desc
 from pythonosc import udp_client, dispatcher, osc_server
 from typing import List, Dict, Optional, Callable, Tuple, Any
 from sequencer import Player, Sequencer, SequenceBuilder
+from fabric import Definitions, Cell, Fabric
 import bisect
 import collections
-import fabric
 import heapq
 import math
 import measure
@@ -98,10 +98,9 @@ class Editor:
         self.font = pygame.font.SysFont('Arial', 14)
         self.writing = False
 
-        self.definitions = fabric.Definitions(
+        self.definitions = Definitions(
             synthdef_directory = os.path.join(directory,"synthdefs"))
 
-        Cell = fabric.Cell
         self.cells = [
             Cell('m', True, 'musical', (500, 75), {
             }),
@@ -154,7 +153,7 @@ class Editor:
     def set_fabric(self):
         if self.transport_status < 2:
             self.set_online()
-            self.fabric = fabric.Fabric(
+            self.fabric = Fabric(
                 self.server, self.cells, self.connections, self.definitions)
             self.clavier = {}
         if self.transport_status > 2:
@@ -214,7 +213,35 @@ class Editor:
             elif ev.key == pygame.K_s:
                 self.doc.to_json_file(self.filename)
                 print("document saved!")
-            #elif ev.key == pygame.K_r:
+            elif ev.key == pygame.K_r:
+                View = type(self.view)
+                self.view.close()
+                self.view = None
+                self.set_offline()
+
+                sb = SequenceBuilder({})
+                sb.gate(1 / 4, 'm', 0, {'note': 80})
+                sb.gate(2 / 4, 'm', 0, {})
+                sb.gate(3 / 4, 'm', 1, {'note': 79})
+                sb.gate(4 / 4, 'm', 1, {})
+                sequence = sb.build()
+
+                score = supriya.Score(output_bus_channel_count=2)
+                clavier = {}
+                with score.at(0):
+                    fabric = Fabric(
+                        score, self.cells, self.connections, self.definitions)
+                for command in sequence.com:
+                    with score.at(command.time):
+                        command.send(clavier, fabric)
+                with score.at(sequence.t(2)):
+                    score.do_nothing()
+                supriya.render(score, output_file_path=self.record_path)
+                print("saved", self.record_path)
+
+                self.set_online()
+                self.change_view(View)
+
             #    if not os.path.exists(self.pngs_record_path):
             #        os.mkdir(self.pngs_record_path)
             #    FPS = 60
@@ -275,7 +302,8 @@ class Editor:
 
     def change_view(self, View):
         if not isinstance(self.view, View):
-            self.view.close()
+            if self.view is not None:
+                self.view.close()
             self.view = View(self)
 
 # "bool", "unipolar", "number", "pitch", "db", "dur"
