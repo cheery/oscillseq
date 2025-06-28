@@ -119,14 +119,34 @@ class Editor:
             brushes = [],
             duration = 1,
             labels = {},
-            descriptors = {
-                "tempo": Desc(kind="control", spec=[("value", "number")]),
-            },
             graphs = [
             ],
             drawfuncs = [
                 DrawFunc(0, "string", "tempo", {"value": "value"}),
             ],
+            # TODO: remove descriptors. Add cells, connections
+            cells = [
+                Cell('m', True, 'musical', (500, 75), {
+                }),
+                Cell('1', False, 'low_pass', (400, 300), {
+                    'frequency': 440,
+                }),
+                Cell('2', False, 'white_noise', (75, 200), {
+                }),
+                Cell('3', False, 'white_noise', (300, 500), {
+                    'amplitude': 0.001,
+                }),
+                Cell('4', False, 'test_signal', (75, 400), {
+                    'frequency': 110,
+                }),
+            ],
+            connections = set([
+                ('m:out', 'output'),
+                ('1:out', 'output'),
+                ('3:out', 'output'),
+                ('2:out', '1:source'),
+                ('4:out', 'output'),
+            ]),
         )
 
         if len(sys.argv) > 1:
@@ -146,29 +166,6 @@ class Editor:
         self.definitions = Definitions(
             synthdef_directory = os.path.join(directory,"synthdefs"))
 
-        self.cells = [
-            Cell('m', True, 'musical', (500, 75), {
-            }),
-            Cell('1', False, 'low_pass', (400, 300), {
-                'frequency': 440,
-            }),
-            Cell('2', False, 'white_noise', (75, 200), {
-            }),
-            Cell('3', False, 'white_noise', (300, 500), {
-                'amplitude': 0.001,
-            }),
-            Cell('4', False, 'test_signal', (75, 400), {
-                'frequency': 110,
-            }),
-        ]
-        self.connections = set([
-            ('m:out', 'output'),
-            ('1:out', 'output'),
-            ('3:out', 'output'),
-            ('2:out', '1:source'),
-            ('4:out', 'output'),
-        ])
-
         self.transport_status = 0
         self.server = None
         self.fabric = None
@@ -184,11 +181,12 @@ class Editor:
         if self.transport_status != 3:
             self.group_ids.clear()
         sb = SequenceBuilder(self.group_ids)
+        #self.doc.construct(sb, 0, ())
         sb.gate(1 / 4, 'm', 0, {'note': 80})
         sb.gate(2 / 4, 'm', 0, {})
         sb.gate(3 / 4, 'm', 1, {'note': 79})
         sb.gate(4 / 4, 'm', 1, {})
-        self.sequence = sb.build(1)
+        self.sequence = sb.build(2)
 
         self.view = DummyView(self)
 
@@ -214,7 +212,7 @@ class Editor:
         if self.transport_status < 2:
             self.set_online()
             self.fabric = Fabric(
-                self.server, self.cells, self.connections, self.definitions)
+                self.server, self.doc.cells, self.doc.connections, self.definitions)
             self.clavier = {}
         if self.transport_status > 2:
             self.player.close()
@@ -329,7 +327,7 @@ class Editor:
         score = supriya.Score(output_bus_channel_count=2)
         clavier = {}
         with score.at(0):
-            fabric = Fabric(score, self.cells, self.connections, self.definitions)
+            fabric = Fabric(score, self.doc.cells, self.doc.connections, self.definitions)
         for command in sequence.com:
             with score.at(command.time):
                 command.send(clavier, fabric)

@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import List, Dict, Optional, Callable, Tuple, Any
+from typing import List, Dict, Optional, Callable, Tuple, Any, Set, Union
 import measure
 import music
 import json
@@ -314,14 +314,46 @@ class PitchLane:
             margin_below = obj["margin"][1],
         )
 
+@dataclass
+class Cell:
+    label : str
+    multi : bool
+    synth : str
+    pos : Tuple[int, int]
+    params : Dict[str, Union[int, float, music.Pitch]]
+
+    # TODO: remove
+    @property
+    def definition(self):
+        return self.synth
+
+    def to_json(self):
+        return {
+            'label': self.label,
+            'multi': self.multi,
+            'synth': self.synth,
+            'pos': self.pos,
+            'params': {name: value_to_json(a) for name,a in self.params.items()}
+        }
+
+    @classmethod
+    def from_json(cls, obj):
+        return cls(
+            label = obj['label'],
+            multi = obj['multi'],
+            synth = obj['synth'],
+            pos = tuple(obj['pos']),
+            params = {name: json_to_value(o) for name, o in obj['params'].items()})
+
 @dataclass(eq=False)
 class Document:
     brushes : List[Entity]
     duration : int
     labels : Dict[str, Brush]
-    descriptors : Dict[str, Desc]
     graphs : List[PitchLane]
     drawfuncs: List[DrawFunc]
+    cells : List[Brush]
+    connections : Set[Tuple[str, str]]
 
     def intro(self, brush):
         if brush.label in self.labels and brush == self.labels[brush.label]:
@@ -360,10 +392,10 @@ class Document:
         }
         return {
             "brushes": brushes,
-            "descriptors": {name: d.to_json()
-                            for name, d in self.descriptors.items()},
             "graphs": [r.to_json() for r in self.graphs],
             "drawfuncs": [r.to_json() for r in self.drawfuncs],
+            "cells": [c.to_json() for c in self.cells],
+            "connections": list(self.connections),
         }
 
     @classmethod
@@ -373,14 +405,17 @@ class Document:
             if isinstance(brush, Clip):
                 brush.brushes = [Entity.from_json(brushes, e) for e in brush.brushes]
         root = brushes.pop("")
+        cells = [Cell.from_json(o) for o in obj.get("cells", [])]
+        for cell in cells:
+            brushes[cell.label] = cell
         return cls(
             brushes = root.brushes,
             duration = root.duration,
             labels = brushes,
-            descriptors = {name: Desc.from_json(o)
-                           for name, o in obj["descriptors"].items()},
             graphs = [PitchLane.from_json(o) for o in obj["graphs"]],
             drawfuncs = [DrawFunc.from_json(o) for o in obj["drawfuncs"]],
+            cells = cells,
+            connections = set(tuple(o) for o in obj.get("connections", [])),
         )
 
     def to_json_str(self):

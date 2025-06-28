@@ -4,6 +4,7 @@ from typing import List, Dict, Set, Optional, Callable, Tuple, Any, Union, Defau
 from descriptors import simple, bus, read_desc
 from supriya import synthdef
 from supriya.ugens import In, Out
+from model import Cell
 import supriya
 import os
 import music
@@ -47,14 +48,6 @@ class Definition:
         for name, spec in self.desc:
             if isinstance(spec, bus) and spec.mode == 'out':
                 yield name
-
-@dataclass
-class Cell:
-    label : str
-    multi : bool
-    definition : str
-    pos : Tuple[int, int]
-    params : Dict[str, Union[int, float, str, music.Pitch]]
 
 @dataclass
 class Relay:
