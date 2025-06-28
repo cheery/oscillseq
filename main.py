@@ -246,8 +246,12 @@ class Editor:
             #        self.transport.record_path = self.record_path
             #        self.transport.duration = self.transport.tempo.bar_to_time(self.doc.duration)
             #        self.transport.cmd.put("play")
+            elif ev.key == pygame.K_SPACE and not self.writing:
+                self.set_online()
         elif ev.key == pygame.K_SPACE and not self.writing:
-            if self.transport_status < 3:
+            if self.transport_status < 2:
+                self.set_fabric()
+            elif self.transport_status < 3:
                 self.group_ids = {}
                 sb = SequenceBuilder(self.group_ids)
                 sb.gate(1 / 4, 'm', 0, {'note': 80})
@@ -262,7 +266,10 @@ class Editor:
                         loop_point=sequence.t(1),
                         end_point=sequence.t(1)))
             elif self.transport_status == 3:
-                self.set_online()
+                self.set_fabric()
+                for synth in self.clavier.values():
+                    synth.set(gate=0)
+                self.clavier.clear()
         else:
             self.view.handle_keydown(ev)
 
