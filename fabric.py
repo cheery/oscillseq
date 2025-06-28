@@ -150,7 +150,7 @@ class Fabric:
         self.root = server.add_group()
         for c in reversed(self.cells):
             if isinstance(c, Relay):
-                print("INSERT RELAY", {'in': int(buses[c.i]), 'out': int(buses[c.o])})
+                #print("INSERT RELAY", {'in': int(buses[c.i]), 'out': int(buses[c.o])})
                 b = buses[c.i]
                 if b == 0:
                     sd = relay_synthdef(supriya.CalculationRate.AUDIO, 2)
@@ -159,8 +159,8 @@ class Fabric:
                 self.root.add_synth(sd, input_bus=b, output_bus=buses[c.o])
             else:
                 d = self.definitions[c.definition]
-                print("INSERT SYNTH GROUP/SYNTH", c.label)
-                print("", name, {m: int(v) for m, v in self.busmap[c.label].items()})
+                #print("INSERT SYNTH GROUP/SYNTH", c.label)
+                #print("", name, {m: int(v) for m, v in self.busmap[c.label].items()})
                 if c.multi:
                     subgroup = self.root.add_group()
                     self.synths[c.label] = c, subgroup
@@ -340,13 +340,13 @@ def bus_assignment(W, R, E):
     for v in R_DUMMY:
         assignment[v] = -1
 
-    for U,V in bicliques:
-        print((U, V))
-    print('---')
-    for U,V in additional:
-        print((U, V))
-    print('---')
-    print(relays)
+    #for U,V in bicliques:
+    #    print((U, V))
+    #print('---')
+    #for U,V in additional:
+    #    print((U, V))
+    #print('---')
+    #print(relays)
     return assignment, relays
 
 

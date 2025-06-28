@@ -1,20 +1,275 @@
-import sys
-import pygame
-import math
-import os
-from fractions import Fraction
-from pythonosc import udp_client, dispatcher, osc_server
 from dataclasses import dataclass, field
+from fractions import Fraction
+from model import Entity, ControlPoint, Key, Clip, ConstGen, PolyGen, Clap, Desc, DrawFunc, PitchLane, Document, json_to_brush
+from pythonosc import udp_client, dispatcher, osc_server
 from typing import List, Dict, Optional, Callable, Tuple, Any
-import osc_control
-import music
-import measure
-import heapq
+from sequencer import Player, Sequencer, SequenceBuilder
 import bisect
 import collections
-from model import Entity, ControlPoint, Key, Clip, ConstGen, PolyGen, Clap, Desc, DrawFunc, PitchLane, Document, json_to_brush
+import fabric
+import heapq
+import math
+import measure
+import music
+import os
+import pygame
+import supriya
+import sys
+import spectroscope
 
-import subprocess
+class DummyView:
+    def __init__(self, editor):
+        self.editor = editor
+        self.tool = DummyTool(self)
+        self.s1 = editor.make_spectroscope(bus=0)
+        self.s2 = editor.make_spectroscope(bus=1)
+
+    def draw(self, screen):
+        font = self.editor.font
+        text = font.render("HELLO", True, (200,200,200))
+        screen.blit(text, (0, 0))
+
+        self.s1.refresh()
+        self.s2.refresh()
+        self.s1.draw(screen, font, (255, 0, 0), editor.SCREEN_WIDTH/2, 50)
+        self.s2.draw(screen, font, (0, 255, 0), editor.SCREEN_WIDTH/2, 350)
+
+    def handle_keydown(self, ev):
+        pass
+
+    def close(self):
+        self.s1.close()
+        self.s2.close()
+
+class DummyTool:
+    def __init__(self, view):
+        self.view = view
+
+    def draw(self, screen):
+        pos = pygame.mouse.get_pos()
+        text = self.view.editor.font.render("DUMMY", True, (200,200,200))
+        screen.blit(text, pos)
+
+    def handle_mousebuttondown(self, ev):
+        pass
+
+    def handle_mousebuttonup(self, ev):
+        pass
+
+    def handle_mousemotion(self, ev):
+        pass
+
+class Editor:
+    SCREEN_WIDTH = 1200
+    SCREEN_HEIGHT = 600
+    FPS = 30
+
+    def __init__(self):
+        pygame.init()
+        self.screen = pygame.display.set_mode((self.SCREEN_WIDTH, self.SCREEN_HEIGHT))
+        pygame.display.set_caption("oscillseq")
+        self.clock = pygame.time.Clock()
+
+        self.doc = Document(
+            brushes = [],
+            duration = 1,
+            labels = {},
+            descriptors = {
+                "tempo": Desc(kind="control", spec=[("value", "number")]),
+            },
+            graphs = [
+            ],
+            drawfuncs = [
+                DrawFunc(0, "string", "tempo", {"value": "value"}),
+            ],
+        )
+
+        if len(sys.argv) > 1:
+            self.filename = sys.argv[1]
+            if os.path.exists(self.filename):
+                self.doc = Document.from_json_file(self.filename)
+        else:
+            self.filename = "unnamed.seq.json"
+        self.pngs_record_path = os.path.abspath(os.path.splitext(self.filename)[0] + ".pngs")
+        self.record_path = os.path.abspath(os.path.splitext(self.filename)[0] + ".wav")
+
+        directory = os.path.dirname(os.path.abspath(self.filename))
+
+        self.font = pygame.font.SysFont('Arial', 14)
+        self.writing = False
+
+        self.definitions = fabric.Definitions(
+            synthdef_directory = os.path.join(directory,"synthdefs"))
+
+        Cell = fabric.Cell
+        self.cells = [
+            Cell('m', True, 'musical', (500, 75), {
+            }),
+            Cell('1', False, 'low_pass', (400, 300), {
+                'frequency': 440,
+            }),
+            Cell('2', False, 'white_noise', (75, 200), {
+            }),
+            Cell('3', False, 'white_noise', (300, 500), {
+                'amplitude': 0.001,
+            }),
+            Cell('4', False, 'test_signal', (75, 400), {
+                'frequency': 110,
+            }),
+        ]
+        self.connections = set([
+            ('m:out', 'output'),
+            ('1:out', 'output'),
+            ('3:out', 'output'),
+            ('2:out', '1:source'),
+            ('4:out', 'output'),
+        ])
+
+        self.transport_status = 0
+        self.server = None
+        self.fabric = None
+        self.clavier = None
+        self.player = None
+        self.set_online()
+        self.view = DummyView(self)
+
+    def set_offline(self):
+        if self.transport_status > 0:
+            self.set_online()
+            self.server.quit()
+            self.server = None
+        self.transport_status = 0
+
+    def set_online(self):
+        if self.transport_status < 1:
+            self.server = supriya.Server().boot()
+            self.make_spectroscope = spectroscope.prepare(self.server)
+        if self.transport_status > 1:
+            self.set_fabric()
+            self.fabric.close()
+            self.fabric = None
+            self.clavier = None
+        self.transport_status = 1
+
+    def set_fabric(self):
+        if self.transport_status < 2:
+            self.set_online()
+            self.fabric = fabric.Fabric(
+                self.server, self.cells, self.connections, self.definitions)
+            self.clavier = {}
+        if self.transport_status > 2:
+            self.player.close()
+            self.player = None
+        self.transport_status = 2
+
+    def set_playing(self, sequencer):
+        if self.transport_status < 3:
+            self.set_fabric()
+        if self.player is not None:
+            self.player.close()
+        self.player = Player(self.clavier, self.fabric, sequencer)
+        self.transport_status = 3
+
+    def run(self):
+        running = True
+        while running:
+            dt = self.clock.tick(self.FPS) / 1000.0
+            for ev in pygame.event.get():
+                if ev.type == pygame.QUIT:
+                    running = False
+                elif ev.type == pygame.KEYDOWN:
+                    self.handle_keydown(ev)
+                elif ev.type == pygame.TEXTINPUT and self.writing:
+                    self.view.handle_textinput(ev)
+                elif ev.type == pygame.MOUSEBUTTONDOWN:
+                    self.view.tool.handle_mousebuttondown(ev)
+                elif ev.type == pygame.MOUSEBUTTONUP:
+                    self.view.tool.handle_mousebuttonup(ev)
+                elif ev.type == pygame.MOUSEMOTION:
+                    self.view.tool.handle_mousemotion(ev)
+
+            self.screen.fill((30, 30, 30))
+            self.view.draw(self.screen)
+            self.view.tool.draw(self.screen)
+            pygame.display.flip()
+
+        self.view.close()
+        self.set_offline()
+        pygame.quit()
+        sys.exit()
+
+    def handle_keydown(self, ev):
+        mods = pygame.key.get_mods()
+        shift_held = mods & pygame.KMOD_SHIFT
+        ctrl_held = mods & pygame.KMOD_CTRL
+        if mods & ctrl_held:
+            if ev.key == pygame.K_1:
+                self.change_view(DummyView)
+            #elif ev.key == pygame.K_2:
+            #elif ev.key == pygame.K_3:
+            #elif ev.key == pygame.K_4:
+            #elif ev.key == pygame.K_5:
+            #elif ev.key == pygame.K_6:
+            #elif ev.key == pygame.K_7:
+            elif ev.key == pygame.K_s:
+                self.doc.to_json_file(self.filename)
+                print("document saved!")
+            #elif ev.key == pygame.K_r:
+            #    if not os.path.exists(self.pngs_record_path):
+            #        os.mkdir(self.pngs_record_path)
+            #    FPS = 60
+            #    duration = self.transport.tempo.bar_to_time(self.doc.duration)
+            #    self.calculate_brush_lanes()
+            #    ix = 0
+            #    while ix * (1.0 / FPS) < duration:
+            #        self.clock.tick(self.FPS)
+            #        t = ix * (1.0 / FPS)
+            #        u = self.transport.tempo.time_to_bar(t)
+            #        self.bar = (u // self.BARS_VISIBLE) * self.BARS_VISIBLE
+            #        for ev in pygame.event.get():
+            #            pass
+            #        self.screen.fill((30, 30, 30))
+            #        text = self.font.render(str(self.bar), True, (200, 200, 200))
+            #        self.screen.blit(text, (0, 0))
+            #        event_line = 15 + 15 + (self.brush_heights[self.doc] - 15) - self.scroll_y
+            #        self.draw_grid(event_line)
+            #        self.draw_events(event_line)
+            #        self.draw_transport(t)
+            #        pygame.image.save(self.screen, os.path.join(self.pngs_record_path, f"{ix}.png"))
+            #        pygame.display.flip()
+            #        ix += 1
+            #elif ev.key == pygame.K_SPACE and self.mode in [1,4,5,6]:
+            #    if self.transport.playing:
+            #        self.transport.cmd.put("stop")
+            #    else:
+            #        self.transport.shift = 0
+            #        self.transport.record_path = self.record_path
+            #        self.transport.duration = self.transport.tempo.bar_to_time(self.doc.duration)
+            #        self.transport.cmd.put("play")
+        elif ev.key == pygame.K_SPACE and not self.writing:
+            if self.transport_status < 3:
+                self.group_ids = {}
+                sb = SequenceBuilder(self.group_ids)
+                sb.gate(1 / 4, 'm', 0, {'note': 80})
+                sb.gate(2 / 4, 'm', 0, {})
+                sb.gate(3 / 4, 'm', 1, {'note': 79})
+                sb.gate(4 / 4, 'm', 1, {})
+                sequence = sb.build()
+                self.set_playing(
+                    Sequencer(sequence,
+                        point=sequence.t(0),
+                        loop_start=sequence.t(0),
+                        loop_point=sequence.t(1),
+                        end_point=sequence.t(1)))
+            elif self.transport_status == 3:
+                self.set_online()
+        else:
+            self.view.handle_keydown(ev)
+
+    def change_view(self, View):
+        if not isinstance(self.view, View):
+            self.view.close()
+            self.view = View(self)
 
 # "bool", "unipolar", "number", "pitch", "db", "dur"
 
@@ -107,8 +362,8 @@ def adjust_boundaries(selection, doc=None, tighten=False):
 class SequencerEditor:
     SCREEN_WIDTH = 1200
     SCREEN_HEIGHT = 600
-    MARGIN = 200
     FPS = 30
+    MARGIN = 200
     BARS_VISIBLE = 4
     STAVE_HEIGHT = 3 * 12
     PATTERNS = [
@@ -2462,6 +2717,6 @@ def modify(value, amt, ty):
     return value
 
 if __name__ == '__main__':
-    editor = SequencerEditor()
+    editor = Editor()
     editor.run()
 

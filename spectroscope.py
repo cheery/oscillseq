@@ -17,7 +17,8 @@ def spectroscope(buffer_id, bus_id):
 def prepare(server):
     server.add_synthdefs(spectroscope)
     server.sync()
-    return server.add_group()
+    group = server.add_group()
+    return lambda bus: Spectroscope(server, group, bus)
 
 class Spectroscope:
     def __init__(self, server, group, bus):
