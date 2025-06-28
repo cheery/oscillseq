@@ -26,6 +26,11 @@ class Definitions:
         self.table[name] = d = load_definition(filename)
         return d
 
+    def list_available(self):
+        for name in os.listdir(self.synthdef_directory):
+            if name.endswith(".desc"):
+                yield os.path.splitext(name)[0]
+
 def load_definition(filename):
     with open(f"{filename}.synthdef", 'rb') as fd:
         data = fd.read()

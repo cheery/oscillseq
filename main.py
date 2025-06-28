@@ -124,8 +124,7 @@ class Editor:
             drawfuncs = [
                 DrawFunc(0, "string", "tempo", {"value": "value"}),
             ],
-            # TODO: remove descriptors. Add cells, connections
-            cells = [
+            cells = [ # TODO: these should be "introed" as they are brushes.
                 Cell('m', True, 'musical', (500, 75), {
                 }),
                 Cell('1', False, 'low_pass', (400, 300), {
