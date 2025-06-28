@@ -11,6 +11,7 @@ from typing import List, Dict, Optional, Callable, Tuple, Any
 class Sequence:
     tempo : music.TempoEnvelope
     com : List[Any]
+    end : float
 
     def t(self, bar):
         return self.tempo.bar_to_time(bar)
@@ -209,7 +210,7 @@ class SequenceBuilder:
             events.sort(key=lambda x: x[0])
         self.gates.sort(key=lambda x: x[0])
  
-    def build(self):
+    def build(self, end):
         self.prepare()
         releases = {}
         for i, (time, tag, group_id, args) in enumerate(self.gates):
@@ -240,7 +241,7 @@ class SequenceBuilder:
 
         output.sort(key=lambda x: x.time)
 
-        return Sequence(tempo, output)
+        return Sequence(tempo, output, tempo.bar_to_time(end))
 
 def tempo_events(tempo):
     for i, t in enumerate(tempo.xs):

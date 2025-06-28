@@ -41,6 +41,51 @@ class DummyView:
         self.s1.close()
         self.s2.close()
 
+class VideoRendererView:
+    def __init__(self, editor):
+        self.editor = editor
+        self.tool = DummyTool(self)
+        self.s1 = editor.make_spectroscope(bus=0)
+        self.s2 = editor.make_spectroscope(bus=1)
+        self.frame = 0
+        self.frame_step = (1.0 / 60)
+        self.last_frame = (editor.sequence.end / self.frame_step)
+
+    def draw(self, screen):
+        font = self.editor.font
+        text = font.render("HERE COMES A VIDEO RENDERING VIEW", True, (200,200,200))
+        screen.blit(text, (0, 0))
+
+            #    if not os.path.exists(self.pngs_record_path):
+            #        os.mkdir(self.pngs_record_path)
+            #    FPS = 60
+            #    duration = self.transport.tempo.bar_to_time(self.doc.duration)
+            #    self.calculate_brush_lanes()
+            #    ix = 0
+            #    while ix * (1.0 / FPS) < duration:
+            #        self.clock.tick(self.FPS)
+            #        t = ix * (1.0 / FPS)
+            #        u = self.transport.tempo.time_to_bar(t)
+            #        self.bar = (u // self.BARS_VISIBLE) * self.BARS_VISIBLE
+            #        for ev in pygame.event.get():
+            #            pass
+            #        self.screen.fill((30, 30, 30))
+            #        text = self.font.render(str(self.bar), True, (200, 200, 200))
+            #        self.screen.blit(text, (0, 0))
+            #        event_line = 15 + 15 + (self.brush_heights[self.doc] - 15) - self.scroll_y
+            #        self.draw_grid(event_line)
+            #        self.draw_events(event_line)
+            #        self.draw_transport(t)
+            #        pygame.image.save(self.screen, os.path.join(self.pngs_record_path, f"{ix}.png"))
+            #        pygame.display.flip()
+            #        ix += 1
+
+    def handle_keydown(self, ev):
+        pass
+
+    def close(self):
+        pass
+
 class DummyTool:
     def __init__(self, view):
         self.view = view
@@ -130,6 +175,21 @@ class Editor:
         self.clavier = None
         self.player = None
         self.set_online()
+
+        self.playback_range = (0, 2)
+        self.playback_loop  = False
+
+        # Sequence is built so it could be visualized.
+        self.group_ids = {}
+        if self.transport_status != 3:
+            self.group_ids.clear()
+        sb = SequenceBuilder(self.group_ids)
+        sb.gate(1 / 4, 'm', 0, {'note': 80})
+        sb.gate(2 / 4, 'm', 0, {})
+        sb.gate(3 / 4, 'm', 1, {'note': 79})
+        sb.gate(4 / 4, 'm', 1, {})
+        self.sequence = sb.build(1)
+
         self.view = DummyView(self)
 
     def set_offline(self):
@@ -214,89 +274,13 @@ class Editor:
                 self.doc.to_json_file(self.filename)
                 print("document saved!")
             elif ev.key == pygame.K_r:
-                View = type(self.view)
-                self.view.close()
-                self.view = None
-                self.set_offline()
-
-                sb = SequenceBuilder({})
-                sb.gate(1 / 4, 'm', 0, {'note': 80})
-                sb.gate(2 / 4, 'm', 0, {})
-                sb.gate(3 / 4, 'm', 1, {'note': 79})
-                sb.gate(4 / 4, 'm', 1, {})
-                sequence = sb.build()
-
-                score = supriya.Score(output_bus_channel_count=2)
-                clavier = {}
-                with score.at(0):
-                    fabric = Fabric(
-                        score, self.cells, self.connections, self.definitions)
-                for command in sequence.com:
-                    with score.at(command.time):
-                        command.send(clavier, fabric)
-                with score.at(sequence.t(2)):
-                    score.do_nothing()
-                supriya.render(score, output_file_path=self.record_path)
-                print("saved", self.record_path)
-
-                self.set_online()
-                self.change_view(View)
-
-            #    if not os.path.exists(self.pngs_record_path):
-            #        os.mkdir(self.pngs_record_path)
-            #    FPS = 60
-            #    duration = self.transport.tempo.bar_to_time(self.doc.duration)
-            #    self.calculate_brush_lanes()
-            #    ix = 0
-            #    while ix * (1.0 / FPS) < duration:
-            #        self.clock.tick(self.FPS)
-            #        t = ix * (1.0 / FPS)
-            #        u = self.transport.tempo.time_to_bar(t)
-            #        self.bar = (u // self.BARS_VISIBLE) * self.BARS_VISIBLE
-            #        for ev in pygame.event.get():
-            #            pass
-            #        self.screen.fill((30, 30, 30))
-            #        text = self.font.render(str(self.bar), True, (200, 200, 200))
-            #        self.screen.blit(text, (0, 0))
-            #        event_line = 15 + 15 + (self.brush_heights[self.doc] - 15) - self.scroll_y
-            #        self.draw_grid(event_line)
-            #        self.draw_events(event_line)
-            #        self.draw_transport(t)
-            #        pygame.image.save(self.screen, os.path.join(self.pngs_record_path, f"{ix}.png"))
-            #        pygame.display.flip()
-            #        ix += 1
-            #elif ev.key == pygame.K_SPACE and self.mode in [1,4,5,6]:
-            #    if self.transport.playing:
-            #        self.transport.cmd.put("stop")
-            #    else:
-            #        self.transport.shift = 0
-            #        self.transport.record_path = self.record_path
-            #        self.transport.duration = self.transport.tempo.bar_to_time(self.doc.duration)
-            #        self.transport.cmd.put("play")
+                self.render_score()
+            elif ev.key == pygame.K_v:
+                self.change_view(VideoRendererView)
             elif ev.key == pygame.K_SPACE and not self.writing:
                 self.set_online()
         elif ev.key == pygame.K_SPACE and not self.writing:
-            if self.transport_status < 2:
-                self.set_fabric()
-            elif self.transport_status < 3:
-                self.group_ids = {}
-                sb = SequenceBuilder(self.group_ids)
-                sb.gate(1 / 4, 'm', 0, {'note': 80})
-                sb.gate(2 / 4, 'm', 0, {})
-                sb.gate(3 / 4, 'm', 1, {'note': 79})
-                sb.gate(4 / 4, 'm', 1, {})
-                sequence = sb.build()
-                self.set_playing(
-                    Sequencer(sequence,
-                        point=sequence.t(0),
-                        loop_start=sequence.t(0),
-                        loop_point=sequence.t(1),
-                        end_point=sequence.t(1)))
-            elif self.transport_status == 3:
-                self.set_fabric()
-                for synth in self.clavier.values():
-                    synth.set(gate=0)
-                self.clavier.clear()
+            self.toggle_play()
         else:
             self.view.handle_keydown(ev)
 
@@ -306,6 +290,57 @@ class Editor:
                 self.view.close()
             self.view = View(self)
 
+    def toggle_play(self):
+        if self.transport_status < 2:
+            self.set_fabric()
+        elif self.transport_status < 3:
+            sequence = self.sequence
+            self.set_playing(Sequencer(sequence, point=sequence.t(0), **self.playback_params(sequence)))
+        elif self.transport_status == 3:
+            self.set_fabric()
+            for synth in self.clavier.values():
+                synth.set(gate=0)
+            self.clavier.clear()
+
+    def playback_params(self, sequence):
+        if self.playback_loop and self.playback_range:
+            a, b = self.playback_range
+            loop_start = sequence.t(a)
+            loop_point = sequence.t(b)
+            end_point = sequence.end
+        elif self.playback_range:
+            a, b = self.playback_range
+            loop_start = -1
+            loop_point = -1
+            end_point = sequence.t(b)
+        else:
+            loop_start = -1
+            loop_point = -1
+            end_point = sequence.end
+        return {'loop_start': loop_start, 'loop_point': loop_point, 'end_point': end_point}
+
+    def render_score(self):
+        View = type(self.view)
+        self.view.close()
+        self.view = None
+        self.set_offline()
+
+        sequence = self.sequence
+        score = supriya.Score(output_bus_channel_count=2)
+        clavier = {}
+        with score.at(0):
+            fabric = Fabric(score, self.cells, self.connections, self.definitions)
+        for command in sequence.com:
+            with score.at(command.time):
+                command.send(clavier, fabric)
+        with score.at(sequence.t(2)):
+            score.do_nothing()
+        supriya.render(score, output_file_path=self.record_path)
+        print("saved", self.record_path)
+
+        self.set_online()
+        self.change_view(View)
+            
 # "bool", "unipolar", "number", "pitch", "db", "dur"
 
 drawfunc_avail_for = {
