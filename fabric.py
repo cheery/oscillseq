@@ -152,7 +152,10 @@ class Fabric:
             if isinstance(c, Relay):
                 print("INSERT RELAY", {'in': int(buses[c.i]), 'out': int(buses[c.o])})
                 b = buses[c.i]
-                sd = relay_synthdef(b.calculation_rate, b.count)
+                if b == 0:
+                    sd = relay_synthdef(supriya.CalculationRate.AUDIO, 2)
+                else:
+                    sd = relay_synthdef(b.calculation_rate, b.count)
                 self.root.add_synth(sd, input_bus=b, output_bus=buses[c.o])
             else:
                 d = self.definitions[c.definition]
