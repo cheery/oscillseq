@@ -16,6 +16,7 @@ import pygame
 import supriya
 import sys
 import spectroscope
+from node_editor_view import NodeEditorView
 
 class DummyView:
     def __init__(self, editor):
@@ -31,8 +32,8 @@ class DummyView:
 
         self.s1.refresh()
         self.s2.refresh()
-        self.s1.draw(screen, font, (255, 0, 0), editor.SCREEN_WIDTH/2, 50)
-        self.s2.draw(screen, font, (0, 255, 0), editor.SCREEN_WIDTH/2, 350)
+        self.s1.draw(screen, font, (255, 0, 0), self.editor.SCREEN_WIDTH/2, 50)
+        self.s2.draw(screen, font, (0, 255, 0), self.editor.SCREEN_WIDTH/2, 350)
 
     def handle_keydown(self, ev):
         pass
@@ -173,7 +174,7 @@ class Editor:
         self.set_online()
 
         self.playback_range = (0, 2)
-        self.playback_loop  = False
+        self.playback_loop  = True
 
         # Sequence is built so it could be visualized.
         self.group_ids = {}
@@ -266,7 +267,8 @@ class Editor:
             #elif ev.key == pygame.K_4:
             #elif ev.key == pygame.K_5:
             #elif ev.key == pygame.K_6:
-            #elif ev.key == pygame.K_7:
+            elif ev.key == pygame.K_7:
+                self.change_view(NodeEditorView)
             elif ev.key == pygame.K_s:
                 self.doc.to_json_file(self.filename)
                 print("document saved!")
@@ -310,6 +312,10 @@ class Editor:
             loop_start = -1
             loop_point = -1
             end_point = sequence.t(b)
+        elif self.playback_loop:
+            loop_start = 0
+            loop_point = sequence_end
+            end_point = sequence.end
         else:
             loop_start = -1
             loop_point = -1
