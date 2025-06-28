@@ -171,7 +171,9 @@ class Gate:
         elif self.group_id in clavier:
             clavier[self.group_id].set(**self.kwargs)
         else:
-            clavier[self.group_id] = fabric.synth(self.tag, **self.kwargs)
+            synth = fabric.synth(self.tag, **self.kwargs)
+            if synth is not None:
+                clavier[self.group_id] = synth
 
     def sim(self, clavier, quadratics):
         if self.release and self.group_id in clavier:
@@ -263,121 +265,3 @@ def quadratic_events(tempo, env, tag):
         b = c / 60 * k
         c = y
         yield Quadratic(t, tag, a, b, c, dt)
-
-# # TODO: Add begin, end time parameters.
-# # TODO: Add loop parameter.
-# # TODO: Allow hotswapping the tempo & events list.
-# 
-# # TODO: Instead of subclassing from thread, use:
-# # threading.Thread(daemon=True, target=self._run)
-# class TransportThread(threading.Thread):
-#     def __init__(self, tempo, events):
-#         super().__init__()
-#         self.client = Client()
-#         self.tempo = tempo
-#         self.events = events
-#         self.cmd = queue.Queue()
-#         #self.lock = threading.Lock()
-#         self.playing = False
-#         self.start_time = None
-#         self.daemon = True
-#         self.record_path = None
-#         self.record_format = "wav"
-#         self.shift = 0.0
-#         self.duration = 0.0
-# 
-#     def shutdown(self):
-#         if self.playing:
-#             self.cmd.put("stop")
-#         self.cmd.put("shutdown")
-#         self.join()
-# 
-#     def run(self):
-#         while self.cmd.get() == 'play':
-#             self.playing = True
-#             self.start_time = time.monotonic() - self.shift
-#             if self.record_path and self.duration > 0.0:
-#                 self.client.record(self.record_path, self.record_format, self.duration)
-#             else:
-#                 self.client.play()
-# 
-#             t = 0.0
-#             #nextframe = 0.1
-#             #busdata = []
-#             #for i in range(100):
-#                 #b = music.time_to_bar(env1, ts, t + i * 0.001)
-#             #    b = env1.time_to_bar(t + i * 0.001)
-#             #    busdata.append(env2.evaluate(b))
-#             #Bus("sawnote", busdata).send(self.client)
-#             onset = {}
-#             buses = {}
-#             ix = 0
-#             while ix < len(self.events) and self.events[ix][0] < self.shift:
-#                 msg = self.events[ix][1]
-#                 msg.simulate(self.events[ix][0], onset, buses)
-#                 ix += 1
-# 
-#             for msg in onset.values():
-#                 msg.send(self.client)
-#             for event_time, msg in buses.values():
-#                 msg = msg.forward(self.shift - event_time)
-#                 msg.send(self.client)
-# 
-#             for event_time, msg in self.events[ix:]:
-#                 t = time.monotonic() - self.start_time
-#                 if t < event_time:
-#                     try:
-#                         self.cmd.get(timeout=max(0, event_time - t))
-#                         self.client.stop()
-#                         self.playing = False
-#                         break
-#                     except queue.Empty:
-#                         pass
-#                 msg.send(self.client)
-#                 #while t < event_time:
-#                 #    try:
-#                 #        self.cmd.get(timeout=max(0, min(event_time - t, nextframe - t)))
-#                 #        self.client.stop()
-#                 #        self.playing = False
-#                 #        break
-#                 #    except queue.Empty:
-#                 #        t = time.monotonic() - self.start_time
-# 
-#                 #        if t >= nextframe:
-#                 #            nextframe = t + 0.1
-#                 #            busdata = []
-#                 #            for i in range(100):
-#                 #                #b = music.time_to_bar(env1, ts, t + i * 0.001)
-#                 #                b = env1.time_to_bar(t + i * 0.001)
-#                 #                busdata.append(env2.evaluate(b))
-#                 #            Bus("sawnote", busdata).send(self.client)
-#                 #if self.playing:
-#                 #    msg.send(self.client)
-#                 #else:
-#                 #    break
-# 
-#             if self.playing:
-#                 self.cmd.get()
-#                 self.client.stop()
-#                 self.playing = False
-# 
-#             #t = time.monotonic() - self.start_time
-#             #while self.playing:
-#             #    try:
-#             #        self.cmd.get(timeout=nextframe - t)
-#             #        self.client.stop()
-#             #        self.playing = False
-#             #    except queue.Empty:
-#             #        t = time.monotonic() - self.start_time
-#             #        nextframe = t + 0.1
-#             #        busdata = []
-#             #        for i in range(100):
-#             #            #b = music.time_to_bar(env1, ts, t + i * 0.001)
-#             #            b = env1.time_to_bar(t + i * 0.001)
-#             #            busdata.append(env2.evaluate(b))
-#             #        Bus("sawnote", busdata).send(self.client)
-# 
-#     def get_elapsed(self):
-#         # returns elapsed since start when playing, else 0
-#         if self.playing and self.start_time is not None:
-#             return time.monotonic() - self.start_time

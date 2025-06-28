@@ -189,11 +189,12 @@ class Fabric:
 
     def synth(self, label, **args):
         c, g = self.synths[label]
-        d = self.definitions[c.definition]
-        params = self.map_params(c.params)
-        params.update(self.busmap[label])
-        params.update(args)
-        return g.add_synth(d.synthdef, **self.map_params(params))
+        if c.multi:
+            d = self.definitions[c.definition]
+            params = self.map_params(c.params)
+            params.update(self.busmap[label])
+            params.update(args)
+            return g.add_synth(d.synthdef, **self.map_params(params))
 
 def topological_sort(cells, definitions, assignment):
     var_to_producers : DefaultDict[str, List[int]] = defaultdict(list)
