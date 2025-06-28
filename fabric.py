@@ -106,7 +106,7 @@ class Fabric:
             bustype = retrieve_type(name)
             sm = bustype.sans_mode()
             if sm not in dummies:
-                dummmies[sm] = server.add_bus_group(bustype.rate, bustype.channel_count)
+                dummies[sm] = server.add_bus_group(bustype.rate, bustype.channel_count)
                 self.bus_groups.append(dummies[sm])
             return dummies[sm]
 
@@ -139,7 +139,7 @@ class Fabric:
                     out_fn = Out.kr
                 @synthdef()
                 def relay_synth(input_bus, output_bus):
-                    out_fn(source=in_fn(bus=input_bus, channel_count=count))
+                    out_fn(bus=output_bus, source=in_fn(bus=input_bus, channel_count=count))
                 server.add_synthdefs(relay_synth)
                 server.sync()
                 relaydefs[(calculation_rate, count)] = relay_synth
@@ -150,22 +150,27 @@ class Fabric:
         self.root = server.add_group()
         for c in reversed(self.cells):
             if isinstance(c, Relay):
+                print("INSERT RELAY", {'in': int(buses[c.i]), 'out': int(buses[c.o])})
                 b = buses[c.i]
                 sd = relay_synthdef(b.calculation_rate, b.count)
                 self.root.add_synth(sd, input_bus=b, output_bus=buses[c.o])
             else:
                 d = self.definitions[c.definition]
-                params = self.map_params(c.params)
-                params.update(self.busmap[c.label])
+                print("INSERT SYNTH GROUP/SYNTH", c.label)
+                print("", name, {m: int(v) for m, v in self.busmap[c.label].items()})
                 if c.multi:
                     subgroup = self.root.add_group()
                     self.synths[c.label] = c, subgroup
                 else:
+                    params = self.map_params(c.params)
+                    params.update(self.busmap[c.label])
                     synth = self.root.add_synth(d.synthdef, **params)
                     self.synths[c.label] = c, synth
 
     def close(self):
         self.root.free()
+        for group in self.bus_groups:
+            group.free()
 
     def map_params(self, params):
         return {n: self.map_param(v)
@@ -330,6 +335,14 @@ def bus_assignment(W, R, E):
         assignment[u] = -1
     for v in R_DUMMY:
         assignment[v] = -1
+
+    for U,V in bicliques:
+        print((U, V))
+    print('---')
+    for U,V in additional:
+        print((U, V))
+    print('---')
+    print(relays)
     return assignment, relays
 
 
