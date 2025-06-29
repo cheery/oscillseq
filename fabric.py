@@ -194,7 +194,7 @@ class Fabric:
                     subgroup = self.root.add_group()
                     self.synths[c.label] = c, subgroup
                 else:
-                    params = self.map_params(c.label, c.params)
+                    params = self.map_params(c.synth, c.params)
                     params.update(self.busmap[c.label])
                     synth = self.root.add_synth(d.synthdef, **params)
                     self.synths[c.label] = c, synth
@@ -204,8 +204,8 @@ class Fabric:
         for group in self.bus_groups:
             group.free()
 
-    def map_params(self, label, params):
-        dfn = self.definitions[label]
+    def map_params(self, synth_name, params):
+        dfn = self.definitions[synth_name]
         return {n: self.map_param(dfn.field_type(n), v)
                 for n, v in params.items()}
 
@@ -217,26 +217,27 @@ class Fabric:
         return param
 
     def control(self, label, **args):
-        self.synths[label][1].set(**self.map_params(label, args))
+        c, synth = self.synths[label]
+        synth.set(**self.map_params(c.synth, args))
 
     def synth(self, label, **args):
         c, g = self.synths[label]
         if c.multi:
             d = self.definitions[c.definition]
-            params = self.map_params(label, c.params)
+            params = c.params
             params.update(self.busmap[label])
             params.update(args)
-            synth = g.add_synth(d.synthdef, **self.map_params(label, params))
-            return LabeledSynth(label, self, synth)
+            synth = g.add_synth(d.synthdef, **self.map_params(c.synth, params))
+            return LabeledSynth(c.synth, self, synth)
 
 class LabeledSynth:
-    def __init__(self, label, fabric, synth):
-        self.label = label
+    def __init__(self, synth_name, fabric, synth):
+        self.synth_name = synth_name
         self.fabric = fabric
         self.synth = synth
 
     def set(self, **params):
-        params = self.fabric.map_params(self.label, params)
+        params = self.fabric.map_params(self.synth_name, params)
         return self.synth.set(**params)
 
 def topological_sort(cells, definitions, assignment):
