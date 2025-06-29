@@ -39,8 +39,10 @@ def load_definition(filename):
 
 @dataclass
 class Definition:
-    synthdef : Any
-    desc : List[Tuple[str, Any]]
+    def __init__(self, synthdef, desc):
+        self.synthdef = synthdef
+        self.desc = desc
+        self.mdesc = dict(desc)
 
     @property
     def inputs(self):
@@ -53,6 +55,32 @@ class Definition:
         for name, spec in self.desc:
             if isinstance(spec, bus) and spec.mode == 'out':
                 yield name
+
+    def field_type(self, name):
+        spec = self.mdesc.get(name, None)
+        if isinstance(spec, simple):
+            return spec.to_text()
+
+    def field_bus(self, name):
+        spec = self.mdesc.get(name, None)
+        if isinstance(spec, bus):
+            return spec.messy
+
+    def avail(self, ty):
+        available_fields = []
+        for name, spec in [("n/a", simple("n/a"))] + self.desc:
+            if isinstance(spec, simple) and spec.to_text() in ty:
+                available_fields.append(name)
+            elif isinstance(spec, simple) and len(ty) == 0:
+                available_fields.append(name)
+        # this is a hax. TODO: think of a solution to avoid 'arbitrary' -type.
+        if all(x in self.mdesc for x in ['a', 'b', 'c', 't', 'trigger']):
+            available_fields.append("*")
+        return available_fields
+
+    def autoselect(self, ty):
+        a = self.avail(ty)
+        return a[0] if len(a) else "n/a"
 
 @dataclass
 class Relay:

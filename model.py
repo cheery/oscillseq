@@ -366,6 +366,20 @@ class Document:
         self.labels[brush.label] = brush
         return brush
 
+    def rebuild_labels(self):
+        labels = {}
+        def visit(brush):
+            labels[brush.label] = brush
+            if isinstance(brush, Clip):
+                for e in brush.brushes:
+                    visit(e.brush)
+        for e in self.brushes:
+            visit(e.brush)
+        for cell in self.cells:
+            labels[cell.label] = cell
+        self.labels = labels
+        
+
     def construct(self, sequencer, offset, key):
         for i, e in enumerate(self.brushes):
             kv = key + (i,)

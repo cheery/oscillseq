@@ -4,6 +4,19 @@ from supriya.ugens import EnvGen, Out, SinOsc
 
 save = Saver("synthdefs")
 
+@synthdef('ir', 'kr', 'kr', 'kr', 'kr', 'tr')
+def quadratic(out=0, a=0, b=0, c=0, t=0, trigger=0):
+    x = min(t, ugens.Sweep.kr(trigger=trigger))
+    v = a*x*x + b*x + c
+    Out.kr(bus=out, source=v)
+save(quadratic,
+    out = bus("kr", "out", arbitrary, 1),
+    a = arbitrary,
+    b = arbitrary,
+    c = arbitrary,
+    t = duration,
+    trigger = boolean)
+
 @synthdef()
 def simple(out=0):
     sig = SinOsc.ar(frequency=440)

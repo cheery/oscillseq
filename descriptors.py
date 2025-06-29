@@ -26,12 +26,28 @@ class simple:
     def __repr__(self):
         return self.to_text()
 
+class messy:
+    def __init__(self, rate, elem, channel_count=1):
+        self.rate = rate
+        self.elem = elem
+        self.channel_count = channel_count
+
+    def to_text(self):
+        return f"{self.rate} {self.elem.to_text()} {self.channel_count}"
+
+    def __repr__(self):
+        return self.to_text()
+
 class bus:
     def __init__(self, rate, mode, elem, channel_count=1):
         self.rate = rate
         self.mode = mode # in/out/in-feedback
         self.elem = elem
         self.channel_count = channel_count
+
+    @property
+    def messy(self):
+        return messy(self.rate, self.elem, self.channel_count)
 
     def sans_mode(self):
         assert isinstance(self.elem, simple)
@@ -44,14 +60,15 @@ class bus:
     def __repr__(self):
         return self.to_text()
 
-boolean  = simple("boolean")
-unipolar = simple("unipolar")
-number   = simple("number")
-bipolar  = simple("bipolar")
-pitch    = simple("pitch")
-hz       = simple("hz")
-db       = simple("db")
-duration = simple("duration")
+boolean   = simple("boolean")
+unipolar  = simple("unipolar")
+number    = simple("number")
+bipolar   = simple("bipolar")
+pitch     = simple("pitch")
+hz        = simple("hz")
+db        = simple("db")
+duration  = simple("duration")
+arbitrary = simple("arbitrary")
 
 class Saver:
     def __init__(self, directory):
