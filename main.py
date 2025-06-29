@@ -35,7 +35,7 @@ class DummyView:
     def close(self):
         pass
 
-class DummyView:
+class LaneEditorView:
     def __init__(self, editor):
         self.editor = editor
         self.tool = DummyTool(self)
@@ -245,7 +245,11 @@ class Editor:
         self.transport_bar = TransportBar(self)
 
         self.toolbar = Toolbar(pygame.Rect(0, self.SCREEN_HEIGHT - 32, self.SCREEN_WIDTH, 32),
-            [("dummy", DummyView), ("cell editor", NodeEditorView)],
+            [
+                ("dummy", DummyView),
+                ("lane editor", LaneEditorView),
+                ("cell editor", NodeEditorView)
+            ],
             (lambda view: self.change_view(view)),
             (lambda name, cls: isinstance(self.view, cls)))
 
@@ -362,7 +366,8 @@ class Editor:
         if mods & ctrl_held:
             if ev.key == pygame.K_1:
                 self.change_view(DummyView)
-            #elif ev.key == pygame.K_2:
+            if ev.key == pygame.K_2:
+                self.change_view(LaneEditorView)
             #elif ev.key == pygame.K_3:
             #elif ev.key == pygame.K_4:
             #elif ev.key == pygame.K_5:
