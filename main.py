@@ -25,14 +25,85 @@ class DummyView:
     def __init__(self, editor):
         self.editor = editor
         self.tool = DummyTool(self)
-        self.layout = TrackLayout(editor.doc, offset = 30)
 
     def draw(self, screen):
         font = self.editor.font
-        self.layout.draw(screen, font, self.editor)
 
     def handle_keydown(self, ev):
         pass
+
+    def close(self):
+        pass
+
+class DummyView:
+    def __init__(self, editor):
+        self.editor = editor
+        self.tool = DummyTool(self)
+
+    def draw(self, screen):
+        font = self.editor.font
+        self.editor.layout.draw(screen, font, self.editor)
+
+    def handle_keydown(self, ev):
+        mods = pygame.key.get_mods()
+        shift_held = mods & pygame.KMOD_SHIFT
+        if ev.key == pygame.K_UP:
+            if shift_held:
+                self.editor.shift_lane_tag(False)
+            else:
+                self.editor.walk_lane_tag(False)
+        elif ev.key == pygame.K_DOWN:
+            if shift_held:
+                self.editor.shift_lane_tag(True)
+            else:
+                self.editor.walk_lane_tag(True)
+        elif ev.key == pygame.K_u:
+            if g := self.get_pitchlane():
+                g.margin_above += 1
+                self.editor.refresh_layout()
+        elif ev.key == pygame.K_i:
+            if g := self.get_pitchlane():
+                g.margin_above = max(0, g.margin_above - 1)
+                self.editor.refresh_layout()
+        elif ev.key == pygame.K_o:
+            if g := self.get_pitchlane():
+                g.margin_below = max(0, g.margin_below - 1)
+                self.editor.refresh_layout()
+        elif ev.key == pygame.K_p:
+            if g := self.get_pitchlane():
+                g.margin_below += 1
+                self.editor.refresh_layout()
+        elif ev.key == pygame.K_DELETE:
+            tag = self.lane_tag
+            self.editor.walk_lane_tag(direction=True)
+            self.editor.erase_drawfunc(tag)
+        elif ev.key == pygame.K_PLUS:
+            for df in self.editor.doc.drawfuncs:
+                if df.tag == self.editor.lane_tag:
+                    for g in self.editor.doc.graphs:
+                        if g.lane == df.lane:
+                            g.staves += 1
+                            break
+                    else:
+                        self.editor.doc.graphs.append(PitchLane(df.lane, 1, 0, 0))
+                        self.editor.doc.graphs.sort(key=lambda g: g.lane)
+            self.editor.refresh_layout()
+        elif ev.key == pygame.K_MINUS:
+            for df in self.editor.doc.drawfuncs:
+                if df.tag == self.editor.lane_tag:
+                    for g in list(self.editor.doc.graphs):
+                        if g.lane == df.lane and g.staves > 1:
+                            g.staves -= 1
+                        elif g.lane == df.lane and 1 == sum(1 for f in self.editor.doc.drawfuncs if df.lane == f.lane):
+                            self.editor.doc.graphs.remove(g)
+            self.editor.refresh_layout()
+
+    def get_pitchlane(self):
+        for df in self.editor.doc.drawfuncs:
+            if df.tag == self.editor.lane_tag:
+                for g in self.editor.doc.graphs:
+                    if g.lane == df.lane and isinstance(g, PitchLane):
+                        return g
 
     def close(self):
         pass
@@ -182,7 +253,13 @@ class Editor:
         self.timeline_scroll = 0
         self.timeline_vertical_scroll = 0
 
+        self.lane_tag = None
+        self.layout = TrackLayout(self.doc, offset = 30)
+
         self.view = NodeEditorView(self)
+
+    def refresh_layout(self):
+        self.layout = TrackLayout(self.doc, offset = 30)
 
     def set_offline(self):
         if self.transport_status > 0:
@@ -368,6 +445,92 @@ class Editor:
 
         self.set_online()
         self.change_view(View)
+
+    def walk_lane_tag(self, direction):
+        sequence = [df.tag for df in self.doc.drawfuncs]
+        if self.lane_tag in sequence:
+            i = sequence.index(self.lane_tag) + (2*direction - 1)
+        else:
+            i = [len(sequence)-1, 0][direction]
+        if 0 <= i < len(sequence):
+            self.lane_tag = sequence[i]
+        else:
+            self.lane_tag = None
+        for df in list(self.doc.drawfuncs):
+            if df.tag == "":
+                self.doc.drawfuncs.remove(df)
+
+    def shift_lane_tag(self, direction):
+        lane = 0
+        for i, df in enumerate(list(self.doc.drawfuncs)):
+            if df.tag == self.lane_tag:
+                self.walk_in_lane(i, direction)
+                self.refresh_layout()
+                return
+            lane = df.lane + 1
+
+    def shift_lanes(self, lane, shift=1):
+        for df in self.doc.drawfuncs:
+            if df.lane >= lane:
+                df.lane += shift
+        for df in self.doc.graphs:
+            if df.lane >= lane:
+                df.lane += shift
+
+    def erase_lane(self, lane):
+        if 0 == sum(1 for f in self.doc.drawfuncs if f.lane == lane):
+            for graph in list(self.doc.graphs):
+                if graph.lane == lane:
+                    self.doc.graphs.remove(graph)
+                elif graph.lane > lane:
+                    graph.lane -= 1
+            for df in self.doc.drawfuncs:
+                if df.lane > lane:
+                    df.lane -= 1
+
+    def walk_in_lane(self, i, direction):
+        x = self.doc.drawfuncs[i]
+        oldlane = x.lane
+        j = i + 2*direction - 1
+        if 0 <= j < len(self.doc.drawfuncs):
+            y = self.doc.drawfuncs[j]
+            if x.lane == y.lane:
+                self.doc.drawfuncs[i] = y
+                self.doc.drawfuncs[j] = x
+            elif x.lane == y.lane - 1 or x.lane == y.lane + 1:
+                if y.lane in [g.lane for g in self.doc.graphs]:
+                    lane = x.lane
+                    x.lane = y.lane
+                    self.erase_lane(lane)
+                elif x.lane in [g.lane for g in self.doc.graphs]:
+                    df = self.doc.drawfuncs[i]
+                    lane = df.lane + 1*direction
+                    self.shift_lanes(lane, 1)
+                    df.lane = lane
+                    self.doc.drawfuncs.sort(key=lambda df: df.lane)
+                else:
+                    x.lane, y.lane = y.lane, x.lane
+                    self.doc.drawfuncs.sort(key=lambda df: df.lane)
+            else:
+                x.lane += 2*direction - 1
+        elif direction:
+            x.lane += 1
+        else:
+            lane = x.lane + 1*direction
+            self.shift_lanes(lane, 1)
+            x.lane = lane
+            self.doc.drawfuncs.sort(key=lambda df: df.lane)
+        if oldlane not in [g.lane for g in self.doc.graphs]:
+            self.erase_lane(oldlane)
+        if oldlane+1 not in [g.lane for g in self.doc.graphs]:
+            self.erase_lane(oldlane+1)
+
+    def erase_drawfunc(self, tag):
+        for df in list(self.doc.drawfuncs):
+            if df.tag == tag:
+                self.doc.drawfuncs.remove(df)
+                self.erase_lane(df.lane)
+
 
 class Toolbar:
     def __init__(self, rect, items, action, selected, button_width=32*3):
@@ -557,18 +720,17 @@ class TrackLayout:
         pygame.draw.line(screen, (40, 40, 40), (0, self.offset), (SCREEN_WIDTH, self.offset))
         for y, height, drawfuncs, graph in self.lanes:
             for k, df in enumerate(drawfuncs):
+                # TODO: recreate validation logic
 #                ok = validate(df, self.doc.descriptors)
                 ok = True
                 text = font.render(df.tag, True, [(255, 100, 100), (200, 200, 200)][ok])
                 screen.blit(text, (10, y + 15 * k))
 
-#                if df.tag == self.tag_name:
-#                    center_x = self.MARGIN - 15
-#                    center_y = y + 15 * k + 8
-#                    if self.mode in [2, 3, 4, 5]:
-#                        pygame.draw.line(self.screen, (0, 128, 0), (center_x, center_y), (self.SCREEN_WIDTH/2, self.SCREEN_HEIGHT/2))
-#                    self.draw_diamond((0, 255, 0), (center_x, center_y), (4, 4))
-#
+                if df.tag == editor.lane_tag:
+                    center_x = editor.MARGIN - 15
+                    center_y = y + 15 * k + 8
+                    draw_diamond(screen, (0, 255, 0), (center_x, center_y), (4, 4))
+
             if isinstance(graph, PitchLane):
                 y += graph.margin_above * self.STAVE_HEIGHT
                 for _ in range(graph.staves):
@@ -962,43 +1124,6 @@ class SequencerEditor:
         else:
             self.doc.brushes = []
             self.doc.labels = {}
-
-    def walk_tag_name(self, direction, from_descriptors=False):
-        if self.tag_name == "":
-            self.doc.descriptors.pop(self.tag_name)
-            for brush in list(self.doc.labels.values()):
-                if isinstance(brush, Clap):
-                    brush.generators.pop(self.tag_name, None)
-                if isinstance(brush, ControlPoint) and brush.tag == self.tag_name:
-                    self.erase_brush(brush)
-        if from_descriptors:
-            sequence = [tag for tag in self.doc.descriptors]
-            sequence.sort()
-        else:
-            sequence = [df.tag for df in self.doc.drawfuncs]
-        if self.tag_name in sequence:
-            i = sequence.index(self.tag_name) + (2*direction - 1)
-        else:
-            i = [len(sequence)-1, 0][direction]
-        if 0 <= i < len(sequence):
-            self.tag_name = sequence[i]
-        else:
-            self.tag_name = None
-        for df in list(self.doc.drawfuncs):
-            if df.tag == "":
-                self.doc.drawfuncs.remove(df)
-        # update tag editor descriptor
-        desc = self.doc.descriptors.get(self.tag_name)
-        if desc is None:
-            desc = Desc("control", [])
-        else:
-            desc = Desc(desc.kind, desc.spec.copy())
-        self.te_tag_name = self.tag_name or ""
-        self.te_desc = desc
-        self.te_past = {}
-        self.te_future = {name: name for name, _ in desc.spec}
-        self.tag_k = 0
-        self.tag_i = len(self.te_tag_name)
 
     def handle_key(self, ev):
         mods = pygame.key.get_mods()
@@ -1716,88 +1841,6 @@ class SequencerEditor:
                     self.screen.blit(text, (px, py))
                     px += text.get_width() + 10
 
-    def shift_lanes(self, lane, shift=1):
-        for df in self.doc.drawfuncs:
-            if df.lane >= lane:
-                df.lane += shift
-        for df in self.doc.graphs:
-            if df.lane >= lane:
-                df.lane += shift
-
-    def erase_lane(self, lane):
-        if 0 == sum(1 for f in self.doc.drawfuncs if f.lane == lane):
-            for graph in list(self.doc.graphs):
-                if graph.lane == lane:
-                    self.doc.graphs.remove(graph)
-                elif graph.lane > lane:
-                    graph.lane -= 1
-            for df in self.doc.drawfuncs:
-                if df.lane > lane:
-                    df.lane -= 1
-
-    def walk_in_lane(self, i, direction):
-        x = self.doc.drawfuncs[i]
-        oldlane = x.lane
-        j = i + 2*direction - 1
-        if 0 <= j < len(self.doc.drawfuncs):
-            y = self.doc.drawfuncs[j]
-            if x.lane == y.lane:
-                self.doc.drawfuncs[i] = y
-                self.doc.drawfuncs[j] = x
-            elif x.lane == y.lane - 1 or x.lane == y.lane + 1:
-                if y.lane in [g.lane for g in self.doc.graphs]:
-                    lane = x.lane
-                    x.lane = y.lane
-                    self.erase_lane(lane)
-                elif x.lane in [g.lane for g in self.doc.graphs]:
-                    df = self.doc.drawfuncs[i]
-                    lane = df.lane + 1*direction
-                    self.shift_lanes(lane, 1)
-                    df.lane = lane
-                    self.doc.drawfuncs.sort(key=lambda df: df.lane)
-                else:
-                    x.lane, y.lane = y.lane, x.lane
-                    self.doc.drawfuncs.sort(key=lambda df: df.lane)
-            else:
-                x.lane += 2*direction - 1
-        elif direction:
-            x.lane += 1
-        else:
-            lane = x.lane + 1*direction
-            self.shift_lanes(lane, 1)
-            x.lane = lane
-            self.doc.drawfuncs.sort(key=lambda df: df.lane)
-        if oldlane not in [g.lane for g in self.doc.graphs]:
-            self.erase_lane(oldlane)
-        if oldlane+1 not in [g.lane for g in self.doc.graphs]:
-            self.erase_lane(oldlane+1)
-
-    def walk_lane(self, direction):
-        if self.tag_name in self.doc.descriptors:
-            desc = self.doc.descriptors[self.tag_name]
-            lane = 0
-            for i, df in enumerate(list(self.doc.drawfuncs)):
-                if df.tag == self.tag_name:
-                    self.walk_in_lane(i, direction)
-                    return
-                lane = df.lane + 1
-            else:
-                params = {"value": autoselect(desc.spec, ["bool", "number", "pitch", "db"])}
-                i = len(self.doc.drawfuncs)
-                if direction:
-                    self.shift_lanes(0, shift=1)
-                    df = DrawFunc(0, "string", self.tag_name, params)
-                    self.doc.drawfuncs.insert(0, df)
-                else:
-                    df = DrawFunc(lane, "string", self.tag_name, params)
-                    self.doc.drawfuncs.append(df)
-
-    def erase_drawfunc(self, tag):
-        for df in list(self.doc.drawfuncs):
-            if df.tag == tag:
-                self.doc.drawfuncs.remove(df)
-                self.erase_lane(df.lane)
-
     def handle_lane_editor_key(self, ev):
         mods = pygame.key.get_mods()
         shift_held = mods & pygame.KMOD_SHIFT
@@ -1824,33 +1867,6 @@ class SequencerEditor:
                     else:
                         self.doc.graphs.append(PitchLane(df.lane, 1, 0, 0))
                         self.doc.graphs.sort(key=lambda g: g.lane)
-        elif ev.key == pygame.K_MINUS:
-            for df in self.doc.drawfuncs:
-                if df.tag == self.tag_name:
-                    for g in list(self.doc.graphs):
-                        if g.lane == df.lane and g.staves > 1:
-                            g.staves -= 1
-                        elif g.lane == df.lane and 1 == sum(1 for f in self.doc.drawfuncs if df.lane == f.lane):
-                            self.doc.graphs.remove(g)
-        elif ev.key == pygame.K_u:
-            if g := self.get_pitchlane():
-                g.margin_above += 1
-        elif ev.key == pygame.K_i:
-            if g := self.get_pitchlane():
-                g.margin_above = max(0, g.margin_above - 1)
-        elif ev.key == pygame.K_o:
-            if g := self.get_pitchlane():
-                g.margin_below = max(0, g.margin_below - 1)
-        elif ev.key == pygame.K_p:
-            if g := self.get_pitchlane():
-                g.margin_below += 1
-
-    def get_pitchlane(self):
-        for df in self.doc.drawfuncs:
-            if df.tag == self.tag_name:
-                for g in self.doc.graphs:
-                    if g.lane == df.lane and isinstance(g, PitchLane):
-                        return g
 
     def draw_tag_editor(self):
         y = 15 + 15
@@ -2940,18 +2956,6 @@ class SequencerEditor:
                 else:
                     pass
 
-    def draw_diamond(self, color, center, size):
-        center_x, center_y = center
-        half_width = size[0] / 2
-        half_height = size[1] / 2
-        points = [
-            (center_x, center_y - half_height),  # top
-            (center_x + half_width, center_y),   # right
-            (center_x, center_y + half_height),  # bottom
-            (center_x - half_width, center_y),   # left
-        ]
-        pygame.draw.polygon(self.screen, color, points)
-
 def modify(value, amt, ty):
     if ty == "bool":
        return 1*(not value)
@@ -2971,6 +2975,19 @@ def modify(value, amt, ty):
     elif ty == "dur":
        return max(0, value + amt * 0.01)
     return value
+
+def draw_diamond(screen, color, center, size):
+    center_x, center_y = center
+    half_width = size[0] / 2
+    half_height = size[1] / 2
+    points = [
+        (center_x, center_y - half_height),  # top
+        (center_x + half_width, center_y),   # right
+        (center_x, center_y + half_height),  # bottom
+        (center_x - half_width, center_y),   # left
+    ]
+    pygame.draw.polygon(screen, color, points)
+
 
 if __name__ == '__main__':
     editor = Editor()
