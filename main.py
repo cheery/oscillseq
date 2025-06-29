@@ -74,9 +74,11 @@ class LaneEditorView:
                 g.margin_below += 1
                 self.editor.refresh_layout()
         elif ev.key == pygame.K_DELETE:
-            tag = self.lane_tag
-            self.editor.walk_lane_tag(direction=True)
-            self.editor.erase_drawfunc(tag)
+            tag = self.editor.lane_tag
+            if any(tag == df.tag for df in self.editor.doc.drawfuncs):
+                self.editor.walk_lane_tag(direction=True)
+                self.editor.erase_drawfunc(tag)
+                self.editor.refresh_layout()
         elif ev.key == pygame.K_PLUS:
             for df in self.editor.doc.drawfuncs:
                 if df.tag == self.editor.lane_tag:
