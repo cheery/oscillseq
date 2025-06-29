@@ -19,7 +19,7 @@ import pygame
 import supriya
 import sys
 import spectroscope
-from brush_editor_view import BrushEditorView
+from brush_editor_view import BrushEditorView, modify
 from node_editor_view import NodeEditorView
 from lane_editor_view import LaneEditorView, drawfunc_table
 
@@ -355,7 +355,7 @@ class Editor:
             end_point = sequence.t(b)
         elif self.playback_loop:
             loop_start = 0
-            loop_point = sequence_end
+            loop_point = sequence.end
             end_point = sequence.end
         else:
             loop_start = -1
@@ -1439,22 +1439,6 @@ class SequencerEditor:
             if tree and tree.is_valid():
                 brush.tree = tree
 
-    def remove_rests(self):
-        setup = self.note_editor()
-        if setup is None:
-            return
-        brush, df, graph = setup
-        ix = 0
-        for leaf in brush.tree.leaves:
-            if leaf.label == "n":
-                ix += 1
-            if leaf.label == "r":
-                leaf.label = "n"
-                for name, gen in brush.generators.items():
-                    if isinstance(gen, PolyGen):
-                        gen.argslists.insert(ix, [{}])
-                ix += 1
-
     def modify_event_field(self, amount, erase=False):
             sel = self.sel
             if not sel or not isinstance(sel[-1].brush, Clap):
@@ -1486,29 +1470,6 @@ class SequencerEditor:
                             args.pop(name)
                 else:
                     pass
-
-def modify(value, amt, ty):
-    if ty == "boolean":
-       return 1*(not value)
-    elif ty == "unipolar":
-       return min(1, max(0, value + amt * 0.001))
-    elif ty == "number":
-       return value + amt
-    elif ty == "bipolar":
-       return min(1, max(-1, value + amt * 0.001))
-    # TODO: think of adjustments for non-pitch hz values.
-    elif ty in ["pitch", "hz"]:
-       if -10 < amt < 10:
-           return music.Pitch(value.position, min(2, max(-2, value.accidental + amt)))
-       elif -100 < amt < 100:
-           return music.Pitch(value.position + amt // 10, value.accidental)
-       else:
-           return music.Pitch(value.position + amt // 100 * 7, value.accidental)
-    elif ty == "db":
-       return min(10, max(-60, value + amt * 0.1))
-    elif ty == "duration":
-       return max(0, value + amt * 0.01)
-    return value
 
 def draw_diamond(screen, color, center, size):
     center_x, center_y = center

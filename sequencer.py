@@ -45,7 +45,7 @@ class Sequencer:
         else:
             index += 1
         for q in quadratics.values():
-            q.forward(self.point)
+            q.forward(self.point).send(clavier, fabric)
         for group_id in list(clavier):
             if group_id not in goal_clavier:
                 clavier.pop(group_id).set(gate=0)
@@ -122,7 +122,6 @@ class Quadratic:
     t : float
 
     def send(self, clavier, fabric):
-        #print('QUAD', self.time, self.tag)
         if self.tag not in fabric.synths:
             return
         fabric.control(self.tag,
@@ -133,10 +132,9 @@ class Quadratic:
 
     def forward(self, time):
         dt = time - self.time
-        if dt < self.t:
-            b = self.a*2*dt + self.b
-            c = self.a*dt*dt + self.b*dt + self.c
-            return Quadratic(time, self.tag, self.a, b, c, self.t - dt)
+        b = self.a*2*dt + self.b
+        c = self.a*dt*dt + self.b*dt + self.c
+        return Quadratic(time, self.tag, self.a, b, c, max(0, self.t - dt))
 
 @dataclass
 class Once:

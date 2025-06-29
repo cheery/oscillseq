@@ -334,7 +334,7 @@ class CellMenu:
         for element in self.gui:
             if element.rect.collidepoint(mouse_pos):
                 pygame.draw.rect(screen, (200, 200, 200), element.rect, 2, 3)
-            element.draw(screen, font, self.view.editor.definitions, scroll)
+            element.draw(screen, font, self.view.editor.definitions, scroll, None)
 
         for point in self.wire_inputs.values():
             point = point[0] + scroll[0], point[1] + scroll[1]

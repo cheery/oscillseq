@@ -622,7 +622,7 @@ class NoteEditorTool:
                             pitch = args.get(df.params["pitch"], music.Pitch(33))
                             if pitch.position != position:
                                 gen.argslists[i].append(args)
-        self.editor.refresh_layout()
+        self.view.editor.refresh_layout()
 
     def handle_mousebuttonup(self, ev):
         brush = self.clap
@@ -800,7 +800,7 @@ class NoteEditorTool:
             tree = measure.simplify(brush.tree.copy())
             if tree and tree.is_valid():
                 brush.tree = tree
-        self.editor.refresh_layout()
+        self.view.editor.refresh_layout()
 
     def handle_mousemotion(self, ev):
         pass
@@ -818,3 +818,25 @@ class NoteEditorTool:
                         gen.argslists.insert(ix, [{}])
                 ix += 1
 
+def modify(value, amt, ty):
+    if ty == "boolean":
+       return 1*(not value)
+    elif ty == "unipolar":
+       return min(1, max(0, value + amt * 0.001))
+    elif ty == "number":
+       return value + amt
+    elif ty == "bipolar":
+       return min(1, max(-1, value + amt * 0.001))
+    # TODO: think of adjustments for non-pitch hz values.
+    elif ty in ["pitch", "hz"]:
+       if -10 < amt < 10:
+           return music.Pitch(value.position, min(2, max(-2, value.accidental + amt)))
+       elif -100 < amt < 100:
+           return music.Pitch(value.position + amt // 10, value.accidental)
+       else:
+           return music.Pitch(value.position + amt // 100 * 7, value.accidental)
+    elif ty == "db":
+       return min(10, max(-60, value + amt * 0.1))
+    elif ty == "duration":
+       return max(0, value + amt * 0.01)
+    return value
