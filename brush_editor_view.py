@@ -1,23 +1,11 @@
 from model import Entity, ControlPoint, Key, Clip, ConstGen, PolyGen, Clap, Desc, DrawFunc, PitchLane, Cell, Document, json_to_brush
+import collections
 import measure
 import pygame
+import bisect
+import music
 
 class BrushEditorView:
-    PATTERNS = [
-        "r",
-        "n",
-        "2nn",
-        "3nnn",
-        "22nn2nn",
-        "5nnnnn",
-        "32nn2nn2nn",
-        "7nnnnnnn",
-        "222nn2nn22nn2nn",
-        "33nnn3nnn3nnn",
-        "52nn2nn2nn2nn2nn",
-        "bnnnnnnnnnnn",
-    ]
-
     def __init__(self, editor):
         self.editor = editor
         self.tool = NoTool(self)
@@ -42,9 +30,17 @@ class BrushEditorView:
         pygame.draw.line(screen, (0,255,255), (bx, 0), (bx, SCREEN_HEIGHT), 2)
 
     def handle_keydown(self, ev):
+        if isinstance(self.tool, NoteEditorTool):
+            if ev.key == pygame.K_ESCAPE:
+                self.tool = NoTool(self)
+            return
         mods = pygame.key.get_mods()
         shift_held = mods & pygame.KMOD_SHIFT
-        if ev.key == pygame.K_PAGEUP:
+        if ev.key == pygame.K_RETURN:
+            brush = self.get_brush()
+            if isinstance(brush, Clap):
+                self.tool = NoteEditorTool(self, brush, sum(e.shift for e in self.selection))
+        elif ev.key == pygame.K_PAGEUP:
             self.editor.timeline_vertical_scroll -= self.editor.SCREEN_HEIGHT / 4
             self.editor.timeline_vertical_scroll = max(0, self.editor.timeline_vertical_scroll)
         elif ev.key == pygame.K_PAGEDOWN:
@@ -354,4 +350,471 @@ def adjust_boundaries(selection, doc=None, tighten=False):
             if e.brush == selection:
                 e.shift += shift
     return shifts.get(doc or clip, 0)
+
+class NoteEditorTool:
+    PATTERNS = [
+        "r",
+        "n",
+        "2nn",
+        "3nnn",
+        "22nn2nn",
+        "5nnnnn",
+        "32nn2nn2nn",
+        "7nnnnnnn",
+        "222nn2nn22nn2nn",
+        "33nnn3nnn3nnn",
+        "52nn2nn2nn2nn2nn",
+        "bnnnnnnnnnnn",
+    ]
+
+    def __init__(self, view, clap, location):
+        self.view = view
+        self.clap = clap
+        self.location = location
+        self.accidental = None             # note editor accidental
+        self.note_tool = 'draw'            # note editor current tool
+        self.note_tail = None              # note editor tail selection (when dragging).
+        self.pattern = "n"                 # note editor after-split pattern.
+
+    def note_editor(self):
+        for df in self.view.editor.doc.drawfuncs:
+            if df.tag == self.view.editor.lane_tag and df.drawfunc == "note":
+                break
+        else:
+            return
+        for graph in self.view.editor.doc.graphs:
+            if graph.lane == df.lane and isinstance(graph, PitchLane):
+                break
+        else:
+            return
+        return df, graph
+
+    def draw(self, screen):
+        brush = self.clap
+        editor = self.view.editor
+        layout = editor.layout
+        font = self.view.editor.font
+        SCREEN_WIDTH = editor.SCREEN_WIDTH
+        SCREEN_HEIGHT = editor.SCREEN_HEIGHT
+        w = (SCREEN_WIDTH - self.view.editor.MARGIN) / self.view.editor.BARS_VISIBLE
+
+        x = editor.MARGIN
+        y = SCREEN_HEIGHT/4
+        rect = pygame.Rect(x, y, SCREEN_WIDTH - editor.MARGIN, SCREEN_HEIGHT/2)
+        pygame.draw.rect(screen, (30, 30, 30), rect, False)
+        pygame.draw.rect(screen, (0, 255, 0), rect, True)
+
+        def draw_tree(x, y, span, tree):
+            color = (200, 200, 200)
+            if len(tree) == 0:
+                text = font.render(tree.label, True, color)
+                w = span/2 - text.get_width() / 2
+                screen.blit(text, (x + w, y))
+            else:
+                w = span / len(tree)
+                rect = pygame.Rect(x + w/2, y, span - w, 1)
+                pygame.draw.rect(screen, color, rect)
+                for i, stree in enumerate(tree):
+                    rect = pygame.Rect(x + i*w + w/2 - 1, y, 2, 3)
+                    pygame.draw.rect(screen, color, rect)
+                    draw_tree(x + i*w, y+3, w, stree)
+        draw_tree(x, y + 3, min(4, brush.duration)*w, brush.tree)
+        y1 = y + SCREEN_HEIGHT / 2
+        y += 3*brush.tree.depth + 23
+
+        starts, stops = brush.tree.offsets(min(4, brush.duration), 0)
+
+        setup = self.note_editor()
+        if setup is None:
+            return
+        df, graph = setup
+
+        mx, my = pygame.mouse.get_pos()
+
+        for point in starts + stops:
+            if 0 < point < 4:
+                pygame.draw.line(screen, (70, 70, 70), (x + point*w, y + 1), (x + point*w, y1 - 2))
+
+        y += graph.margin_above * layout.STAVE_HEIGHT * 2
+        yg = y
+        for _ in range(graph.staves):
+            for p in range(2, 12, 2):
+                pygame.draw.line(screen, (70, 70, 70), (x, y + p*(layout.STAVE_HEIGHT*2 / 12)), (SCREEN_WIDTH, y + p*(layout.STAVE_HEIGHT*2 / 12)))
+            y += layout.STAVE_HEIGHT * 2
+        y += graph.margin_below * layout.STAVE_HEIGHT * 2
+
+        colors = [(0,0,128), (0,0,255), (255,128,0), (255, 0, 0), (128,0,0)]
+
+        location = self.location
+
+        graph_key_map = {graph: [(0, 0)]}
+        editor.doc.annotate(graph_key_map, 0)
+        graph_key = graph_key_map[graph]
+        graph_key.sort(key=lambda x: x[0])
+        d_ratio = brush.duration / min(4, brush.duration)
+        def get_accidentals(b):
+            ix = bisect.bisect_right(graph_key, d_ratio * b + location, key=lambda z: z[0])
+            return music.accidentals(graph_key[ix-1][1])
+
+        if df.tag in brush.generators:
+            gen = brush.generators[df.tag]
+            for i, (s, e) in enumerate(zip(starts, stops)):
+                acci = get_accidentals(s)
+                for _, args in gen.pull(i, (), False):
+                    pitch = args.get(df.params["pitch"], music.Pitch(33))
+                    color = colors[pitch.accidental + 2]
+                    if pitch.accidental == acci[pitch.position % 7]:
+                        color = (255,255,255)
+                    yp = yg + (40 - pitch.position) * layout.STAVE_HEIGHT*2 / 12
+                    span = (e-s)*w
+                    pygame.draw.line(screen, color, (x + s*w + span*0.05, yp), (x + e*w - span*0.05, yp), int(layout.STAVE_HEIGHT/9))
+
+        for i, (s, e) in enumerate(zip(starts, stops)):
+            if s*w <= mx - x <= e*w:
+                yp = (my - yg) // (layout.STAVE_HEIGHT*2/12) * (layout.STAVE_HEIGHT*2/12) + yg
+                span = (e-s)*w
+                rect = pygame.Rect(x + s*w + span*0.05, yp - layout.STAVE_HEIGHT * 0.25 / 2, span*0.9, layout.STAVE_HEIGHT * 0.25)
+                if self.accidental is None:
+                    color = (255,255,255)
+                else:
+                    color = colors[self.accidental + 2]
+                pygame.draw.rect(screen, color, rect, 1)
+
+        band1 = ["bb", "b", "n", "s", "ss"]
+        band2 = ["draw", "r", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11"]
+        px = 0
+        py = SCREEN_HEIGHT - 96
+        for i, text in enumerate(band1):
+            selected = (self.accidental == i-2)
+            rect = pygame.Rect(px, py, 32, 32)
+            pygame.draw.rect(screen, (100, 100 + 50 * selected, 100), rect, 0)
+            pygame.draw.rect(screen, (200, 200, 200), rect, 1)
+            text = font.render(text, True, (200, 200, 200))
+            screen.blit(text, (px + 16 - text.get_width()/2, py + 16 - text.get_height()/2))
+            px += 32
+        px = 0
+        py = SCREEN_HEIGHT - 64
+        for i, text in enumerate(band2):
+            if i == 0:
+                selected = (self.note_tool == "draw")
+            else:
+                selected = (self.note_tool == "split" and self.pattern == self.PATTERNS[i-1])
+            rect = pygame.Rect(px, py, 32, 32)
+            pygame.draw.rect(screen, (100, 100 + 50 * selected, 100), rect, 0)
+            pygame.draw.rect(screen, (200, 200, 200), rect, 1)
+            text = font.render(text, True, (200, 200, 200))
+            screen.blit(text, (px + 16 - text.get_width()/2, py + 16 - text.get_height()/2))
+            px += 32
+        px = SCREEN_WIDTH / 2
+        py = SCREEN_HEIGHT - 64
+        band3 = ["r -> n"]
+        for i, text in enumerate(band3):
+            selected = False
+            rect = pygame.Rect(px, py, 64, 32)
+            pygame.draw.rect(screen, (100, 100 + 50 * selected, 100), rect, 0)
+            pygame.draw.rect(screen, (200, 200, 200), rect, 1)
+            text = font.render(text, True, (200, 200, 200))
+            screen.blit(text, (px + 32 - text.get_width()/2, py + 16 - text.get_height()/2))
+            px += 64
+
+    def handle_mousebuttondown(self, ev):
+        brush = self.clap
+        editor = self.view.editor
+        layout = editor.layout
+        font = self.view.editor.font
+        SCREEN_WIDTH = editor.SCREEN_WIDTH
+        SCREEN_HEIGHT = editor.SCREEN_HEIGHT
+        w = (SCREEN_WIDTH - self.view.editor.MARGIN) / self.view.editor.BARS_VISIBLE
+        setup = self.note_editor()
+        if setup is None:
+            return
+        df, graph = setup
+
+        band1 = ["bb", "b", "n", "s", "ss"]
+        band2 = ["draw", "r", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11"]
+        px = 0
+        py = SCREEN_HEIGHT - 96
+        for i, text in enumerate(band1):
+            rect = pygame.Rect(px, py, 32, 32)
+            if rect.collidepoint(ev.pos) and ev.type == pygame.MOUSEBUTTONDOWN:
+                acc = i-2
+                if self.accidental == acc:
+                    self.accidental = None
+                else:
+                    self.accidental = acc
+                return
+            px += 32
+        px = 0
+        py = SCREEN_HEIGHT - 64
+        for i, text in enumerate(band2):
+            rect = pygame.Rect(px, py, 32, 32)
+            if rect.collidepoint(ev.pos) and ev.type == pygame.MOUSEBUTTONDOWN:
+                if i == 0:
+                    self.note_tool = "draw"
+                else:
+                    self.note_tool = "split"
+                    self.pattern = self.PATTERNS[i-1]
+                return
+            px += 32
+        px = SCREEN_WIDTH / 2
+        py = SCREEN_HEIGHT - 64
+        band3 = ["r -> n"]
+        for i, text in enumerate(band3):
+            rect = pygame.Rect(px, py, 64, 32)
+            if rect.collidepoint(ev.pos) and ev.type == pygame.MOUSEBUTTONDOWN:
+                if i == 0:
+                    self.remove_rests()
+                return
+            px += 64
+        # TODO: avoid repeating this code
+        x = editor.MARGIN
+        y = SCREEN_HEIGHT/4
+        y += 3*brush.tree.depth + 23
+        yg = y + graph.margin_above * layout.STAVE_HEIGHT * 2
+        starts, stops = brush.tree.offsets(min(4, brush.duration), 0)
+
+        location = self.location
+        graph_key_map = {graph: [(0, 0)]}
+        editor.doc.annotate(graph_key_map, 0)
+        graph_key = graph_key_map[graph]
+        graph_key.sort(key=lambda x: x[0])
+        d_ratio = brush.duration / min(4, brush.duration)
+        def get_accidentals(b):
+            ix = bisect.bisect_right(graph_key, d_ratio * b + location, key=lambda z: z[0])
+            return music.accidentals(graph_key[ix-1][1])
+
+        if self.note_tool == "split":
+            mx, my = ev.pos
+            self.note_tail = None
+            for i, (s, e) in enumerate(zip(starts, stops)):
+                if s*w <= mx - x <= e*w:
+                    self.note_tail = i
+
+        if self.note_tool == "draw":
+            mx, my = ev.pos
+            position = 40 - int((my - yg) // (layout.STAVE_HEIGHT*2/12))
+            for i, (s, e) in enumerate(zip(starts, stops)):
+                if s*w <= mx - x <= e*w:
+                    acci = get_accidentals(s)
+                    acc = self.accidental or acci[position%7]
+                    total = sum(1 for leaf in brush.tree.leaves if leaf.label == "n")
+                    gen = brush.generators.get(df.tag, None)
+                    if isinstance(gen, ConstGen):
+                        a = [ [args.copy() for args in gen.argslist] for _ in range(total)]
+                        gen = brush.generators[df.tag] = PolyGen(a)
+                    elif gen is None:
+                        a = [ [] for _ in range(total)]
+                        gen = brush.generators[df.tag] = PolyGen(a)
+                    argslist = gen.argslists[i]
+                    gen.argslists[i] = []
+                    if ev.button == 1:
+                        found = False
+                        for args in argslist:
+                            pitch = args.get(df.params["pitch"], music.Pitch(33))
+                            if pitch.position == position:
+                                args[df.params["pitch"]] = music.Pitch(position, acc)
+                                found = True
+                            gen.argslists[i].append(args)
+                        if not found:
+                            gen.argslists[i].append({df.params["pitch"]: music.Pitch(position, acc)})
+                    elif ev.button == 3:
+                        for args in argslist:
+                            pitch = args.get(df.params["pitch"], music.Pitch(33))
+                            if pitch.position != position:
+                                gen.argslists[i].append(args)
+        self.editor.refresh_layout()
+
+    def handle_mousebuttonup(self, ev):
+        brush = self.clap
+        editor = self.view.editor
+        layout = editor.layout
+        font = self.view.editor.font
+        SCREEN_WIDTH = editor.SCREEN_WIDTH
+        SCREEN_HEIGHT = editor.SCREEN_HEIGHT
+        w = (SCREEN_WIDTH - self.view.editor.MARGIN) / self.view.editor.BARS_VISIBLE
+        setup = self.note_editor()
+        if setup is None:
+            return
+        df, graph = setup
+
+        # TODO: avoid repeating this code
+        x = editor.MARGIN
+        y = SCREEN_HEIGHT/4
+        y += 3*brush.tree.depth + 23
+        yg = y + graph.margin_above * layout.STAVE_HEIGHT * 2
+        starts, stops = brush.tree.offsets(min(4, brush.duration), 0)
+
+        location = self.location
+        graph_key_map = {graph: [(0, 0)]}
+        editor.doc.annotate(graph_key_map, 0)
+        graph_key = graph_key_map[graph]
+        graph_key.sort(key=lambda x: x[0])
+        d_ratio = brush.duration / min(4, brush.duration)
+        def get_accidentals(b):
+            ix = bisect.bisect_right(graph_key, d_ratio * b + location, key=lambda z: z[0])
+            return music.accidentals(graph_key[ix-1][1])
+
+        if self.note_tool == "split" and self.note_tail is not None:
+            mx, my = ev.pos
+            note_head = self.note_tail
+            for i, (s, e) in enumerate(zip(starts, stops)):
+                if s*w <= mx - x <= e*w:
+                    note_head = i
+            first = min(note_head, self.note_tail)
+            last  = max(note_head, self.note_tail)
+            def segments(tree):
+                segs = []
+                for leaf in tree.leaves:
+                    if leaf.label == "n" or leaf.label == "r":
+                        segs.append([leaf])
+                    elif leaf.label == "s":
+                        segs[-1].append(leaf)
+                return [seg for seg in segs if seg[0].label == "n"]
+            xs = segments(brush.tree)
+            first_leaf = xs[first][0]
+            last_leaf = xs[last][-1]
+            def left_corner(leaf):
+                while True:
+                    cousin = leaf.prev_cousin()
+                    if cousin is not None and cousin.label == "o":
+                        leaf = cousin
+                        continue
+                    if leaf.parent and leaf.parent.children[0] is leaf:
+                        leaf = leaf.parent
+                        continue
+                    break
+                return leaf
+            first_leaf = left_corner(first_leaf)
+            def right_corner(leaf):
+                while leaf.parent and leaf.parent.children[-1] is leaf:
+                    leaf = leaf.parent
+                return leaf
+            last_leaf = right_corner(last_leaf)
+
+            def extrapolate(tree, path, side):
+                for ix in path:
+                    tree = tree.children[ix]
+                    yield tree
+                while tree.children:
+                    tree = tree.children[side]
+                    yield tree
+
+            lca = brush.tree
+            ex1 = extrapolate(lca, first_leaf.get_path(), 0)
+            ex2 = extrapolate(lca, last_leaf.get_path(), -1)
+            for lca0, lca1 in zip(ex1, ex2):
+                if lca0 is lca1:
+                    lca = lca0
+                    if lca.parent is first_leaf:
+                        first_leaf = lca
+                    if lca.parent is last_leaf:
+                        last_leaf = lca
+                else:
+                    break
+            if lca is first_leaf and lca is last_leaf:
+                lca.label = "n"
+                lca.children = []
+                first_leaf = last_leaf = lca
+            else:
+                if lca is first_leaf:
+                    first_leaf = lca.children[0]
+                first_leaf.label = "n"
+                first_leaf.children = []
+                if lca is last_leaf:
+                    last_leaf = lca.children[-1]
+                last_leaf.label = "s"
+                last_leaf.children = []
+                branch0 = first_leaf
+                while branch0.parent is not lca:
+                    parent = branch0.parent
+                    for this in parent.children[parent.children.index(branch0)+1:]:
+                        this.label = "s"
+                        this.children = []
+                    branch0 = parent
+                branch1 = last_leaf
+                while branch1.parent is not lca:
+                    parent = branch1.parent
+                    for this in parent.children[:parent.children.index(branch1)]:
+                        this.label = "s"
+                        this.children = []
+                    branch1 = parent
+                i = lca.children.index(branch0)
+                j = lca.children.index(branch1)
+                for this in lca.children[i+1:j]:
+                    this.label = "s"
+                    this.children = []
+                assert first_leaf.label == "n"
+
+            leaves = brush.tree.leaves
+            ix0 = leaves.index(first_leaf)
+            first1 = sum(1 for leaf in leaves[:ix0] if leaf.label == "n")
+            ix1 = leaves.index(last_leaf)
+            last1 = sum(1 for leaf in leaves[:ix1] if leaf.label == "n")
+            d0 = (last + 1 - first)
+            d1 = (last1 + 1 - first1)
+
+            if self.pattern != "n":
+                block = leaves[ix0:ix1+1]
+                def collect(tree):
+                    lst = []
+                    while tree.parent:
+                        tree = tree.parent
+                        lst.append(len(tree))
+                    return lst
+                exponents = [collections.Counter(collect(leaf)) for leaf in block]
+
+                t_exponent = {p: max(counter.get(p, 0) for counter in exponents) for p in measure.primes}
+                for counter, leaf in zip(exponents, block):
+                    add_counts = {p: t_exponent[p] - counter.get(p, 0) for p in measure.primes}
+                    to_add = []
+                    for p, count in add_counts.items():
+                        to_add.extend([p] * count)
+                    def explode(leaf, to_add):
+                        if to_add:
+                            leaf.label = ""
+                            leaf.children = []
+                            for _ in range(to_add[0]):
+                                subleaf = measure.Tree("o")
+                                leaf.children.append(subleaf)
+                                subleaf.parent = leaf
+                                explode(subleaf, to_add[1:])
+                        else:
+                            leaf.label = "o"
+                    explode(leaf, to_add)
+                leaf.last_leaf.label = "n"
+                n_tree = measure.Tree.from_string(self.pattern)
+                ll = leaf.last_leaf
+                ll.label = n_tree.label
+                ll.children = n_tree.children
+                for child in n_tree.children:
+                    child.parent = ll
+                d1 = sum(1 for leaf in ll.leaves if leaf.label == "n")
+
+            for name, gen in brush.generators.items():
+                if isinstance(gen, PolyGen) and d1 != d0 and d0 == 1:
+                    pat = gen.argslists[first]
+                    gen.argslists[first:last+1] = [[a.copy() for a in pat] for _ in range(d1)]
+                elif isinstance(gen, PolyGen) and d1 != d0:
+                    gen.argslists[first:last+1] = [[{}] for _ in range(d1)]
+
+            tree = measure.simplify(brush.tree.copy())
+            if tree and tree.is_valid():
+                brush.tree = tree
+        self.editor.refresh_layout()
+
+    def handle_mousemotion(self, ev):
+        pass
+
+    def remove_rests(self):
+        brush = self.clap
+        ix = 0
+        for leaf in brush.tree.leaves:
+            if leaf.label == "n":
+                ix += 1
+            if leaf.label == "r":
+                leaf.label = "n"
+                for name, gen in brush.generators.items():
+                    if isinstance(gen, PolyGen):
+                        gen.argslists.insert(ix, [{}])
+                ix += 1
 

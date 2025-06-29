@@ -51,7 +51,7 @@ class NodeEditorView:
             pygame.draw.lines(screen, color, False, wire, 4)
 
         for element in gui:
-            element.draw(screen, font, self.editor.definitions, scroll)
+            element.draw(screen, font, self.editor.definitions, scroll, self.editor.fabric)
         
         for point in wire_inputs.values():
                 point = point[0] + scroll[0], point[1] + scroll[1]
@@ -403,7 +403,7 @@ class GUICell:
         self.outputs = outputs
         self.valueparams = valueparams
 
-    def draw(element, screen, font, definitions, scroll):
+    def draw(element, screen, font, definitions, scroll, fabric):
         cell = element.cell
         d = definitions.retrieve(cell.definition)
         x, y = element.rect.x + scroll[0], element.rect.y + scroll[1]
@@ -432,10 +432,13 @@ class GUICell:
                 parameter = d.synthdef.parameters[name][0]
                 val = parameter.value[0]
                 color = (255, 255, 200)
-            #print(d.synthdef.constants)
+            trl = fabric.trail[cell.label].get(name, None) if fabric is not None else None
             text = font.render(f"{name} : {ty}", True, (200, 200, 200))
             screen.blit(text, (x + 75 - text.get_width()//2,y + k*45 + 15))
-            text = font.render(f"{val}", True, color)
+            if trl is not None:
+                text = font.render(f"{val} [{trl}]", True, color)
+            else:
+                text = font.render(f"{val}", True, color)
             screen.blit(text, (x + 75 - text.get_width()//2,y + k*45 + 30))
 
 def layout_cell(cell, wire_inputs, wire_outputs, definitions):

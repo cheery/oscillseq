@@ -89,6 +89,7 @@ class Relay:
 
 class Fabric:
     def __init__(self, server, cells, connections, definitions_):
+        self.trail = defaultdict(dict)
         definitions = {}
         synthdefs = []
         for cell in cells:
@@ -219,24 +220,28 @@ class Fabric:
     def control(self, label, **args):
         c, synth = self.synths[label]
         synth.set(**self.map_params(c.synth, args))
+        self.trail[label].update(args)
 
     def synth(self, label, **args):
         c, g = self.synths[label]
         if c.multi:
             d = self.definitions[c.definition]
-            params = c.params
+            params = c.params.copy()
             params.update(self.busmap[label])
             params.update(args)
             synth = g.add_synth(d.synthdef, **self.map_params(c.synth, params))
-            return LabeledSynth(c.synth, self, synth)
+            self.trail[label].update(params)
+            return LabeledSynth(label, c.synth, self, synth)
 
 class LabeledSynth:
-    def __init__(self, synth_name, fabric, synth):
+    def __init__(self, label, synth_name, fabric, synth):
+        self.label = label
         self.synth_name = synth_name
         self.fabric = fabric
         self.synth = synth
 
     def set(self, **params):
+        self.fabric.trail[self.label].update(params)
         params = self.fabric.map_params(self.synth_name, params)
         return self.synth.set(**params)
 
