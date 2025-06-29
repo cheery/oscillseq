@@ -22,6 +22,296 @@ import spectroscope
 from node_editor_view import NodeEditorView
 from lane_editor_view import LaneEditorView, drawfunc_table
 
+class BrushEditorView:
+    PATTERNS = [
+        "r",
+        "n",
+        "2nn",
+        "3nnn",
+        "22nn2nn",
+        "5nnnnn",
+        "32nn2nn2nn",
+        "7nnnnnnn",
+        "222nn2nn22nn2nn",
+        "33nnn3nnn3nnn",
+        "52nn2nn2nn2nn2nn",
+        "bnnnnnnnnnnn",
+    ]
+
+    def __init__(self, editor):
+        self.editor = editor
+        self.tool = DummyTool(self)
+        self.selection = []
+        self.reference = None
+
+    def draw(self, screen):
+        font = self.editor.font
+        SCREEN_WIDTH = screen.get_width()
+        SCREEN_HEIGHT = screen.get_height()
+        w = (SCREEN_WIDTH - self.editor.MARGIN) / self.editor.BARS_VISIBLE
+        self.editor.layout.draw(screen, font, self.editor)
+
+        #self.screen.set_clip(pygame.Rect(self.MARGIN, 0, w * self.BARS_VISIBLE, self.SCREEN_HEIGHT))
+        start = min(self.editor.timeline_head, self.editor.timeline_tail)
+        stop  = max(self.editor.timeline_head, self.editor.timeline_tail)
+        rect = pygame.Rect((start - self.editor.timeline_scroll)*w + self.editor.MARGIN, 15, (stop-start)*w, SCREEN_HEIGHT - 32 - 15)
+        pygame.draw.rect(screen, (128,200,200), rect, 1)
+        #self.screen.set_clip(None)
+
+        bx = (self.editor.timeline_head - self.editor.timeline_scroll)*w + self.editor.MARGIN
+        pygame.draw.line(screen, (0,255,255), (bx, 0), (bx, SCREEN_HEIGHT), 2)
+
+    def handle_keydown(self, ev):
+        mods = pygame.key.get_mods()
+        shift_held = mods & pygame.KMOD_SHIFT
+        if ev.key == pygame.K_PAGEUP:
+            self.editor.timeline_vertical_scroll -= self.editor.SCREEN_HEIGHT / 4
+            self.editor.timeline_vertical_scroll = max(0, self.editor.timeline_vertical_scroll)
+        elif ev.key == pygame.K_PAGEDOWN:
+            self.editor.timeline_vertical_scroll += self.editor.SCREEN_HEIGHT / 4
+        elif ev.key == pygame.K_8:
+            start = min(self.editor.timeline_head, self.editor.timeline_tail)
+            stop  = max(self.editor.timeline_head, self.editor.timeline_tail)
+            if start < stop:
+                self.editor.playback_range = start, stop
+            else:
+                self.editor.playback_range = None
+        elif ev.key == pygame.K_9:
+            if shift_held:
+                self.editor.shift_lane_tag(False)
+            else:
+                self.editor.walk_lane_tag(False)
+        elif ev.key == pygame.K_0:
+            if shift_held:
+                self.editor.shift_lane_tag(True)
+            else:
+                self.editor.walk_lane_tag(True)
+        elif ev.key == pygame.K_q:
+            self.reference = self.selection[-1].brush if self.selection else None
+        elif ev.key == pygame.K_w:
+            if self.reference:
+                self.insert_brush(self.reference.duration, lambda duration: self.reference)
+        elif ev.key == pygame.K_e:
+            if self.selection:
+                brush = self.selection[-1].brush
+                brush = self.editor.doc.intro(json_to_brush("", brush.to_json()))
+                self.selection[-1].brush = brush
+        elif ev.key == pygame.K_o:
+            sel = self.selection
+            if sel:
+                sel[-1].shift = max(0, sel[-1].shift - 1)
+            else:
+                if all(e.shift > 0 for e in self.editor.doc.brushes):
+                    for e in self.editor.doc.brushes:
+                        e.shift -= 1
+        elif ev.key == pygame.K_p:
+            sel = self.selection
+            if sel:
+                sel[-1].shift = sel[-1].shift + 1
+            else:
+                for e in self.editor.doc.brushes:
+                    e.shift += 1
+            a = adjust_boundaries(self.doc)
+            self.editor.timeline_head -= a
+            self.editor.timeline_tail -= a
+            self.editor.timeline_scroll = min(self.editor.bar_head, self.editor.timeline_scroll)
+            self.editor.timeline_scroll = max(self.editor.bar_head - self.editor.BARS_VISIBLE + 1, self.editor.timeline_scroll)
+        elif ev.key == pygame.K_t and shift_held:
+            sel = self.selection
+            if sel:
+                brush = sel[-1].brush
+                if isinstance(brush, Clip):
+                    adjust_boundaries(brush, self.editor.doc, True)
+            else:
+                adjust_boundaries(self.doc, self.editor.doc, True)
+        elif ev.key == pygame.K_LEFT:
+            self.editor.timeline_head = max(0, self.editor.timeline_head - 1)
+            if not shift_held:
+                self.editor.timeline_tail = self.editor.timeline_head
+            self.editor.timeline_scroll = min(self.editor.timeline_head, self.editor.timeline_scroll)
+        elif ev.key == pygame.K_RIGHT:
+            self.editor.timeline_head += 1
+            if not shift_held:
+                self.editor.timeline_tail = self.editor.timeline_head
+            self.editor.timeline_scroll = max(self.editor.timeline_head - self.editor.BARS_VISIBLE + 1, self.editor.timeline_scroll)
+        elif ev.key == pygame.K_UP and shift_held:
+            sel = self.selection
+            if sel:
+                clip = self.get_brush(sel[:-1])
+                i = clip.brushes.index(sel[-1])
+                if i > 0:
+                    clip.brushes[i-1], clip.brushes[i] = clip.brushes[i], clip.brushes[i-1]
+        elif ev.key == pygame.K_DOWN and shift_held:
+            sel = self.selection
+            if sel:
+                clip = self.get_brush(sel[:-1])
+                i = clip.brushes.index(sel[-1])
+                if i+1 < len(clip.brushes):
+                    clip.brushes[i+1], clip.brushes[i] = clip.brushes[i], clip.brushes[i+1]
+        elif ev.key == pygame.K_UP:
+            brushlist = dfs_list(self.editor.doc.brushes)
+            sel = self.selection
+            if sel:
+                ix = brushlist.index(sel) - 1
+                self.selection = brushlist[ix] if ix >= 0 else []
+            else:
+                self.selection = brushlist[-1] if brushlist else []
+        elif ev.key == pygame.K_DOWN:
+            brushlist = dfs_list(self.editor.doc.brushes)
+            sel = self.selection
+            if sel:
+                ix = brushlist.index(sel) + 1
+                self.selection = brushlist[ix] if ix < len(brushlist) else []
+            else:
+                self.selection = brushlist[0] if brushlist else []
+        elif ev.key == pygame.K_a:
+            self.insert_brush(1, lambda duration: (Clap("", duration, measure.Tree.from_string("n"), {})))
+        elif ev.key == pygame.K_s:
+            self.insert_brush(1, lambda duration: (Clip("", duration, [])))
+        elif ev.key == pygame.K_c and self.editor.lane_tag is not None:
+            #desc = self.doc.descriptors[self.editor.lane_tag]
+            #dspec = dict(desc.spec)
+            #if "value" in dspec and desc.kind == "control":
+            #    ty = dspec["value"]
+            #    v = music.Pitch(33) if ty == "pitch" else 0
+            v = 0
+            self.insert_brush(0, lambda duration: (ControlPoint("", tag=self.editor.lane_tag, transition=True, value=v)))
+        elif ev.key == pygame.K_k:
+            self.insert_brush(1, lambda duration: Key("", -1, 0))
+        elif ev.key == pygame.K_DELETE and shift_held:
+            self.erase_brush(self.get_brush())
+        elif ev.key == pygame.K_DELETE:
+            self.erase_selection()
+        elif ev.key == pygame.K_PLUS:
+            brush = self.get_brush()
+            if isinstance(brush, ControlPoint):
+                brush.transition = not brush.transition
+            elif isinstance(brush, Clap):
+                brush.duration += 1
+                a = adjust_boundaries(self.doc)
+                self.editor.timeline_head -= a
+                self.editor.timeline_tail -= a
+                self.editor.timeline_scroll = min(self.editor.timeline_head, self.editor.timeline_scroll)
+                self.editor.timeline_scroll = max(self.editor.timeline_head - self.editor.BARS_VISIBLE + 1, self.editor.timeline_scroll)
+        elif ev.key == pygame.K_MINUS:
+            brush = self.get_brush()
+            if isinstance(brush, Clap):
+                brush.duration = max(1, brush.duration-1)
+        elif ev.key == pygame.K_j:
+            self.modify_control_point(+1)
+        elif ev.key == pygame.K_m:
+            self.modify_control_point(-1)
+        elif ev.key == pygame.K_h:
+            self.modify_control_point(+10)
+        elif ev.key == pygame.K_n:
+            self.modify_control_point(-10)
+        elif ev.key == pygame.K_g:
+            self.modify_control_point(+100)
+        elif ev.key == pygame.K_b:
+            self.modify_control_point(-100)
+        elif ev.key == pygame.K_f:
+            self.modify_control_point(+1000)
+        elif ev.key == pygame.K_v:
+            self.modify_control_point(-1000)
+        self.editor.refresh_layout()
+
+    def close(self):
+        pass
+
+    def insert_brush(self, min_duration, mkbrush):
+        shift = min(self.editor.timeline_head, self.editor.timeline_tail)
+        duration = max(self.editor.timeline_head, self.editor.timeline_tail) - shift
+        duration = max(min_duration, duration)
+        bobj = self.editor.doc.intro(mkbrush(duration))
+        self.editor.doc.duration = max(self.editor.doc.duration, shift + duration)
+        brushlist = dfs_list(self.editor.doc.brushes)
+        sel = self.selection
+        if sel:
+            if isinstance(sel[-1].brush, Clip):
+                brushes = sel[-1].brush.brushes
+                i_point = len(brushes)
+            elif len(sel) > 1:
+                brushes = sel[-2].brush.brushes
+                i_point = brushes.index(sel[-1])
+                sel = sel[:-1]
+            else:
+                brushes = self.editor.doc.brushes
+                i_point = brushes.index(sel[-1])
+                sel = []
+            for e in sel:
+                if bobj == e.brush:
+                    return
+                shift = shift - e.shift
+        else:
+            brushes = self.editor.doc.brushes
+            i_point = len(brushes)
+            sel = []
+        obj = Entity(shift, bobj)
+        brushes.insert(i_point, obj)
+        self.selection = sel + [obj]
+        a = adjust_boundaries(self.editor.doc)
+        self.editor.timeline_head -= a
+        self.editor.timeline_tail -= a
+        self.editor.timeline_scroll = min(self.editor.timeline_head, self.editor.timeline_scroll)
+        self.editor.timeline_scroll = max(self.editor.timeline_head - self.editor.BARS_VISIBLE + 1, self.editor.timeline_scroll)
+
+    def modify_control_point(self, amount):
+        cp = self.get_brush()
+        if isinstance(cp, ControlPoint):
+            #desc = self.doc.descriptors[cp.tag]
+            #ty = dict(desc.spec)["value"]
+            # TODO: think of a good solution to this.
+            cp.value = modify(cp.value, amount, "number")
+        if isinstance(cp, Key):
+            cp.index = max(-7, min(+7, modify(cp.index, amount, "number")))
+
+    def get_brush(self, selection=None):
+        if selection is None:
+            selection = self.selection
+        if len(selection) > 0:
+            return selection[-1].brush
+        else:
+            return self.editor.doc
+
+    def erase_brush(self, target):
+        def do_erase():
+            for brush in [self.editor.doc] + list(self.editor.doc.labels.values()):
+                if isinstance(brush, (Clip, Document)):
+                    for e in list(brush.brushes):
+                        if e.brush == target:
+                            brush.brushes.remove(e)
+            self.editor.doc.labels.pop(target.label)
+        for i, e in enumerate(self.selection):
+            if e.brush == target:
+                self.selection[i:] = []
+                clip = self.get_brush()
+                index = clip.brushes.index(e)
+                do_erase()
+                if index < len(clip.brushes):
+                    self.selection.append(clip.brushes[index])
+                break
+        else:
+            do_erase()
+
+    def erase_selection(self):
+        brushlist = dfs_list(self.editor.doc.brushes)
+        selection = self.selection
+        if selection:
+            if len(selection) > 1:
+                brushes = selection[-2].brush.brushes
+            else:
+                brushes = self.editor.doc.brushes
+            i = min(brushes.index(selection[-1]), len(brushes)-2)
+            brushes.remove(selection[-1])
+            if i >= 0:
+                selection[-1] = brushes[i]
+            else:
+                selection.pop(-1)
+            self.editor.doc.rebuild_labels()
+        else:
+            self.editor.doc.brushes = []
+            self.editor.doc.rebuild_labels()
+
 class DummyView:
     def __init__(self, editor):
         self.editor = editor
@@ -177,7 +467,7 @@ class Editor:
 
         self.toolbar = Toolbar(pygame.Rect(0, self.SCREEN_HEIGHT - 32, self.SCREEN_WIDTH, 32),
             [
-                ("dummy", DummyView),
+                ("track editor", BrushEditorView),
                 ("lane editor", LaneEditorView),
                 ("cell editor", NodeEditorView)
             ],
@@ -185,6 +475,7 @@ class Editor:
             (lambda name, cls: isinstance(self.view, cls)))
 
         self.timeline_head = 0
+        self.timeline_tail = 0
         self.timeline_scroll = 0
         self.timeline_vertical_scroll = 0
 
@@ -296,15 +587,15 @@ class Editor:
         ctrl_held = mods & pygame.KMOD_CTRL
         if mods & ctrl_held:
             if ev.key == pygame.K_1:
-                self.change_view(DummyView)
+                self.change_view(BrushEditorView)
             if ev.key == pygame.K_2:
                 self.change_view(LaneEditorView)
-            #elif ev.key == pygame.K_3:
+            elif ev.key == pygame.K_3:
+                self.change_view(NodeEditorView)
             #elif ev.key == pygame.K_4:
             #elif ev.key == pygame.K_5:
             #elif ev.key == pygame.K_6:
-            elif ev.key == pygame.K_7:
-                self.change_view(NodeEditorView)
+            #elif ev.key == pygame.K_7:
             elif ev.key == pygame.K_s:
                 self.doc.to_json_file(self.filename)
                 print("document saved!")
@@ -640,7 +931,9 @@ class TrackLayout:
 
     def __init__(self, doc, offset=0):
         self.doc = doc
-        self.offset = offset
+        self.calculate_brush_lanes()
+        self.brush_offset = offset
+        self.offset = offset = offset + 15 + (self.brush_heights[self.doc] - 15)
         max_lanes = 1 + max(
            [g.lane for g in self.doc.graphs]
            + [df.lane for df in self.doc.drawfuncs], default=0)
@@ -658,11 +951,116 @@ class TrackLayout:
             offset += h
         self.lanes = lanes
 
+    def calculate_brush_lanes(self):
+        self.clip_lanes = {}
+        self.brush_heights = {}
+        def process(brush):
+            if brush in self.brush_heights:
+                return
+            if isinstance(brush, Clip):
+                process_clip(brush)
+            elif isinstance(brush, Clap):
+                self.brush_heights[brush] = 15 + 3 * (brush.tree.depth) + 20
+            else:
+                self.brush_heights[brush] = 15
+        def process_clip(clip):
+            if clip in self.clip_lanes:
+                return
+            clip.brushes.sort(key=lambda e: e.shift)
+            heap = []
+            self.clip_lanes[clip] = assignments, lane_offsets, lane_heights = [], [], []
+            for e in clip.brushes:
+                process(e.brush)
+                height = self.brush_heights[e.brush]
+                duration = max(1, e.brush.duration)
+                while heap and heap[0][0] < e.shift:
+                    _, row = heapq.heappop(heap)
+                    heapq.heappush(heap, (e.shift, row))
+                if heap and heap[0][0] <= e.shift:
+                    end_time, row = heapq.heappop(heap)
+                    lane_heights[row] = max(lane_heights[row], height)
+                else:
+                    row = len(lane_heights)
+                    lane_heights.append(height)
+                assignments.append(row)
+                heapq.heappush(heap, (e.shift + duration, row))
+            offset = 4
+            for height in lane_heights:
+                lane_offsets.append(offset)
+                offset += height + 4
+            self.brush_heights[clip] = offset + 15
+        process_clip(self.doc)
+
     def draw(self, screen, font, editor):
         vs = editor.timeline_vertical_scroll
         SCREEN_WIDTH = screen.get_width()
         SCREEN_HEIGHT = screen.get_height()
         w = (SCREEN_WIDTH - editor.MARGIN) / editor.BARS_VISIBLE
+
+        if isinstance(editor.view, BrushEditorView):
+            selection = editor.view.selection
+            reference = editor.view.reference
+            if not selection:
+                text = font.render("document selected", True, (0,255,0))
+                screen.blit(text, (10, 15))
+        else:
+            selection = []
+            reference = None
+
+        bs = self.brush_offset - vs
+        #screen.set_clip(pygame.Rect(self.MARGIN, 15 + 15, w * self.BARS_VISIBLE, self.SCREEN_HEIGHT - 15 + 15))
+
+        def draw_clip_contents(clip, shift, py, seli):
+            assignments, lane_offsets, lane_heights = self.clip_lanes[clip]
+            for i, e in zip(assignments, clip.brushes):
+                start = (shift + e.shift - editor.timeline_scroll)
+                duration = e.brush.duration
+                y = lane_offsets[i] + py
+                height = self.brush_heights[e.brush]
+                if duration == 0:
+                    pygame.draw.circle(screen, (200, 200, 200), (start*w + editor.MARGIN, y+7.5), 7.5, 0, True, False, False, True)
+                else:
+                    rect = pygame.Rect(start*w + editor.MARGIN, y, duration*w, height)
+                    pygame.draw.rect(screen, (200,200,200), rect, 1, 3)
+                selected = 1*(selection == seli + [e])
+                selected += 2*(e.brush == reference)
+                name = "???"
+                if isinstance(e.brush, Clip):
+                    name = f"{e.brush.label}"
+                if isinstance(e.brush, Clap):
+                    name = f"{e.brush.label}"
+                if isinstance(e.brush, ControlPoint):
+                    name = f"{e.brush.tag} {' ~'[e.brush.transition]} {e.brush.value}"
+                if isinstance(e.brush, Key):
+                    name = f"key {e.brush.lanes} {e.brush.index} {music.major[e.brush.index]}"
+                text = font.render(name, True, [(200, 200, 200), (0,255,0), (200, 0, 200), (200, 255, 100)][selected])
+                screen.blit(text, (start*w + 10 + editor.MARGIN, y))
+                if isinstance(e.brush, Clip):
+                    draw_clip_contents(e.brush, shift + e.shift, y + 15, seli + [e])
+                if isinstance(e.brush, Clap):
+                    leafs = []
+                    def draw_tree(x, y, span, tree):
+                        color = (200, 200, 200) #[(200, 200, 200), (255, 0, 255)][tree == s_tree]
+                        if len(tree) == 0:
+                            if tree.label == "n":
+                                leafs.append((x, span))
+                            text = font.render(tree.label, True, color)
+                            w = span/2 - text.get_width() / 2
+                            screen.blit(text, (x + w, y))
+                        else:
+                            w = span / len(tree)
+                            rect = pygame.Rect(x + w/2, y, span - w, 1)
+                            pygame.draw.rect(screen, color, rect)
+                            for i, stree in enumerate(tree):
+                                rect = pygame.Rect(x + i*w + w/2 - 1, y, 2, 3)
+                                pygame.draw.rect(screen, color, rect)
+                                draw_tree(x + i*w, y+3, w, stree)
+                    span = duration*w
+                    draw_tree(start*w+editor.MARGIN, y + 15, span, e.brush.tree)
+        draw_clip_contents(editor.doc, 0, bs, [])
+
+        #screen.set_clip(pygame.Rect(0, 15 + 15, self.SCREEN_WIDTH, self.SCREEN_HEIGHT - 15 + 15))
+
         pygame.draw.line(screen, (40, 40, 40), (0, self.offset - vs), (SCREEN_WIDTH, self.offset - vs))
         for y, height, drawfuncs, graph in self.lanes:
             y -= vs
@@ -748,79 +1146,8 @@ def adjust_boundaries(selection, doc=None, tighten=False):
     return shifts.get(doc or clip, 0)
 
 class SequencerEditor:
-    SCREEN_WIDTH = 1200
-    SCREEN_HEIGHT = 600
-    FPS = 30
-    PATTERNS = [
-        "r",
-        "n",
-        "2nn",
-        "3nnn",
-        "22nn2nn",
-        "5nnnnn",
-        "32nn2nn2nn",
-        "7nnnnnnn",
-        "222nn2nn22nn2nn",
-        "33nnn3nnn3nnn",
-        "52nn2nn2nn2nn2nn",
-        "bnnnnnnnnnnn",
-    ]
-
-    def calculate_brush_lanes(self):
-        self.clip_lanes = {}
-        self.brush_heights = {}
-        def process(brush):
-            if brush in self.brush_heights:
-                return
-            if isinstance(brush, Clip):
-                process_clip(brush)
-            elif isinstance(brush, Clap):
-                self.brush_heights[brush] = 15 + 3 * (brush.tree.depth) + 20
-            else:
-                self.brush_heights[brush] = 15
-        def process_clip(clip):
-            if clip in self.clip_lanes:
-                return
-            clip.brushes.sort(key=lambda e: e.shift)#, e.brush.duration))
-            heap = []
-            self.clip_lanes[clip] = assignments, lane_offsets, lane_heights = [], [], []
-            for e in clip.brushes:
-                process(e.brush)
-                height = self.brush_heights[e.brush]
-                duration = max(1, e.brush.duration)
-                while heap and heap[0][0] < e.shift:
-                    _, row = heapq.heappop(heap)
-                    heapq.heappush(heap, (e.shift, row))
-                if heap and heap[0][0] <= e.shift:
-                    end_time, row = heapq.heappop(heap)
-                    lane_heights[row] = max(lane_heights[row], height)
-                else:
-                    row = len(lane_heights)
-                    lane_heights.append(height)
-                assignments.append(row)
-                heapq.heappush(heap, (e.shift + duration, row))
-            offset = 4
-            for height in lane_heights:
-                lane_offsets.append(offset)
-                offset += height + 4
-            self.brush_heights[clip] = offset + 15
-        process_clip(self.doc)
 
     def __init__(self):
-        self.scroll_y = 0
-        self.bar = 0           # Shifts the view
-        self.bar_head = 0      # For selecting items from the timeline.
-        self.bar_tail = 0
-        self.sel = []          # Selection from the brush graph.
-        self.reference = None  # Reference to brush for moving values around.
-        self.tag_name = None   # For modifying and inserting tags.
-
-        self.te_tag_name = ""              # tag editor destination name
-        self.te_desc = Desc("control", []) # tag editor descriptor
-        self.te_past = {}                  # map that tells where values go to.
-        self.te_future = {}                # map that tells where values came from.
-        self.tag_i = 0                     # tag editor index
-        self.tag_k = 0                     # tag editor row index
         self.accidental = None             # note editor accidental
         self.note_tool = 'draw'            # note editor current tool
         self.note_tail = None              # note editor tail selection (when dragging).
@@ -831,125 +1158,6 @@ class SequencerEditor:
         # Event editor
         self.e_index = 0
         self.e_v_focus = 0
-
-    def run(self):
-        running = True
-        while running:
-            self.calculate_brush_lanes()
-            event_line = 15 + 15 + (self.brush_heights[self.doc] - 15) - self.scroll_y
-            self.draw_grid(event_line)
-            self.draw_events(event_line)
-
-    def get_brush(self, selection=None):
-        if selection is None:
-            selection = self.sel
-        if len(selection) > 0:
-            return selection[-1].brush
-        else:
-            return self.doc
-
-    # control commands
-    def erase_brush(self, target):
-        def do_erase():
-            for brush in [self.doc] + list(self.doc.labels.values()):
-                if isinstance(brush, (Clip, Document)):
-                    for e in list(brush.brushes):
-                        if e.brush == target:
-                            brush.brushes.remove(e)
-            self.doc.labels.pop(target.label)
-        for i, e in enumerate(self.sel):
-            if e.brush == target:
-                self.sel[i:] = []
-                clip = self.get_brush()
-                index = clip.brushes.index(e)
-                do_erase()
-                if index < len(clip.brushes):
-                    self.sel.append(clip.brushes[index])
-                break
-        else:
-            do_erase()
-
-    def erase_selection(self):
-        brushlist = dfs_list(self.doc.brushes)
-        selection = self.sel
-        if selection:
-            if len(selection) > 1:
-                brushes = selection[-2].brush.brushes
-            else:
-                brushes = self.doc.brushes
-            i = min(brushes.index(selection[-1]), len(brushes)-2)
-            brushes.remove(selection[-1])
-            if i >= 0:
-                selection[-1] = brushes[i]
-            else:
-                selection.pop(-1)
-            self.doc.rebuild_labels()
-        else:
-            self.doc.brushes = []
-            self.doc.labels = {}
-
-    def draw_grid(self, event_line):
-        w = (self.SCREEN_WIDTH - self.MARGIN) / self.BARS_VISIBLE
-
-        if not self.sel:
-            text = self.font.render("document selected", True, (0,255,0))
-            self.screen.blit(text, (10, 15+15))
-
-        self.screen.set_clip(pygame.Rect(self.MARGIN, 15 + 15, w * self.BARS_VISIBLE, self.SCREEN_HEIGHT - 15 + 15))
-
-        def draw_clip_contents(clip, shift, py):
-            assignments, lane_offsets, lane_heights = self.clip_lanes[clip]
-            for i, e in zip(assignments, clip.brushes):
-                start = (shift + e.shift - self.bar)
-                duration = e.brush.duration
-                y = lane_offsets[i] + py
-                height = self.brush_heights[e.brush]
-                if duration == 0:
-                    pygame.draw.circle(self.screen, (200, 200, 200), (start*w + self.MARGIN, y+7.5), 7.5, 0, True, False, False, True)
-                else:
-                    rect = pygame.Rect(start*w + self.MARGIN, y, duration*w, height)
-                    pygame.draw.rect(self.screen, (200,200,200), rect, 1, 3)
-                selected = 1*(self.sel != [] and self.sel[-1] == e)
-                selected += 2*(e.brush == self.reference)
-                name = "???"
-                if isinstance(e.brush, Clip):
-                    name = f"{e.brush.label}"
-                if isinstance(e.brush, Clap):
-                    name = f"{e.brush.label}"
-                if isinstance(e.brush, ControlPoint):
-                    name = f"{e.brush.tag} {' ~'[e.brush.transition]} {e.brush.value}"
-                if isinstance(e.brush, Key):
-                    name = f"key {e.brush.lanes} {e.brush.index} {music.major[e.brush.index]}"
-                text = self.font.render(name, True, [(200, 200, 200), (0,255,0), (200, 0, 200), (200, 255, 100)][selected])
-                self.screen.blit(text, (start*w + 10 + self.MARGIN, y))
-                if isinstance(e.brush, Clip):
-                    draw_clip_contents(e.brush, shift + e.shift, y + 15)
-                if isinstance(e.brush, Clap):
-                    leafs = []
-                    def draw_tree(x, y, span, tree):
-                        color = (200, 200, 200) #[(200, 200, 200), (255, 0, 255)][tree == s_tree]
-                        if len(tree) == 0:
-                            if tree.label == "n":
-                                leafs.append((x, span))
-                            text = self.font.render(tree.label, True, color)
-                            w = span/2 - text.get_width() / 2
-                            self.screen.blit(text, (x + w, y))
-                        else:
-                            w = span / len(tree)
-                            rect = pygame.Rect(x + w/2, y, span - w, 1)
-                            pygame.draw.rect(self.screen, color, rect)
-                            for i, stree in enumerate(tree):
-                                rect = pygame.Rect(x + i*w + w/2 - 1, y, 2, 3)
-                                pygame.draw.rect(self.screen, color, rect)
-                                draw_tree(x + i*w, y+3, w, stree)
-                    span = duration*w
-                    draw_tree(start*w+self.MARGIN, y + 15, span, e.brush.tree)
-        draw_clip_contents(self.doc, 0, 15 + 15 - self.scroll_y)
-
-        self.screen.set_clip(pygame.Rect(0, 15 + 15, self.SCREEN_WIDTH, self.SCREEN_HEIGHT - 15 + 15))
-
-        y = event_line
-        lanes = self.calculate_lanes(event_line)
 
     def draw_events(self, y):
         w = (self.SCREEN_WIDTH - self.MARGIN) / self.BARS_VISIBLE
@@ -989,10 +1197,10 @@ class SequencerEditor:
                     pv = float(prev_value)
                     vv = float(value)
                     if pv < vv:
-                        text = self.font.render("<", True, (200, 200, 200))
+                        text = font.render("<", True, (200, 200, 200))
                         self.screen.blit(text, ((mp - self.bar)*w + self.MARGIN, rowy))
                     elif pv > vv:
-                        text = self.font.render(">", True, (200, 200, 200))
+                        text = font.render(">", True, (200, 200, 200))
                         self.screen.blit(text, ((mp - self.bar)*w + self.MARGIN, rowy))
 
             if self.bar <= index <= self.bar + self.BARS_VISIBLE:
@@ -1173,225 +1381,6 @@ class SequencerEditor:
                             (center_x - half_width, center_y),   # left
                         ]
                         pygame.draw.polygon(self.screen, (255, 255, 255), points)
-
-    def draw_brush_editor(self):
-        w = (self.SCREEN_WIDTH - self.MARGIN) / self.BARS_VISIBLE
-        x = self.SCREEN_WIDTH/4
-        y = self.SCREEN_HEIGHT/2
-
-        self.screen.set_clip(pygame.Rect(self.MARGIN, 0, w * self.BARS_VISIBLE, self.SCREEN_HEIGHT))
-        bar_start = min(self.bar_head, self.bar_tail)
-        bar_stop = max(self.bar_head, self.bar_tail)
-        rect = pygame.Rect((bar_start - self.bar)*w + self.MARGIN, 30, (bar_stop-bar_start)*w, self.SCREEN_HEIGHT - 30)
-        pygame.draw.rect(self.screen, (128,200,200), rect, 1)
-        self.screen.set_clip(None)
-
-        bx = (self.bar_head - self.bar)*w + self.MARGIN
-        pygame.draw.line(self.screen, (0,255,255), (bx, 30), (bx, self.SCREEN_HEIGHT), 2)
-
-        # rect = pygame.Rect(x, y, self.SCREEN_WIDTH/2, self.SCREEN_HEIGHT/2)
-        # pygame.draw.rect(self.screen, (30, 30, 30), rect, False)
-        # pygame.draw.rect(self.screen, (0, 0, 255), rect, True)
-
-        # sel = self.sel
-
-        # def draw_brushes(brushes, x, y, a):
-        #     for e in brushes:
-        #         shift = e.shift
-        #         brush = e.brush
-        #         active = min(2, a + 1*(sel[-1:] == [e]))
-        #         color = [(200, 200, 200), (0, 255, 0),     (50, 155, 50),
-        #                  (255, 0, 255), (100, 155, 100), (255, 55, 255)][active + 3*(self.reference == brush)]
-        #         if isinstance(brush, Clip):
-        #             text = self.font.render(f"clip {shift} {brush.duration} {brush.label}", True, color)
-        #             self.screen.blit(text, (x, y))
-        #             y += 15
-        #             if e in sel:
-        #                 y = draw_brushes(brush.brushes, x+5, y, active*2)
-        #         if isinstance(brush, Clap):
-        #             text = self.font.render(f"clap {shift} {brush.duration} {brush.tree}", True, color)
-        #             self.screen.blit(text, (x, y))
-        #             y += 15
-        #         if isinstance(brush, ControlPoint):
-        #             text = self.font.render(f"controlpoint {shift} {brush.tag} {' ~'[brush.transition]} {brush.value}", True, color)
-        #             self.screen.blit(text, (x, y))
-        #             y += 15
-        #     return y
-
-        # text = self.font.render(f"document {self.doc.duration}", True, (200, 200, 200))
-        # self.screen.blit(text, (x + 5, y))
-        # draw_brushes(self.doc.brushes, x + 10, y + 15, 2*(sel == None))
-
-    def handle_brush_editor_key(self, ev):
-        mods = pygame.key.get_mods()
-        shift_held = mods & pygame.KMOD_SHIFT
-        if ev.key == pygame.K_PAGEUP:
-            self.walk_tag_name(direction=False, from_descriptors=shift_held)
-        elif ev.key == pygame.K_PAGEDOWN:
-            self.walk_tag_name(direction=True, from_descriptors=shift_held)
-        elif ev.key == pygame.K_q:
-            self.reference = self.sel[-1].brush if self.sel else None
-        elif ev.key == pygame.K_w:
-            if self.reference:
-                self.insert_brush(self.reference.duration, lambda duration: self.reference)
-        elif ev.key == pygame.K_e:
-            if self.sel:
-                brush = self.sel[-1].brush
-                brush = self.doc.intro(json_to_brush("", brush.to_json()))
-                self.sel[-1].brush = brush
-        elif ev.key == pygame.K_o:
-            sel = self.sel
-            if sel:
-                sel[-1].shift = max(0, sel[-1].shift - 1)
-            else:
-                if all(e.shift > 0 for e in self.doc.brushes):
-                    for e in self.doc.brushes:
-                        e.shift -= 1
-        elif ev.key == pygame.K_p:
-            sel = self.sel
-            if sel:
-                sel[-1].shift = sel[-1].shift + 1
-            else:
-                for e in self.doc.brushes:
-                    e.shift += 1
-            a = adjust_boundaries(self.doc)
-            self.bar_head -= a
-            self.bar_tail -= a
-            self.bar = min(self.bar_head, self.bar)
-            self.bar = max(self.bar_head - self.BARS_VISIBLE + 1, self.bar)
-        elif ev.key == pygame.K_t and shift_held:
-            sel = self.sel
-            if sel:
-                brush = sel[-1].brush
-                if isinstance(brush, Clip):
-                    adjust_boundaries(brush, self.doc, True)
-            else:
-                adjust_boundaries(self.doc, self.doc, True)
-        elif ev.key == pygame.K_LEFT:
-            self.bar_head = max(0, self.bar_head - 1)
-            if not shift_held:
-                self.bar_tail = self.bar_head
-            self.bar = min(self.bar_head, self.bar)
-        elif ev.key == pygame.K_RIGHT:
-            self.bar_head += 1
-            if not shift_held:
-                self.bar_tail = self.bar_head
-            self.bar = max(self.bar_head - self.BARS_VISIBLE + 1, self.bar)
-        elif ev.key == pygame.K_UP and shift_held:
-            sel = self.sel
-            if sel:
-                clip = self.get_brush(sel[:-1])
-                i = clip.brushes.index(sel[-1])
-                if i > 0:
-                    clip.brushes[i-1], clip.brushes[i] = clip.brushes[i], clip.brushes[i-1]
-        elif ev.key == pygame.K_DOWN and shift_held:
-            sel = self.sel
-            if sel:
-                clip = self.get_brush(sel[:-1])
-                i = clip.brushes.index(sel[-1])
-                if i+1 < len(clip.brushes):
-                    clip.brushes[i+1], clip.brushes[i] = clip.brushes[i], clip.brushes[i+1]
-        elif ev.key == pygame.K_UP:
-            brushlist = dfs_list(self.doc.brushes)
-            sel = self.sel
-            if sel:
-                ix = brushlist.index(sel) - 1
-                self.sel = brushlist[ix] if ix >= 0 else []
-            else:
-                self.sel = brushlist[-1] if brushlist else []
-        elif ev.key == pygame.K_DOWN:
-            brushlist = dfs_list(self.doc.brushes)
-            sel = self.sel
-            if sel:
-                ix = brushlist.index(sel) + 1
-                self.sel = brushlist[ix] if ix < len(brushlist) else []
-            else:
-                self.sel = brushlist[0] if brushlist else []
-        elif ev.key == pygame.K_a:
-            self.insert_brush(1, lambda duration: (Clap("", duration, measure.Tree.from_string("n"), {})))
-        elif ev.key == pygame.K_s:
-            self.insert_brush(1, lambda duration: (Clip("", duration, [])))
-        elif ev.key == pygame.K_c and self.tag_name in self.doc.descriptors:
-            desc = self.doc.descriptors[self.tag_name]
-            dspec = dict(desc.spec)
-            if "value" in dspec and desc.kind == "control":
-                ty = dspec["value"]
-                v = music.Pitch(33) if ty == "pitch" else 0
-                self.insert_brush(0, lambda duration: (ControlPoint("", tag=self.tag_name, transition=True, value=v)))
-        elif ev.key == pygame.K_k:
-            self.insert_brush(1, lambda duration: Key("", -1, 0))
-        elif ev.key == pygame.K_DELETE and shift_held:
-            self.erase_brush(self.get_brush())
-        elif ev.key == pygame.K_DELETE:
-            self.erase_selection()
-        elif ev.key == pygame.K_PLUS:
-            brush = self.get_brush()
-            if isinstance(brush, ControlPoint):
-                brush.transition = not brush.transition
-            elif isinstance(brush, Clap):
-                brush.duration += 1
-                a = adjust_boundaries(self.doc)
-                self.bar_head -= a
-                self.bar_tail -= a
-                self.bar = min(self.bar_head, self.bar)
-                self.bar = max(self.bar_head - self.BARS_VISIBLE + 1, self.bar)
-        elif ev.key == pygame.K_MINUS:
-            brush = self.get_brush()
-            if isinstance(brush, Clap):
-                brush.duration = max(1, brush.duration-1)
-        elif ev.key == pygame.K_j:
-            self.modify_control_point(+1)
-        elif ev.key == pygame.K_m:
-            self.modify_control_point(-1)
-        elif ev.key == pygame.K_h:
-            self.modify_control_point(+10)
-        elif ev.key == pygame.K_n:
-            self.modify_control_point(-10)
-        elif ev.key == pygame.K_g:
-            self.modify_control_point(+100)
-        elif ev.key == pygame.K_b:
-            self.modify_control_point(-100)
-        elif ev.key == pygame.K_f:
-            self.modify_control_point(+1000)
-        elif ev.key == pygame.K_v:
-            self.modify_control_point(-1000)
- 
-    def insert_brush(self, min_duration, mkbrush):
-        shift = min(self.bar_head, self.bar_tail)
-        duration = max(self.bar_head, self.bar_tail) - shift
-        duration = max(min_duration, duration)
-        bobj = self.doc.intro(mkbrush(duration))
-        self.doc.duration = max(self.doc.duration, shift + duration)
-        brushlist = dfs_list(self.doc.brushes)
-        sel = self.sel
-        if sel:
-            if isinstance(sel[-1].brush, Clip):
-                brushes = sel[-1].brush.brushes
-                i_point = len(brushes)
-            elif len(sel) > 1:
-                brushes = sel[-2].brush.brushes
-                i_point = brushes.index(sel[-1])
-                sel = sel[:-1]
-            else:
-                brushes = self.doc.brushes
-                i_point = brushes.index(sel[-1])
-                sel = []
-            for e in sel:
-                if bobj == e.brush:
-                    return
-                shift = shift - e.shift
-        else:
-            brushes = self.doc.brushes
-            i_point = len(brushes)
-            sel = []
-        obj = Entity(shift, bobj)
-        brushes.insert(i_point, obj)
-        self.sel = sel + [obj]
-        a = adjust_boundaries(self.doc)
-        self.bar_head -= a
-        self.bar_tail -= a
-        self.bar = min(self.bar_head, self.bar)
-        self.bar = max(self.bar_head - self.BARS_VISIBLE + 1, self.bar)
 
     def draw_clap_editor(self):
         sel = self.sel
@@ -2189,16 +2178,6 @@ class SequencerEditor:
                     if isinstance(gen, PolyGen):
                         gen.argslists.insert(ix, [{}])
                 ix += 1
-
-
-    def modify_control_point(self, amount):
-        cp = self.get_brush()
-        if isinstance(cp, ControlPoint):
-            desc = self.doc.descriptors[cp.tag]
-            ty = dict(desc.spec)["value"]
-            cp.value = modify(cp.value, amount, ty)
-        if isinstance(cp, Key):
-            cp.index = max(-7, min(+7, modify(cp.index, amount, "number")))
 
     def modify_event_field(self, amount, erase=False):
             sel = self.sel

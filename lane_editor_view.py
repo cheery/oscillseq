@@ -1,3 +1,4 @@
+from model import Entity, ControlPoint, Key, Clip, ConstGen, PolyGen, Clap, Desc, DrawFunc, PitchLane, Cell, Document, json_to_brush
 import pygame
 
 # boolean, unipolar, number, bipolar, pitch, hz, db, duration
