@@ -810,52 +810,6 @@ class TrackLayout:
             if editor.MARGIN <= x <= SCREEN_WIDTH:
                 pygame.draw.line(screen, (255, 0, 0), (x, 0), (x, SCREEN_HEIGHT))
             
-def dfs_list(brushes):
-    output = []
-    def dfs(brushes, path):
-        for e in brushes:
-            output.append(path + [e])
-            if isinstance(e.brush, Clip):
-                dfs(e.brush.brushes, path + [e])
-    dfs(brushes, [])
-    return output
-
-def adjust_boundaries(selection, doc=None, tighten=False):
-    visited = set()
-    sequence = []
-    def postorder(clip):
-        if clip not in visited:
-            visited.add(clip)
-            for e in clip.brushes:
-                if isinstance(e.brush, Clip):
-                    postorder(e.brush)
-            sequence.append(clip)
-    postorder(selection)
-    shifts = {}
-    for clip in sequence:
-        shift = 0
-        duration = clip.duration
-        if tighten:
-            shift = duration - 1
-            duration = 1
-        for e in clip.brushes:
-            e.shift += shifts.get(e.brush, 0)
-            shift = min(e.shift, shift)
-            duration = max(e.shift + e.brush.duration, duration)
-        for e in clip.brushes:
-            e.shift -= shift
-        if len(clip.brushes) == 0:
-            shift = 0
-        clip.duration = duration
-        shifts[clip] = shift
-    postorder(doc or clip)
-    shift = shifts[selection]
-    for clip in sequence:
-        for e in clip.brushes:
-            if e.brush == selection:
-                e.shift += shift
-    return shifts.get(doc or clip, 0)
-
 class SequencerEditor:
 
     def __init__(self):
