@@ -332,7 +332,7 @@ class Cell:
             'label': self.label,
             'multi': self.multi,
             'synth': self.synth,
-            'pos': self.pos,
+            'pos': tuple(self.pos),
             'params': {name: value_to_json(a) for name,a in self.params.items()}
         }
 

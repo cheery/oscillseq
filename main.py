@@ -5,6 +5,9 @@ from pythonosc import udp_client, dispatcher, osc_server
 from typing import List, Dict, Optional, Callable, Tuple, Any
 from sequencer import Player, Sequencer, SequenceBuilder
 from fabric import Definitions, Cell, Fabric
+from components import ContextMenu
+from controllers import quick_connect
+import numpy as np
 import bisect
 import collections
 import heapq
@@ -22,25 +25,17 @@ class DummyView:
     def __init__(self, editor):
         self.editor = editor
         self.tool = DummyTool(self)
-        self.s1 = editor.make_spectroscope(bus=0)
-        self.s2 = editor.make_spectroscope(bus=1)
+        self.layout = TrackLayout(editor.doc, offset = 30)
 
     def draw(self, screen):
         font = self.editor.font
-        text = font.render("HELLO", True, (200,200,200))
-        screen.blit(text, (0, 0))
-
-        self.s1.refresh()
-        self.s2.refresh()
-        self.s1.draw(screen, font, (255, 0, 0), self.editor.SCREEN_WIDTH/2, 50)
-        self.s2.draw(screen, font, (0, 255, 0), self.editor.SCREEN_WIDTH/2, 350)
+        self.layout.draw(screen, font, self.editor)
 
     def handle_keydown(self, ev):
         pass
 
     def close(self):
-        self.s1.close()
-        self.s2.close()
+        pass
 
 class VideoRendererView:
     def __init__(self, editor):
@@ -110,6 +105,9 @@ class Editor:
     SCREEN_HEIGHT = 600
     FPS = 30
 
+    MARGIN = 200
+    BARS_VISIBLE = 4
+
     def __init__(self):
         pygame.init()
         self.screen = pygame.display.set_mode((self.SCREEN_WIDTH, self.SCREEN_HEIGHT))
@@ -133,10 +131,10 @@ class Editor:
 
         if len(sys.argv) > 1:
             self.filename = sys.argv[1]
-            if os.path.exists(self.filename):
-                self.doc = Document.from_json_file(self.filename)
         else:
             self.filename = "unnamed.seq.json"
+        if os.path.exists(self.filename):
+            self.doc = Document.from_json_file(self.filename)
         self.pngs_record_path = os.path.abspath(os.path.splitext(self.filename)[0] + ".pngs")
         self.record_path = os.path.abspath(os.path.splitext(self.filename)[0] + ".wav")
 
@@ -147,6 +145,9 @@ class Editor:
 
         self.definitions = Definitions(
             synthdef_directory = os.path.join(directory,"synthdefs"))
+
+        self.midi_status = False
+        self.midi_controllers = []
 
         self.transport_status = 0
         self.server = None
@@ -170,7 +171,17 @@ class Editor:
         sb.gate(4 / 4, 'm', 1, {})
         self.sequence = sb.build(2)
 
-        self.view = DummyView(self)
+        self.transport_bar = TransportBar(self)
+
+        self.toolbar = Toolbar(pygame.Rect(0, self.SCREEN_HEIGHT - 32, self.SCREEN_WIDTH, 32),
+            [("dummy", DummyView), ("cell editor", NodeEditorView)],
+            (lambda view: self.change_view(view)),
+            (lambda name, cls: isinstance(self.view, cls)))
+
+        self.timeline_scroll = 0
+        self.timeline_vertical_scroll = 0
+
+        self.view = NodeEditorView(self)
 
     def set_offline(self):
         if self.transport_status > 0:
@@ -209,6 +220,23 @@ class Editor:
         self.player = Player(self.clavier, self.fabric, sequencer)
         self.transport_status = 3
 
+    def toggle_midi(self):
+        if self.midi_status:
+            self.set_midi_off()
+        else:
+            self.set_midi_on()
+
+    def set_midi_on(self):
+        if not self.midi_status:
+            self.midi_controllers = quick_connect(self)
+            self.midi_status = True
+
+    def set_midi_off(self):
+        self.midi_status = False
+        for controller in self.midi_controllers:
+            controller.close()
+        self.midi_controllers.clear()
+
     def run(self):
         running = True
         while running:
@@ -221,7 +249,12 @@ class Editor:
                 elif ev.type == pygame.TEXTINPUT and self.writing:
                     self.view.handle_textinput(ev)
                 elif ev.type == pygame.MOUSEBUTTONDOWN:
-                    self.view.tool.handle_mousebuttondown(ev)
+                    if self.toolbar.handle_mousebuttondown(ev):
+                        pass
+                    elif self.transport_bar.handle_mousebuttondown(ev):
+                        pass
+                    else:
+                        self.view.tool.handle_mousebuttondown(ev)
                 elif ev.type == pygame.MOUSEBUTTONUP:
                     self.view.tool.handle_mousebuttonup(ev)
                 elif ev.type == pygame.MOUSEMOTION:
@@ -229,11 +262,14 @@ class Editor:
 
             self.screen.fill((30, 30, 30))
             self.view.draw(self.screen)
+            self.transport_bar.draw(self.screen, self.font)
+            self.toolbar.draw(self.screen, self.font)
             self.view.tool.draw(self.screen)
             pygame.display.flip()
 
         self.view.close()
         self.set_offline()
+        self.set_midi_off()
         pygame.quit()
         sys.exit()
 
@@ -325,6 +361,175 @@ class Editor:
 
         self.set_online()
         self.change_view(View)
+
+class Toolbar:
+    def __init__(self, rect, items, action, selected, button_width=32*3):
+        self.rect = rect
+        self.items = items
+        self.action = action
+        self.selected = selected
+        self.button_width = button_width
+
+    def draw(self, screen, font):
+        pygame.draw.rect(screen, (60, 60, 60), self.rect, 0, 0)
+        for i, (name, obj) in enumerate(self.items):
+            rect = pygame.Rect(self.rect.x + i*self.button_width, self.rect.y, self.button_width, self.rect.height)
+            if self.selected(name, obj):
+                pygame.draw.rect(screen, (20, 20, 20), rect, 0, 0)
+            pygame.draw.rect(screen, (200, 200, 200), rect, 1, 0)
+            text = font.render(name, True, (200, 200, 200))
+            screen.blit(text, (rect.centerx - text.get_width()/2, rect.centery - text.get_height()/2))
+
+    def handle_mousebuttondown(self, ev):
+        for i, (name, obj) in enumerate(self.items):
+            rect = pygame.Rect(self.rect.x + i*self.button_width, self.rect.y, self.button_width, self.rect.height)
+            if rect.collidepoint(ev.pos):
+                self.action(obj)
+                return True
+        return False
+
+class TransportBar:
+    def __init__(self, editor):
+        self.editor = editor
+        self.rect = pygame.Rect(0, 0, editor.SCREEN_WIDTH, 15)
+        self.to_online = pygame.Rect(0, 0, 15, 15)
+        self.to_fabric = pygame.Rect(15, 0, 15, 15)
+        self.to_play   = pygame.Rect(30, 0, 15, 15)
+        self.to_midi   = pygame.Rect(45, 0, 15*4, 15)
+
+    def draw(self, screen, font):
+        pygame.draw.rect(screen, (60, 60, 60), self.rect, 0, 0)
+
+        c = (10, 10, 155) if self.editor.transport_status == 1 else (100,100,100)
+        pygame.draw.rect(screen, c, self.to_online, 0, 0)
+        centerx, centery = self.to_online.centerx, self.to_online.centery
+        half_width  = 6 / 2
+        half_height = 6 / 2
+        top = (centerx, centery - half_height)
+        rig = (centerx + half_width, centery)
+        bot = (centerx, centery + half_height)
+        lef = (centerx - half_width, centery)
+        pygame.draw.line(screen, (200, 200, 200), top, bot)
+        pygame.draw.line(screen, (200, 200, 200), lef, bot)
+        pygame.draw.line(screen, (200, 200, 200), bot, rig)
+
+        c = (10, 155, 10) if self.editor.transport_status >= 2 else (100,100,100)
+        pygame.draw.rect(screen, c, self.to_fabric, 0, 0)
+        centerx, centery = self.to_fabric.centerx, self.to_fabric.centery
+        half_width  = 6 / 2
+        half_height = 6 / 2
+        top = (centerx, centery - half_height)
+        rig = (centerx + half_width, centery)
+        bot = (centerx, centery + half_height)
+        lef = (centerx - half_width, centery)
+        pygame.draw.line(screen, (200, 200, 200), top, bot)
+        pygame.draw.line(screen, (200, 200, 200), lef, top)
+        pygame.draw.line(screen, (200, 200, 200), top, rig)
+
+        pygame.draw.rect(screen, (200, 200, 200), self.to_play, 1, 0)
+        if self.editor.transport_status == 3:
+            pygame.draw.rect(screen, (200, 200, 200), self.to_play.inflate((-10, -10)), 0, 0)
+        else:
+            centerx, centery = self.to_play.centerx, self.to_play.centery
+            half_width  = 6 / 2
+            half_height = 6 / 2
+            points = [
+                (centerx, centery - half_height),  # top
+                (centerx + half_width, centery),   # right
+                (centerx, centery + half_height),  # bottom
+            ]
+            pygame.draw.polygon(screen, (200, 200, 200), points)
+
+        midi_off_on = ["midi=off", "midi=on"][self.editor.midi_status]
+        pygame.draw.rect(screen, (200, 200, 200), self.to_midi, 1, 0)
+        text = font.render(midi_off_on, True, (200, 200, 200))
+        screen.blit(text, (self.to_midi.centerx - text.get_width()/2, self.to_midi.centery - text.get_height()/2))
+
+    def handle_mousebuttondown(self, ev):
+        if ev.button == 3:
+            if self.to_online.collidepoint(ev.pos) or self.to_fabric.collidepoint(ev.pos) or self.to_play.collidepoint(ev.pos):
+                self.editor.view.tool = ContextMenu(self.editor.view.tool,
+                    np.array(ev.pos),
+                    [("record to wav", self.editor.render_score)])
+                return True
+        if self.to_online.collidepoint(ev.pos):
+            self.editor.set_online()
+            return True
+        if self.to_fabric.collidepoint(ev.pos):
+            self.editor.set_fabric()
+            return True
+        if self.to_play.collidepoint(ev.pos):
+            if self.editor.transport_status <= 1:
+                self.editor.set_fabric()
+            self.editor.toggle_play()
+            return True
+        if self.to_midi.collidepoint(ev.pos):
+            self.editor.toggle_midi()
+            return True
+        return False
+
+class TrackLayout:
+    LANE_HEIGHT = 16
+    STAVE_HEIGHT = 3 * 12
+
+    def __init__(self, doc, offset=0):
+        self.doc = doc
+        self.offset = offset
+        max_lanes = 1 + max(
+           [g.lane for g in self.doc.graphs]
+           + [df.lane for df in self.doc.drawfuncs], default=0)
+        heights = [self.LANE_HEIGHT] * max_lanes
+        graphs = [None] * max_lanes
+        for g in self.doc.graphs:
+            heights[g.lane] = (g.staves + g.margin_above + g.margin_below) * self.STAVE_HEIGHT
+            graphs[g.lane] = g
+        drawfuncs = [[] for _ in range(max_lanes)]
+        for df in self.doc.drawfuncs:
+            drawfuncs[df.lane].append(df)
+        lanes = []
+        for i, h in enumerate(heights):
+            lanes.append((offset, h, drawfuncs[i], graphs[i]))
+            offset += h
+        self.lanes = lanes
+
+    def draw(self, screen, font, editor):
+        SCREEN_WIDTH = screen.get_width()
+        SCREEN_HEIGHT = screen.get_height()
+        w = (SCREEN_WIDTH - editor.MARGIN) / editor.BARS_VISIBLE
+        pygame.draw.line(screen, (40, 40, 40), (0, self.offset), (SCREEN_WIDTH, self.offset))
+        for y, height, drawfuncs, graph in self.lanes:
+            for k, df in enumerate(drawfuncs):
+#                ok = validate(df, self.doc.descriptors)
+                ok = True
+                text = font.render(df.tag, True, [(255, 100, 100), (200, 200, 200)][ok])
+                screen.blit(text, (10, y + 15 * k))
+
+#                if df.tag == self.tag_name:
+#                    center_x = self.MARGIN - 15
+#                    center_y = y + 15 * k + 8
+#                    if self.mode in [2, 3, 4, 5]:
+#                        pygame.draw.line(self.screen, (0, 128, 0), (center_x, center_y), (self.SCREEN_WIDTH/2, self.SCREEN_HEIGHT/2))
+#                    self.draw_diamond((0, 255, 0), (center_x, center_y), (4, 4))
+#
+            if isinstance(graph, PitchLane):
+                y += graph.margin_above * self.STAVE_HEIGHT
+                for _ in range(graph.staves):
+                    for p in range(2, 12, 2):
+                        pygame.draw.line(screen, (70, 70, 70), (editor.MARGIN, y + p*(self.STAVE_HEIGHT / 12)), (SCREEN_WIDTH, y + p*(self.STAVE_HEIGHT / 12)))
+                    y += self.STAVE_HEIGHT
+                y += graph.margin_below * self.STAVE_HEIGHT
+            else:
+                y += height
+            pygame.draw.line(screen, (40, 40, 40), (0, y), (SCREEN_WIDTH, y))
+
+        for i in range(editor.BARS_VISIBLE + 1):
+            x = i * w + editor.MARGIN
+            pygame.draw.line(screen, (70, 70, 70), (x, 0), (x, SCREEN_HEIGHT))
+
+        if editor.timeline_scroll <= self.doc.duration <= editor.timeline_scroll + editor.BARS_VISIBLE:
+            x = (self.doc.duration - editor.timeline_scroll) * w + editor.MARGIN
+            pygame.draw.line(screen, (70, 255, 70), (x, 0), (x, SCREEN_HEIGHT), 3)
+
             
 # "bool", "unipolar", "number", "pitch", "db", "dur"
 
@@ -418,9 +623,6 @@ class SequencerEditor:
     SCREEN_WIDTH = 1200
     SCREEN_HEIGHT = 600
     FPS = 30
-    MARGIN = 200
-    BARS_VISIBLE = 4
-    STAVE_HEIGHT = 3 * 12
     PATTERNS = [
         "r",
         "n",
@@ -435,24 +637,6 @@ class SequencerEditor:
         "52nn2nn2nn2nn2nn",
         "bnnnnnnnnnnn",
     ]
-
-    def calculate_lanes(self, offset=0):
-        max_lanes = 1 + max(
-           [g.lane for g in self.doc.graphs]
-           + [df.lane for df in self.doc.drawfuncs], default=0)
-        heights = [16] * max_lanes
-        graphs = [None] * max_lanes
-        for g in self.doc.graphs:
-            heights[g.lane] = (g.staves + g.margin_above + g.margin_below) * self.STAVE_HEIGHT
-            graphs[g.lane] = g
-        drawfuncs = [[] for _ in range(max_lanes)]
-        for df in self.doc.drawfuncs:
-            drawfuncs[df.lane].append(df)
-        lanes = []
-        for i, h in enumerate(heights):
-            lanes.append((offset, h, drawfuncs[i], graphs[i]))
-            offset += h
-        return lanes
 
     def calculate_brush_lanes(self):
         self.clip_lanes = {}
@@ -993,40 +1177,6 @@ class SequencerEditor:
 
         y = event_line
         lanes = self.calculate_lanes(event_line)
-
-        pygame.draw.line(self.screen, (40, 40, 40), (0, y), (self.SCREEN_WIDTH, y))
-        
-        for y, height, drawfuncs, graph in lanes:
-            for k, df in enumerate(drawfuncs):
-                ok = validate(df, self.doc.descriptors)
-                text = self.font.render(df.tag, True, [(255, 100, 100), (200, 200, 200)][ok])
-                self.screen.blit(text, (10, y + 15 * k))
-
-                if df.tag == self.tag_name:
-                    center_x = self.MARGIN - 15
-                    center_y = y + 15 * k + 8
-                    if self.mode in [2, 3, 4, 5]:
-                        pygame.draw.line(self.screen, (0, 128, 0), (center_x, center_y), (self.SCREEN_WIDTH/2, self.SCREEN_HEIGHT/2))
-                    self.draw_diamond((0, 255, 0), (center_x, center_y), (4, 4))
-
-            if isinstance(graph, PitchLane):
-                y += graph.margin_above * self.STAVE_HEIGHT
-                for _ in range(graph.staves):
-                    for p in range(2, 12, 2):
-                        pygame.draw.line(self.screen, (70, 70, 70), (self.MARGIN, y + p*(self.STAVE_HEIGHT / 12)), (self.SCREEN_WIDTH, y + p*(self.STAVE_HEIGHT / 12)))
-                    y += self.STAVE_HEIGHT
-                y += graph.margin_below * self.STAVE_HEIGHT
-            else:
-                y += height
-            pygame.draw.line(self.screen, (40, 40, 40), (0, y), (self.SCREEN_WIDTH, y))
-
-        for i in range(self.BARS_VISIBLE + 1):
-            x = i * w + self.MARGIN
-            pygame.draw.line(self.screen, (70, 70, 70), (x, 0), (x, self.SCREEN_HEIGHT))
-
-        if self.bar <= self.doc.duration <= self.bar + self.BARS_VISIBLE:
-            x = (self.doc.duration - self.bar) * w + self.MARGIN
-            pygame.draw.line(self.screen, (70, 255, 70), (x, 0), (x, self.SCREEN_HEIGHT), 3)
 
     def draw_events(self, y):
         w = (self.SCREEN_WIDTH - self.MARGIN) / self.BARS_VISIBLE

@@ -33,8 +33,11 @@ class WireRouterBuilder:
             self.cast_ray(pt, (-1, 0))
 
     def cast_ray(self, origin, direction):
-        t, x, y = ray_intersect_aabb(origin, direction,
+        p = ray_intersect_aabb(origin, direction,
             self.cover.topleft, self.cover.bottomright)
+        if p is None:
+            return
+        t, x, y = p
         for rect in self.rects:
             if p := ray_intersect_aabb(origin, direction, rect.topleft, rect.bottomright):
                 if p[0] <= t:
