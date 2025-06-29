@@ -211,17 +211,17 @@ class Clap:
         starts, stops = self.tree.offsets(self.duration, offset)
         for tag, gen in self.generators.items():
             assert False, "determine from spec"# TODO
-            if tag not in descriptors:
+            if tag not in spec:
                 continue
-            kind = descriptors[tag].kind
-            if kind == "gate":
+            dfn = spec[tag]
+            if dfn.synthdef.has_gate:
                 for i, start in enumerate(starts):
                     for kv, args in gen.pull(i, key, False):
                         sequencer.gate(start, tag, kv, args)
                 for i, stop in enumerate(stops):
                     for kv, args in gen.pull(i, key, True):
                         sequencer.gate(stop, tag, kv, args)
-            elif kind == "oneshot":
+            else:
                 for i, start in enumerate(starts):
                     for kv, args in gen.pull(i, key, True):
                         sequencer.once(start, tag, args)
