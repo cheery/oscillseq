@@ -44,6 +44,51 @@ class LaneEditorView:
         font = self.editor.font
         self.editor.layout.draw(screen, font, self.editor)
 
+    #def draw_lane_editor(self):
+    #    w = (self.SCREEN_WIDTH - self.MARGIN) / self.BARS_VISIBLE
+    #    y = 15 + 15
+    #    lanes = self.calculate_lanes(y)
+    #    self.draw_descriptor_table()
+
+    #    x = self.SCREEN_WIDTH/4
+    #    y = self.SCREEN_HEIGHT/4
+    #    rect = pygame.Rect(x, y, self.SCREEN_WIDTH/2, self.SCREEN_HEIGHT/2)
+    #    pygame.draw.rect(self.screen, (30, 30, 30), rect, False)
+    #    pygame.draw.rect(self.screen, (0, 255, 0), rect, True)
+
+    #    py = y
+    #    if self.tag_name is None:
+    #        text = self.font.render("select descriptor with (shift) [pgup] [pgdown]", True, (200, 200, 200))
+    #        self.screen.blit(text, (x, y))
+    #    else:
+    #        for df in self.doc.drawfuncs:
+    #            if df.tag == self.tag_name:
+    #                break
+    #        else:
+    #            df = None
+    #        if df is None:
+    #            text = self.font.render("no lane for this descriptor, add one with [up] or [down]", True, (200, 200, 200))
+    #            self.screen.blit(text, (x, y))
+    #        else:
+    #            desc = self.doc.descriptors.get(self.tag_name, Desc("", []))
+    #            for drawfuncs in [["string", "band"], ["note"], ["rhythm"]]:
+    #                px = x + 10
+    #                for drawfunc in drawfuncs:
+    #                    active = (drawfunc == df.drawfunc)
+    #                    drawfunc = "[" + drawfunc[0] + "]" + drawfunc[1:]
+    #                    text = self.font.render(drawfunc, True, [(200, 200, 200), (0, 255, 0)][active])
+    #                    self.screen.blit(text, (px, py))
+    #                    px += text.get_width() + 10
+    #                py += 15
+
+    #            px = x + 10
+    #            for i, (name, ty) in enumerate(drawfunc_table[df.drawfunc], 1):
+    #                tag = df.params[name]
+    #                ok = (tag in avail(desc.spec, ty))
+    #                text = self.font.render("[" + str(i) + "] " + name + "->" + tag, True, [(255, 128, 128), (200, 200, 200)][ok])
+    #                self.screen.blit(text, (px, py))
+    #                px += text.get_width() + 10
+
     def handle_keydown(self, ev):
         mods = pygame.key.get_mods()
         shift_held = mods & pygame.KMOD_SHIFT
@@ -104,6 +149,30 @@ class LaneEditorView:
                         elif g.lane == df.lane and 1 == sum(1 for f in self.editor.doc.drawfuncs if df.lane == f.lane):
                             self.editor.doc.graphs.remove(g)
             self.editor.refresh_layout()
+        else:
+            for df in self.editor.doc.drawfuncs:
+                if df.tag == self.editor.lane_tag:
+                    self.change_drawfunc(df, ev.unicode)
+
+    def change_drawfunc(self, df, text):
+        if text.isdigit():
+            ix = int(text)-1
+            dspec = drawfunc_table[df.drawfunc]
+            if 0 <= ix < len(dspec):
+                name, ty = dspec[ix]
+                # TODO: implement availability handling for definitions.
+                # TODO: and autoselect as well.
+                #tags = avail(desc.spec, ty)
+                #if df.params[name] in tags:
+                #    jx = tags.index(df.params[name]) + 1
+                #    df.params[name] = tags[jx] if jx < len(tags) else tags[0]
+                #else:
+                #    df.params[name] = autoselect(desc.spec, ty)
+        else:
+            for drawfunc, dspec in drawfunc_table.items():
+                if text == drawfunc[0]:
+                    df.drawfunc = drawfunc
+                    df.params = {} #{name:autoselect(desc.spec, ty) for name, ty in dspec}
 
     def get_pitchlane(self):
         for df in self.editor.doc.drawfuncs:
@@ -948,22 +1017,8 @@ class SequencerEditor:
         while running:
             self.calculate_brush_lanes()
             event_line = 15 + 15 + (self.brush_heights[self.doc] - 15) - self.scroll_y
-
             self.draw_grid(event_line)
             self.draw_events(event_line)
-            self.draw_transport()
-            if self.mode == 1:
-                self.draw_brush_editor()
-            if self.mode == 2:
-                self.draw_lane_editor()
-            elif self.mode == 3:
-                self.draw_tag_editor()
-            elif self.mode == 4:
-                self.draw_clap_editor()
-            elif self.mode == 5:
-                self.draw_event_editor()
-            elif self.mode == 6:
-                self.draw_note_editor()
 
     def get_brush(self, selection=None):
         if selection is None:
@@ -1020,29 +1075,6 @@ class SequencerEditor:
             value = value[:i] + text + value[i:]
             if text.isalpha() or text.isdigit() or text == '_':
                 self.update_tag_line(i + len(text), value)
-        if self.mode == 2:
-            for df in self.doc.drawfuncs:
-                if df.tag == self.tag_name:
-                    self.change_drawfunc(df, text)
-
-    def change_drawfunc(self, df, text):
-        desc = self.doc.descriptors[df.tag]
-        if text.isdigit():
-            ix = int(text)-1
-            dspec = drawfunc_table[df.drawfunc]
-            if 0 <= ix < len(dspec):
-                name, ty = dspec[ix]
-                tags = avail(desc.spec, ty)
-                if df.params[name] in tags:
-                    jx = tags.index(df.params[name]) + 1
-                    df.params[name] = tags[jx] if jx < len(tags) else tags[0]
-                else:
-                    df.params[name] = autoselect(desc.spec, ty)
-        else:
-            for drawfunc, dspec in drawfunc_table.items():
-                if text == drawfunc[0]:
-                    df.drawfunc = drawfunc
-                    df.params = {name:autoselect(desc.spec, ty) for name, ty in dspec}
 
     def get_tag_line(self):
         lines = [self.te_tag_name or ""] + [x for x, _ in self.te_desc.spec]
@@ -1600,78 +1632,6 @@ class SequencerEditor:
         self.bar_tail -= a
         self.bar = min(self.bar_head, self.bar)
         self.bar = max(self.bar_head - self.BARS_VISIBLE + 1, self.bar)
-
-    def draw_lane_editor(self):
-        w = (self.SCREEN_WIDTH - self.MARGIN) / self.BARS_VISIBLE
-        y = 15 + 15
-        lanes = self.calculate_lanes(y)
-        self.draw_descriptor_table()
-
-        x = self.SCREEN_WIDTH/4
-        y = self.SCREEN_HEIGHT/4
-        rect = pygame.Rect(x, y, self.SCREEN_WIDTH/2, self.SCREEN_HEIGHT/2)
-        pygame.draw.rect(self.screen, (30, 30, 30), rect, False)
-        pygame.draw.rect(self.screen, (0, 255, 0), rect, True)
-
-        py = y
-        if self.tag_name is None:
-            text = self.font.render("select descriptor with (shift) [pgup] [pgdown]", True, (200, 200, 200))
-            self.screen.blit(text, (x, y))
-        else:
-            for df in self.doc.drawfuncs:
-                if df.tag == self.tag_name:
-                    break
-            else:
-                df = None
-            if df is None:
-                text = self.font.render("no lane for this descriptor, add one with [up] or [down]", True, (200, 200, 200))
-                self.screen.blit(text, (x, y))
-            else:
-                desc = self.doc.descriptors.get(self.tag_name, Desc("", []))
-                for drawfuncs in [["string", "band"], ["note"], ["rhythm"]]:
-                    px = x + 10
-                    for drawfunc in drawfuncs:
-                        active = (drawfunc == df.drawfunc)
-                        drawfunc = "[" + drawfunc[0] + "]" + drawfunc[1:]
-                        text = self.font.render(drawfunc, True, [(200, 200, 200), (0, 255, 0)][active])
-                        self.screen.blit(text, (px, py))
-                        px += text.get_width() + 10
-                    py += 15
-
-                px = x + 10
-                for i, (name, ty) in enumerate(drawfunc_table[df.drawfunc], 1):
-                    tag = df.params[name]
-                    ok = (tag in avail(desc.spec, ty))
-                    text = self.font.render("[" + str(i) + "] " + name + "->" + tag, True, [(255, 128, 128), (200, 200, 200)][ok])
-                    self.screen.blit(text, (px, py))
-                    px += text.get_width() + 10
-
-    def handle_lane_editor_key(self, ev):
-        mods = pygame.key.get_mods()
-        shift_held = mods & pygame.KMOD_SHIFT
-        if ev.key == pygame.K_PAGEUP:
-            self.walk_tag_name(direction=False, from_descriptors=shift_held)
-        elif ev.key == pygame.K_PAGEDOWN:
-            self.walk_tag_name(direction=True, from_descriptors=shift_held)
-        elif ev.key == pygame.K_UP:
-            self.walk_lane(False)
-        elif ev.key == pygame.K_DOWN:
-            self.walk_lane(True)
-        elif ev.key == pygame.K_DELETE:
-            tag = self.tag_name
-            if tag in self.doc.descriptors:
-                self.walk_tag_name(direction=True, from_descriptors=shift_held)
-                self.erase_drawfunc(tag)
-        elif ev.key == pygame.K_PLUS:
-            for df in self.doc.drawfuncs:
-                if df.tag == self.tag_name:
-                    for g in self.doc.graphs:
-                        if g.lane == df.lane:
-                            g.staves += 1
-                            break
-                    else:
-                        self.doc.graphs.append(PitchLane(df.lane, 1, 0, 0))
-                        self.doc.graphs.sort(key=lambda g: g.lane)
 
     def draw_tag_editor(self):
         y = 15 + 15
