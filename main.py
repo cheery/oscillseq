@@ -47,7 +47,12 @@ class LaneEditorView:
     def handle_keydown(self, ev):
         mods = pygame.key.get_mods()
         shift_held = mods & pygame.KMOD_SHIFT
-        if ev.key == pygame.K_UP:
+        if ev.key == pygame.K_PAGEUP:
+            self.editor.timeline_vertical_scroll -= self.editor.SCREEN_HEIGHT / 4
+            self.editor.timeline_vertical_scroll = max(0, self.editor.timeline_vertical_scroll)
+        elif ev.key == pygame.K_PAGEDOWN:
+            self.editor.timeline_vertical_scroll += self.editor.SCREEN_HEIGHT / 4
+        elif ev.key == pygame.K_UP:
             if shift_held:
                 self.editor.shift_lane_tag(False)
             else:
@@ -721,11 +726,13 @@ class TrackLayout:
         self.lanes = lanes
 
     def draw(self, screen, font, editor):
+        vs = editor.timeline_vertical_scroll
         SCREEN_WIDTH = screen.get_width()
         SCREEN_HEIGHT = screen.get_height()
         w = (SCREEN_WIDTH - editor.MARGIN) / editor.BARS_VISIBLE
-        pygame.draw.line(screen, (40, 40, 40), (0, self.offset), (SCREEN_WIDTH, self.offset))
+        pygame.draw.line(screen, (40, 40, 40), (0, self.offset - vs), (SCREEN_WIDTH, self.offset - vs))
         for y, height, drawfuncs, graph in self.lanes:
+            y -= vs
             for k, df in enumerate(drawfuncs):
                 # TODO: recreate validation logic
 #                ok = validate(df, self.doc.descriptors)
@@ -911,11 +918,6 @@ class SequencerEditor:
         process_clip(self.doc)
 
     def __init__(self):
-        pygame.init()
-        self.screen = pygame.display.set_mode((self.SCREEN_WIDTH, self.SCREEN_HEIGHT))
-        pygame.display.set_caption("OSC Sequencer Editor")
-        self.clock = pygame.time.Clock()
-
         self.scroll_y = 0
         self.bar = 0           # Shifts the view
         self.bar_head = 0      # For selecting items from the timeline.
@@ -935,130 +937,15 @@ class SequencerEditor:
         self.note_tail = None              # note editor tail selection (when dragging).
         self.pattern = "n"                 # note editor after-split pattern.
 
-        self.doc = Document(
-            brushes = [],
-            duration = 1,
-            labels = {},
-            descriptors = {
-                "tempo": Desc(kind="control", spec=[("value", "number")]),
-            #    "arp": Desc(kind="gate", spec=[]),
-            #    "saw": Desc(kind="gate", spec=[("note","pitch"), ("mystery", "number")]),
-            #    "drum": Desc(kind="oneshot", spec=[]),
-            #    "kick": Desc(kind="oneshot", spec=[]),
-            #    "foobar": Desc(kind="gate", spec=[("note","pitch")]),
-            #    "sawnote": Desc(kind="control", spec=[("value", "pitch")]),
-            },
-            graphs = [
-            #    PitchLane(lane=1, staves=1, margin_above=1, margin_below=1),
-            #    PitchLane(lane=4, staves=2, margin_above=1, margin_below=1),
-            ],
-            drawfuncs = [
-                DrawFunc(0, "string", "tempo", {"value": "value"}),
-            #    DrawFunc(1, "rhythm", "arp", {}),
-            #    DrawFunc(1, "note", "saw", {"pitch":"note"}),
-            #    DrawFunc(2, "rhythm", "drum", {}),
-            #    DrawFunc(3, "rhythm", "kick", {}),
-            #    DrawFunc(4, "note", "foobar", {"pitch":"note"}),
-            #    DrawFunc(4, "note", "sawnote", {"pitch":"value"}),
-            ],
-        )
-
-        #clip0 = self.doc.intro(Clip("", 2, [
-        #    Entity(0, self.doc.intro(ControlPoint("", tag="tempo", transition=False, value=70))),
-        #    Entity(1, self.doc.intro(ControlPoint("", tag="tempo", transition=True, value=90))),
-        #    Entity(2, self.doc.intro(ControlPoint("", tag="tempo", transition=True, value=30))),
-        #    Entity(0, self.doc.intro(ControlPoint("", tag="sawnote", transition=False, value=music.Pitch(35)))),
-        #    Entity(1, self.doc.intro(ControlPoint("", tag="sawnote", transition=True, value=music.Pitch(45)))),
-        #    Entity(2, self.doc.intro(ControlPoint("", tag="sawnote", transition=True, value=music.Pitch(32)))),
-        #    Entity(0, self.doc.intro(Clap("", 1, measure.Tree.from_string("2nn"), {'drum': ConstGen([{}])}))),
-        #    Entity(0, self.doc.intro(Clap("", 1, measure.Tree.from_string("22r2nn2rn"), {'kick': ConstGen([{}])}))),
-        #    Entity(0, self.doc.intro(Clap("", 1, measure.Tree.from_string("22nn2n2nn"), {
-        #        'saw': PolyGen([
-        #            [{"note": music.Pitch(28)}, {"note": music.Pitch(42)}],
-        #            [{"note": music.Pitch(30)}],
-        #            [{"note": music.Pitch(33)}],
-        #            [{"note": music.Pitch(35)}],
-        #            [{"note": music.Pitch(25)}],
-        #        ]),
-        #        'foobar': PolyGen([
-        #            [{"note": music.Pitch(25)}],
-        #            [{"note": music.Pitch(27)}],
-        #            [{"note": music.Pitch(20)}],
-        #            [{"note": music.Pitch(21)}],
-        #        ]),
-        #    }))),
-        #]))
-
-        #self.doc.brushes = [
-        #    Entity(0, clip0),
-        #    Entity(4, clip0),
-        #    Entity(8, clip0),
-        #    Entity(3, self.doc.intro(ControlPoint("", tag="tempo", transition=True, value=50))),
-        #    Entity(3, self.doc.intro(Clap("", 1, measure.Tree.from_string("22nn2nn"), {'drum': ConstGen([{}])}))),
-        #    Entity(6, self.doc.intro(Clap("", 1, measure.Tree.from_string("222nn2nn22nn2nn"), {'drum': ConstGen([{}])}))),
-        #    Entity(8, self.doc.intro(Clap("", 1, measure.Tree.from_string("3nnn"), {'drum': ConstGen([{}])}))),
-        #]
-
-        if len(sys.argv) > 1:
-            self.filename = sys.argv[1]
-            if os.path.exists(self.filename):
-                self.doc = Document.from_json_file(self.filename)
-        else:
-            self.filename = "demo.seq.json"
-        self.pngs_record_path = os.path.abspath(os.path.splitext(self.filename)[0] + ".pngs")
-        self.record_path = os.path.abspath(os.path.splitext(self.filename)[0] + ".wav")
-
-        # Editor modes
-        self.mode = 1
-        self.font = pygame.font.SysFont('Arial', 14)
-
-        # Row editor
-        self.rw_head = 0
-        self.rw_tail = 0
-
-        # Clap editor
-        self.p_index = -1
-        self.p_head = 0
-        self.p_tail = 0
-        self.p_head0 = 0
-        self.p_tail0 = 0
-
         self.p_selection = [0]
 
         # Event editor
-        self.e_patch = -1
         self.e_index = 0
-        self.e_focus = -1
-
         self.e_v_focus = 0
-
-        self.sequencer = osc_control.Sequencer()
-        self.doc.construct(self.sequencer, 0, ())
-
-        self.transport = osc_control.TransportThread(
-            *self.sequencer.build()
-        )
-        self.transport.start()
 
     def run(self):
         running = True
         while running:
-            dt = self.clock.tick(self.FPS) / 1000.0
-            for ev in pygame.event.get():
-                if ev.type == pygame.QUIT:
-                    running = False
-                elif ev.type == pygame.KEYDOWN:
-                    self.handle_key(ev)
-                elif ev.type == pygame.TEXTINPUT:
-                    self.handle_textinput(ev.text)
-                elif ev.type in (pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP, pygame.MOUSEMOTION):
-                    if self.mode == 6:
-                        self.handle_note_editor_mouse(ev)
-
-            self.screen.fill((30, 30, 30))
-            text = self.font.render(str(self.bar), True, (200, 200, 200))
-            self.screen.blit(text, (0, 0))
-
             self.calculate_brush_lanes()
             event_line = 15 + 15 + (self.brush_heights[self.doc] - 15) - self.scroll_y
 
@@ -1077,12 +964,6 @@ class SequencerEditor:
                 self.draw_event_editor()
             elif self.mode == 6:
                 self.draw_note_editor()
-
-            pygame.display.flip()
-
-        self.transport.shutdown()
-        pygame.quit()
-        sys.exit()
 
     def get_brush(self, selection=None):
         if selection is None:
@@ -1131,89 +1012,6 @@ class SequencerEditor:
         else:
             self.doc.brushes = []
             self.doc.labels = {}
-
-    def handle_key(self, ev):
-        mods = pygame.key.get_mods()
-        shift_held = mods & pygame.KMOD_SHIFT
-        ctrl_held = mods & pygame.KMOD_CTRL
-        if mods & ctrl_held:
-            if ev.key == pygame.K_1:
-                self.mode = 1
-            elif ev.key == pygame.K_2:
-                self.mode = 2
-            elif ev.key == pygame.K_3:
-                self.mode = 3
-            elif ev.key == pygame.K_4:
-                self.mode = 4
-            elif ev.key == pygame.K_5:
-                self.mode = 5
-            elif ev.key == pygame.K_6:
-                self.mode = 6
-            elif ev.key == pygame.K_7:
-                self.mode = 7
-            elif ev.key == pygame.K_s:
-                self.doc.to_json_file(self.filename)
-                print("document saved!")
-            elif ev.key == pygame.K_PAGEUP:
-                self.scroll_y -= self.SCREEN_HEIGHT / 4
-                self.scroll_y = max(0, self.scroll_y)
-            elif ev.key == pygame.K_PAGEDOWN:
-                self.scroll_y += self.SCREEN_HEIGHT / 4
-            elif ev.key == pygame.K_r:
-                if not os.path.exists(self.pngs_record_path):
-                    os.mkdir(self.pngs_record_path)
-                FPS = 60
-                duration = self.transport.tempo.bar_to_time(self.doc.duration)
-                self.calculate_brush_lanes()
-                ix = 0
-                while ix * (1.0 / FPS) < duration:
-                    self.clock.tick(self.FPS)
-                    t = ix * (1.0 / FPS)
-                    u = self.transport.tempo.time_to_bar(t)
-                    self.bar = (u // self.BARS_VISIBLE) * self.BARS_VISIBLE
-                    for ev in pygame.event.get():
-                        pass
-                    self.screen.fill((30, 30, 30))
-                    text = self.font.render(str(self.bar), True, (200, 200, 200))
-                    self.screen.blit(text, (0, 0))
-                    event_line = 15 + 15 + (self.brush_heights[self.doc] - 15) - self.scroll_y
-                    self.draw_grid(event_line)
-                    self.draw_events(event_line)
-                    self.draw_transport(t)
-                    pygame.image.save(self.screen, os.path.join(self.pngs_record_path, f"{ix}.png"))
-                    pygame.display.flip()
-                    ix += 1
-            elif ev.key == pygame.K_SPACE and self.mode in [1,4,5,6]:
-                if self.transport.playing:
-                    self.transport.cmd.put("stop")
-                else:
-                    self.transport.shift = 0
-                    self.transport.record_path = self.record_path
-                    self.transport.duration = self.transport.tempo.bar_to_time(self.doc.duration)
-                    self.transport.cmd.put("play")
-        elif ev.key == pygame.K_SPACE and self.mode in [1,4,5,6]:
-            if self.transport.playing:
-                self.transport.cmd.put("stop")
-            else:
-                self.transport.shift = self.transport.tempo.bar_to_time(self.bar_head)
-                self.transport.record_path = None
-                self.transport.duration = self.transport.tempo.bar_to_time(self.doc.duration)
-                self.transport.cmd.put("play")
-        elif self.mode == 1:
-            self.handle_brush_editor_key(ev)
-        elif self.mode == 2:
-            self.handle_lane_editor_key(ev)
-        elif self.mode == 3:
-            self.handle_tag_editor_key(ev)
-        elif self.mode == 4:
-            self.handle_clap_editor_key(ev)
-        elif self.mode == 5:
-            self.handle_event_editor_key(ev)
-        elif self.mode == 6:
-            self.handle_note_editor_key(ev)
-        self.sequencer = osc_control.Sequencer()
-        self.doc.construct(self.sequencer, 0, ())
-        self.transport.tempo, self.transport.events = self.sequencer.build()
 
     def handle_textinput(self, text):
         if self.mode == 3:
