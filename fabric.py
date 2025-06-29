@@ -68,7 +68,8 @@ class Fabric:
                 d = definitions_.retrieve(cell.definition)
                 definitions[cell.definition] = d
                 synthdefs.append(d.synthdef)
-        server.add_synthdefs(*synthdefs)
+        if synthdefs:
+            server.add_synthdefs(*synthdefs)
         if not isinstance(server, supriya.Score):
             server.sync()
 
@@ -165,7 +166,7 @@ class Fabric:
                     subgroup = self.root.add_group()
                     self.synths[c.label] = c, subgroup
                 else:
-                    params = self.map_params(c.params)
+                    params = self.map_params(c.label, c.params)
                     params.update(self.busmap[c.label])
                     synth = self.root.add_synth(d.synthdef, **params)
                     self.synths[c.label] = c, synth
@@ -175,7 +176,7 @@ class Fabric:
         for group in self.bus_groups:
             group.free()
 
-    def map_params(self, params):
+    def map_params(self, label, params):
         return {n: self.map_param(v)
                 for n, v in params.items()}
 
@@ -185,16 +186,27 @@ class Fabric:
         return param
 
     def control(self, label, **args):
-        self.synths[label][1].set(**self.map_params(args))
+        self.synths[label][1].set(**self.map_params(label, args))
 
     def synth(self, label, **args):
         c, g = self.synths[label]
         if c.multi:
             d = self.definitions[c.definition]
-            params = self.map_params(c.params)
+            params = self.map_params(label, c.params)
             params.update(self.busmap[label])
             params.update(args)
-            return g.add_synth(d.synthdef, **self.map_params(params))
+            synth = g.add_synth(d.synthdef, **self.map_params(label, params))
+            return LabeledSynth(label, self, synth)
+
+class LabeledSynth:
+    def __init__(self, label, fabric, synth):
+        self.label = label
+        self.fabric = fabric
+        self.synth = synth
+
+    def set(self, **params):
+        params = self.fabric.map_params(self.label, params)
+        return self.synth.set(**params)
 
 def topological_sort(cells, definitions, assignment):
     var_to_producers : DefaultDict[str, List[int]] = defaultdict(list)

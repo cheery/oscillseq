@@ -3,6 +3,7 @@ import numpy as np
 import math
 import time
 import random
+import pygame
 from typing import Tuple, Optional
 
 class WireRouterBuilder:
@@ -10,7 +11,10 @@ class WireRouterBuilder:
         self.rects = rects
         self.hlines = []
         self.vlines = []
-        self.cover = rects[0].unionall(rects).inflate((100, 100))
+        if len(rects) > 0:
+            self.cover = rects[0].unionall(rects).inflate((100, 100))
+        else:
+            self.cover = pygame.Rect(0,0, 100, 100)
         for rect in rects:
             rect = rect.inflate((50, 50))
             self.cast_point((rect.centerx, rect.top), down=False)

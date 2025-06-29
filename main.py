@@ -125,27 +125,9 @@ class Editor:
             drawfuncs = [
                 DrawFunc(0, "string", "tempo", {"value": "value"}),
             ],
-            cells = [ # TODO: these should be "introed" as they are brushes.
-                Cell('m', True, 'musical', (500, 75), {
-                }),
-                Cell('1', False, 'low_pass', (400, 300), {
-                    'frequency': 440,
-                }),
-                Cell('2', False, 'white_noise', (75, 200), {
-                }),
-                Cell('3', False, 'white_noise', (300, 500), {
-                    'amplitude': 0.001,
-                }),
-                Cell('4', False, 'test_signal', (75, 400), {
-                    'frequency': 110,
-                }),
+            cells = [
             ],
             connections = set([
-                ('m:out', 'output'),
-                ('1:out', 'output'),
-                ('3:out', 'output'),
-                ('2:out', '1:source'),
-                ('4:out', 'output'),
             ]),
         )
 
