@@ -835,13 +835,6 @@ class TrackLayout:
             if editor.MARGIN <= x <= SCREEN_WIDTH:
                 pygame.draw.line(screen, (255, 0, 0), (x, 0), (x, SCREEN_HEIGHT))
             
-# TODO: discard?
-drawfunc_avail_for = {
-    "string": ["control"],
-    "band":   ["control"],
-    "note":   ["control", "oneshot", "gate"],
-    "rhythm": ["oneshot", "gate"],
-}
 # boolean, unipolar, number, bipolar, pitch, hz, db, duration
 drawfunc_table = {
     "string": [("value", ["bool", "number", "pitch", "db"])],
@@ -2685,7 +2678,6 @@ class SequencerEditor:
                 else:
                     pass
 
-# TODO: boolean, unipolar, number, bipolar, pitch, hz, db, duration
 def modify(value, amt, ty):
     if ty == "boolean":
        return 1*(not value)
@@ -2693,7 +2685,10 @@ def modify(value, amt, ty):
        return min(1, max(0, value + amt * 0.001))
     elif ty == "number":
        return value + amt
-    elif ty == "pitch":
+    elif ty == "bipolar":
+       return min(1, max(-1, value + amt * 0.001))
+    # TODO: think of adjustments for non-pitch hz values.
+    elif ty in ["pitch", "hz"]:
        if -10 < amt < 10:
            return music.Pitch(value.position, min(2, max(-2, value.accidental + amt)))
        elif -100 < amt < 100:
@@ -2702,7 +2697,7 @@ def modify(value, amt, ty):
            return music.Pitch(value.position + amt // 100 * 7, value.accidental)
     elif ty == "db":
        return min(10, max(-60, value + amt * 0.1))
-    elif ty == "dur":
+    elif ty == "duration":
        return max(0, value + amt * 0.01)
     return value
 

@@ -205,11 +205,14 @@ class Fabric:
             group.free()
 
     def map_params(self, label, params):
-        return {n: self.map_param(v)
+        dfn = self.definitions[label]
+        return {n: self.map_param(dfn.field_type(n), v)
                 for n, v in params.items()}
 
-    def map_param(self, param):
-        if isinstance(param, music.Pitch):
+    def map_param(self, ty, param):
+        if isinstance(param, music.Pitch) and ty == "hz":
+            return 440.0 * 2**((int(param)-69)/12)
+        elif isinstance(param, music.Pitch):
             return int(param)
         return param
 
