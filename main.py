@@ -178,6 +178,7 @@ class Editor:
             (lambda view: self.change_view(view)),
             (lambda name, cls: isinstance(self.view, cls)))
 
+        self.timeline_head = 0
         self.timeline_scroll = 0
         self.timeline_vertical_scroll = 0
 
@@ -219,6 +220,10 @@ class Editor:
             self.player.close()
         self.player = Player(self.clavier, self.fabric, sequencer)
         self.transport_status = 3
+
+    def get_playing(self):
+        if self.transport_status == 3:
+            return self.player.sequencer.status
 
     def toggle_midi(self):
         if self.midi_status:
@@ -310,10 +315,12 @@ class Editor:
     def toggle_play(self):
         if self.transport_status < 2:
             self.set_fabric()
-        elif self.transport_status < 3:
+        elif self.get_playing() is None:
+            if self.transport_status == 3:
+                self.set_fabric()
             sequence = self.sequence
-            self.set_playing(Sequencer(sequence, point=sequence.t(0), **self.playback_params(sequence)))
-        elif self.transport_status == 3:
+            self.set_playing(Sequencer(sequence, point=sequence.t(self.timeline_head), **self.playback_params(sequence)))
+        else:
             self.set_fabric()
             for synth in self.clavier.values():
                 synth.set(gate=0)
@@ -396,6 +403,7 @@ class TransportBar:
         self.to_fabric = pygame.Rect(15, 0, 15, 15)
         self.to_play   = pygame.Rect(30, 0, 15, 15)
         self.to_midi   = pygame.Rect(45, 0, 15*4, 15)
+        self.to_loop   = pygame.Rect(105, 0, 15*4, 15)
 
     def draw(self, screen, font):
         pygame.draw.rect(screen, (60, 60, 60), self.rect, 0, 0)
@@ -426,9 +434,47 @@ class TransportBar:
         pygame.draw.line(screen, (200, 200, 200), lef, top)
         pygame.draw.line(screen, (200, 200, 200), top, rig)
 
+        SCREEN_WIDTH = screen.get_width()
+        w = (SCREEN_WIDTH - editor.MARGIN) / editor.BARS_VISIBLE
+        mg = []
+        for i in range(editor.BARS_VISIBLE + 1):
+            x = i * w + editor.MARGIN
+            if (i + editor.timeline_scroll) == editor.timeline_head:
+                pygame.draw.line(screen, (0, 255, 255), (x, self.rect.top), (x, self.rect.bottom), 2)
+            else:
+                pygame.draw.line(screen, (200, 200, 200), (x, self.rect.top), (x, self.rect.bottom))
+            text = font.render(str(i + editor.timeline_scroll), True, (200, 200, 200))
+            screen.blit(text, (x + 2, self.rect.top))
+            mg.append(text.get_width())
+
+        if editor.playback_range is not None:
+            i, j = editor.playback_range
+            half_width  = 6 / 2
+            half_height = 6 / 2
+            if editor.timeline_scroll <= i < editor.timeline_scroll + editor.BARS_VISIBLE:
+                centerx = (i - editor.timeline_scroll) * w + editor.MARGIN + 6 + mg[i - editor.timeline_scroll]
+                centery = self.rect.centery
+                top = (centerx, centery - half_height)
+                rig = (centerx + half_width, centery)
+                bot = (centerx, centery + half_height)
+                lef = (centerx - half_width, centery)
+                pygame.draw.polygon(screen, (200, 200, 200), [top, rig, bot])
+
+            if editor.timeline_scroll < j <= editor.timeline_scroll + editor.BARS_VISIBLE:
+                centerx = (j - editor.timeline_scroll) * w + editor.MARGIN - 6
+                centery = self.rect.centery
+                top = (centerx, centery - half_height)
+                rig = (centerx + half_width, centery)
+                bot = (centerx, centery + half_height)
+                lef = (centerx - half_width, centery)
+                pygame.draw.polygon(screen, (200, 200, 200), [top, bot, lef])
+
         pygame.draw.rect(screen, (200, 200, 200), self.to_play, 1, 0)
-        if self.editor.transport_status == 3:
+        if (t := self.editor.get_playing()) is not None:
             pygame.draw.rect(screen, (200, 200, 200), self.to_play.inflate((-10, -10)), 0, 0)
+            x = (t - editor.timeline_scroll) * w + editor.MARGIN
+            if editor.MARGIN <= x <= SCREEN_WIDTH:
+                pygame.draw.line(screen, (255, 0, 0), (x, self.rect.top), (x, self.rect.bottom))
         else:
             centerx, centery = self.to_play.centerx, self.to_play.centery
             half_width  = 6 / 2
@@ -444,6 +490,11 @@ class TransportBar:
         pygame.draw.rect(screen, (200, 200, 200), self.to_midi, 1, 0)
         text = font.render(midi_off_on, True, (200, 200, 200))
         screen.blit(text, (self.to_midi.centerx - text.get_width()/2, self.to_midi.centery - text.get_height()/2))
+
+        loop_off_on = ["loop=off", "loop=on"][self.editor.playback_loop]
+        pygame.draw.rect(screen, (200, 200, 200), self.to_loop, 1, 0)
+        text = font.render(loop_off_on, True, (200, 200, 200))
+        screen.blit(text, (self.to_loop.centerx - text.get_width()/2, self.to_loop.centery - text.get_height()/2))
 
     def handle_mousebuttondown(self, ev):
         if ev.button == 3:
@@ -465,6 +516,13 @@ class TransportBar:
             return True
         if self.to_midi.collidepoint(ev.pos):
             self.editor.toggle_midi()
+            return True
+        if self.to_loop.collidepoint(ev.pos):
+            self.editor.playback_loop = not self.editor.playback_loop
+            if (status := self.editor.get_playing()) is not None:
+                self.editor.set_fabric()
+                sequence = self.editor.sequence
+                self.editor.set_playing(Sequencer(sequence, point=sequence.t(status), **self.editor.playback_params(sequence)))
             return True
         return False
 
@@ -530,6 +588,11 @@ class TrackLayout:
             x = (self.doc.duration - editor.timeline_scroll) * w + editor.MARGIN
             pygame.draw.line(screen, (70, 255, 70), (x, 0), (x, SCREEN_HEIGHT), 3)
 
+        # transport line
+        if (t := editor.get_playing()) is not None:
+            x = (t - editor.timeline_scroll) * w + editor.MARGIN
+            if editor.MARGIN <= x <= SCREEN_WIDTH:
+                pygame.draw.line(screen, (255, 0, 0), (x, 0), (x, SCREEN_HEIGHT))
             
 # "bool", "unipolar", "number", "pitch", "db", "dur"
 
@@ -1086,18 +1149,6 @@ class SequencerEditor:
                 if past is not None:
                     self.te_past[past] = value
                 self.te_future[value] = past
-
-    def draw_transport(self, t=None):
-        w = (self.SCREEN_WIDTH - self.MARGIN) / self.BARS_VISIBLE
-        rect = pygame.Rect(0, 15, self.SCREEN_WIDTH, 15)
-        pygame.draw.rect(self.screen, (60, 60, 60), rect)
-        if self.transport.playing and t is None:
-            t = self.transport.get_elapsed()
-        if t is not None:
-            x = (self.transport.tempo.time_to_bar(t) - self.bar) * w + self.MARGIN
-            if self.MARGIN <= x <= self.SCREEN_WIDTH:
-                pygame.draw.line(self.screen, (255, 0, 0),
-                    (x, 0), (x, self.SCREEN_HEIGHT))
 
     def draw_descriptor_table(self):
         y = 15 + 15

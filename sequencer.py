@@ -31,7 +31,7 @@ class Sequencer:
         dt = time.monotonic() - self.time
         point = self.point + dt
         if point <= self.end_point:
-            return point
+            return self.sequence.tempo.time_to_bar(point)
 
     def resume(self, clavier, fabric):
         self.time = time.monotonic()
