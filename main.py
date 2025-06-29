@@ -20,6 +20,7 @@ import supriya
 import sys
 import spectroscope
 from node_editor_view import NodeEditorView
+from lane_editor_view import LaneEditorView, drawfunc_table
 
 class DummyView:
     def __init__(self, editor):
@@ -31,152 +32,6 @@ class DummyView:
 
     def handle_keydown(self, ev):
         pass
-
-    def close(self):
-        pass
-
-class LaneEditorView:
-    def __init__(self, editor):
-        self.editor = editor
-        self.tool = DummyTool(self)
-
-    def draw(self, screen):
-        font = self.editor.font
-        SCREEN_WIDTH = screen.get_width()
-        SCREEN_HEIGHT = screen.get_height()
-        w = (SCREEN_WIDTH - self.editor.MARGIN) / self.editor.BARS_VISIBLE
-        self.editor.layout.draw(screen, font, self.editor)
-
-        x = SCREEN_WIDTH/4
-        y = SCREEN_HEIGHT/4
-        rect = pygame.Rect(x, y, SCREEN_WIDTH/2, SCREEN_HEIGHT/2)
-        pygame.draw.rect(screen, (30, 30, 30), rect, False)
-        pygame.draw.rect(screen, (0, 255, 0), rect, True)
-
-        py = y
-        if self.editor.lane_tag is None:
-            text = font.render("select tag with [down] [up]", True, (200, 200, 200))
-            screen.blit(text, (x, y))
-        else:
-            for df in self.editor.doc.drawfuncs:
-                if df.tag == self.editor.lane_tag:
-                    break
-            else:
-                df = None
-            if df is not None:
-                dfn = get_dfn(df.tag, self.editor.doc, self.editor.definitions)
-                if dfn is None:
-                    text = font.render("cannot fetch dfn for this drawfunc", True, (200, 200, 200))
-                    screen.blit(text, (x + 10, y))
-                else:
-                    for drawfuncs in [["string", "band"], ["note"], ["rhythm"]]:
-                        px = x + 10
-                        for drawfunc in drawfuncs:
-                            active = (drawfunc == df.drawfunc)
-                            drawfunc = "[" + drawfunc[0] + "]" + drawfunc[1:]
-                            text = font.render(drawfunc, True, [(200, 200, 200), (0, 255, 0)][active])
-                            screen.blit(text, (px, py))
-                            px += text.get_width() + 10
-                        py += 15
-
-                    px = x + 10
-                    for i, (name, ty) in enumerate(drawfunc_table[df.drawfunc], 1):
-                        tag = df.params[name]
-                        ok = (tag in dfn.avail(ty))
-                        text = font.render("[" + str(i) + "] " + name + "->" + tag, True, [(255, 128, 128), (200, 200, 200)][ok])
-                        screen.blit(text, (px, py))
-                        px += text.get_width() + 10
-
-    def handle_keydown(self, ev):
-        mods = pygame.key.get_mods()
-        shift_held = mods & pygame.KMOD_SHIFT
-        if ev.key == pygame.K_PAGEUP:
-            self.editor.timeline_vertical_scroll -= self.editor.SCREEN_HEIGHT / 4
-            self.editor.timeline_vertical_scroll = max(0, self.editor.timeline_vertical_scroll)
-        elif ev.key == pygame.K_PAGEDOWN:
-            self.editor.timeline_vertical_scroll += self.editor.SCREEN_HEIGHT / 4
-        elif ev.key == pygame.K_UP:
-            if shift_held:
-                self.editor.shift_lane_tag(False)
-            else:
-                self.editor.walk_lane_tag(False)
-        elif ev.key == pygame.K_DOWN:
-            if shift_held:
-                self.editor.shift_lane_tag(True)
-            else:
-                self.editor.walk_lane_tag(True)
-        elif ev.key == pygame.K_u:
-            if g := self.get_pitchlane():
-                g.margin_above += 1
-                self.editor.refresh_layout()
-        elif ev.key == pygame.K_i:
-            if g := self.get_pitchlane():
-                g.margin_above = max(0, g.margin_above - 1)
-                self.editor.refresh_layout()
-        elif ev.key == pygame.K_o:
-            if g := self.get_pitchlane():
-                g.margin_below = max(0, g.margin_below - 1)
-                self.editor.refresh_layout()
-        elif ev.key == pygame.K_p:
-            if g := self.get_pitchlane():
-                g.margin_below += 1
-                self.editor.refresh_layout()
-        elif ev.key == pygame.K_DELETE:
-            tag = self.editor.lane_tag
-            if any(tag == df.tag for df in self.editor.doc.drawfuncs):
-                self.editor.walk_lane_tag(direction=True)
-                self.editor.erase_drawfunc(tag)
-                self.editor.refresh_layout()
-        elif ev.key == pygame.K_PLUS:
-            for df in self.editor.doc.drawfuncs:
-                if df.tag == self.editor.lane_tag:
-                    for g in self.editor.doc.graphs:
-                        if g.lane == df.lane:
-                            g.staves += 1
-                            break
-                    else:
-                        self.editor.doc.graphs.append(PitchLane(df.lane, 1, 0, 0))
-                        self.editor.doc.graphs.sort(key=lambda g: g.lane)
-            self.editor.refresh_layout()
-        elif ev.key == pygame.K_MINUS:
-            for df in self.editor.doc.drawfuncs:
-                if df.tag == self.editor.lane_tag:
-                    for g in list(self.editor.doc.graphs):
-                        if g.lane == df.lane and g.staves > 1:
-                            g.staves -= 1
-                        elif g.lane == df.lane and 1 == sum(1 for f in self.editor.doc.drawfuncs if df.lane == f.lane):
-                            self.editor.doc.graphs.remove(g)
-            self.editor.refresh_layout()
-        else:
-            for df in self.editor.doc.drawfuncs:
-                if df.tag == self.editor.lane_tag:
-                    self.change_drawfunc(df, ev.unicode)
-
-    def change_drawfunc(self, df, text):
-        if dfn := get_dfn(df.tag, self.editor.doc, self.editor.definitions):
-            if text.isdigit():
-                ix = int(text)-1
-                dspec = drawfunc_table[df.drawfunc]
-                if 0 <= ix < len(dspec):
-                    name, ty = dspec[ix]
-                    fields = dfn.avail(ty)
-                    if df.params[name] in fields:
-                        jx = fields.index(df.params[name]) + 1
-                        df.params[name] = fields[jx] if jx < len(fields) else fields[0]
-                    else:
-                        df.params[name] = dfn.autoselect(ty)
-            else:
-                for drawfunc, dspec in drawfunc_table.items():
-                    if text == drawfunc[0]:
-                        df.drawfunc = drawfunc
-                        df.params = {name:dfn.autoselect(ty) for name, ty in dspec}
-
-    def get_pitchlane(self):
-        for df in self.editor.doc.drawfuncs:
-            if df.tag == self.editor.lane_tag:
-                for g in self.editor.doc.graphs:
-                    if g.lane == df.lane and isinstance(g, PitchLane):
-                        return g
 
     def close(self):
         pass
@@ -612,6 +467,15 @@ class Editor:
                 self.doc.drawfuncs.remove(df)
                 self.erase_lane(df.lane)
 
+    def get_dfn(self, tag):
+        cell = self.doc.labels.get(tag, None)
+        if isinstance(cell, Cell):
+            return self.definitions.retrieve(cell.synth)
+    
+    def validate(self, df):
+        if dfn := self.get_dfn(df.tag):
+            return all(df.params[name] in dfn.avail(ty) for name, ty in drawfunc_table[df.drawfunc])
+        return False
 
 class Toolbar:
     def __init__(self, rect, items, action, selected, button_width=32*3):
@@ -803,7 +667,7 @@ class TrackLayout:
         for y, height, drawfuncs, graph in self.lanes:
             y -= vs
             for k, df in enumerate(drawfuncs):
-                ok = validate(df, editor.doc, editor.definitions)
+                ok = editor.validate(df)
                 text = font.render(df.tag, True, [(255, 100, 100), (200, 200, 200)][ok])
                 screen.blit(text, (10, y + 15 * k))
 
@@ -837,25 +701,6 @@ class TrackLayout:
             if editor.MARGIN <= x <= SCREEN_WIDTH:
                 pygame.draw.line(screen, (255, 0, 0), (x, 0), (x, SCREEN_HEIGHT))
             
-# boolean, unipolar, number, bipolar, pitch, hz, db, duration
-drawfunc_table = {
-    "string": [("value", ["boolean", "number", "pitch", "db"])],
-    "band": [("value", ["unipolar", "db"])],
-    "note": [("pitch", ["pitch"])],
-    "rhythm": [],
-}
-
-def get_dfn(tag, doc, definitions):
-    cell = doc.labels.get(tag, None)
-    if isinstance(cell, Cell):
-        return definitions.retrieve(cell.synth)
-
-def validate(df, doc, definitions):
-    if dfn := get_dfn(df.tag, doc, definitions):
-        return all(df.params[name] in dfn.avail(ty) for name, ty in drawfunc_table[df.drawfunc])
-    return False
-
-
 def dfs_list(brushes):
     output = []
     def dfs(brushes, path):
@@ -1043,50 +888,6 @@ class SequencerEditor:
             self.doc.brushes = []
             self.doc.labels = {}
 
-    def handle_textinput(self, text):
-        if self.mode == 3:
-            value = self.get_tag_line()
-            i = min(self.tag_i, len(value))
-            value = value[:i] + text + value[i:]
-            if text.isalpha() or text.isdigit() or text == '_':
-                self.update_tag_line(i + len(text), value)
-
-    def get_tag_line(self):
-        lines = [self.te_tag_name or ""] + [x for x, _ in self.te_desc.spec]
-        return lines[self.tag_k]
-
-    def update_tag_line(self, offset, value):
-        desc = self.te_desc
-        if self.tag_k == 0:
-        #    if value not in self.doc.descriptors:
-        #        desc = self.doc.descriptors.pop(self.tag_name, Desc("control", []))
-        #        found = False
-        #        for row in self.doc.rows:
-        #            if self.tag_name in [df.tag for df in row.drawfuncs]:
-        #                ix = [df.tag for df in row.drawfuncs].index(self.tag_name)
-        #                row.drawfuncs[ix].tag = value
-        #                found = True
-        #        if found == False:
-        #            for row in reversed(self.doc.rows):
-        #                if (row.staves == 0 and len(row.tags) == 0) or row.staves > 0:
-        #                    row.drawfuncs.append(DrawFunc("string", value, {"value":"n/a"}))
-        #                    found = True
-        #                    break
-        #        if found == False:
-        #            self.doc.rows.append(Row([DrawFunc("string", value, {"value":"n/a"})], staves=0))
-        #        self.doc.descriptors[value] = desc
-            self.te_tag_name = value
-            self.tag_i = offset
-        else:
-            was, t = desc.spec[self.tag_k - 1]
-            if value not in [name for name, _ in desc.spec]:
-                desc.spec[self.tag_k - 1] = value, t
-                self.tag_i = offset
-                past = self.te_future.pop(was, was)
-                if past is not None:
-                    self.te_past[past] = value
-                self.te_future[value] = past
-
     def draw_grid(self, event_line):
         w = (self.SCREEN_WIDTH - self.MARGIN) / self.BARS_VISIBLE
 
@@ -1156,7 +957,7 @@ class SequencerEditor:
         lanes = self.calculate_lanes(y)
         for y, height, drawfuncs, graph in lanes:
             for df in drawfuncs:
-                if validate(df, self.doc.descriptors):
+                if self.validate(df):
                     fn = "draw_drawfunc_" + df.drawfunc
                     getattr(self, fn)(y, height, df, graph)
         self.screen.set_clip(None)
@@ -1591,255 +1392,6 @@ class SequencerEditor:
         self.bar_tail -= a
         self.bar = min(self.bar_head, self.bar)
         self.bar = max(self.bar_head - self.BARS_VISIBLE + 1, self.bar)
-
-    def draw_tag_editor(self):
-        y = 15 + 15
-        #lanes = self.calculate_lanes(y)
-
-        self.draw_descriptor_table()
-
-        x = self.SCREEN_WIDTH/4
-        y = self.SCREEN_HEIGHT/4
-        rect = pygame.Rect(x, y, self.SCREEN_WIDTH/2, self.SCREEN_HEIGHT/2)
-        pygame.draw.rect(self.screen, (30, 30, 30), rect, False)
-        pygame.draw.rect(self.screen, (0, 255, 0), rect, True)
-
-        desc = self.te_desc
-
-        text = self.te_tag_name
-        if self.tag_k == 0:
-            text = text[:self.tag_i] + "|" + text[self.tag_i:]
-        text = self.font.render(text, True, (200, 200, 200))
-        self.screen.blit(text, (x + 10, y + 2))
-
-        cc = [(200, 200, 200), (100, 255, 100)]
-        p = x + 150
-        for model in ["control", "oneshot", "gate"]:
-            text = self.font.render(model, True, cc[desc.kind==model])
-            self.screen.blit(text, (p, y + 2))
-            p += 10 + text.get_width()
-
-        y += 30
-        for k, (attr, flavor) in enumerate(desc.spec, 1):
-            if self.tag_k == k:
-                attr = attr[:self.tag_i] + "|" + attr[self.tag_i:]
-            text = self.font.render(attr, True, (200, 200, 200))
-            self.screen.blit(text, (x + 10, y + 2))
-            p = x + 150
-            for model in ["bool", "unipolar", "number", "pitch", "db", "dur"]:
-                text = self.font.render(model, True, cc[flavor==model])
-                self.screen.blit(text, (p, y + 2))
-                p += 10 + text.get_width()
-            y += 15
-
-        y += 30
-        for name in sorted(self.te_past):
-            toward = self.te_past[name]
-            if toward is None:
-                text = f"{name} being removed"
-                text = self.font.render(text, True, (200, 200, 200))
-                self.screen.blit(text, (x + 10, y + 2))
-                y += 15
-            elif name != toward:
-                text = f"{name} being renamed to {toward}"
-                text = self.font.render(text, True, (200, 200, 200))
-                self.screen.blit(text, (x + 10, y + 2))
-                y += 15
-
-        old_desc = self.doc.descriptors.get(self.tag_name, Desc(None, []))
-        types = dict(desc.spec)
-        old_types = dict(old_desc.spec)
-
-        for name in sorted(self.te_future):
-            was = self.te_future[name]
-            if was is None:
-                text = f"{name} introduced"
-                text = self.font.render(text, True, (200, 200, 200))
-                self.screen.blit(text, (x + 10, y + 2))
-                y += 15
-            elif old_types[was] != types[name]:
-                text = f"{name} changes type"
-                text = self.font.render(text, True, (200, 200, 200))
-                self.screen.blit(text, (x + 10, y + 2))
-                y += 15
-
-        if old_desc.kind is not None and desc.kind != old_desc.kind:
-            text = f"{old_desc.kind} transforms to {desc.kind}"
-            text = self.font.render(text, True, (200, 200, 200))
-            self.screen.blit(text, (x + 10, y + 2))
-            y += 15
-
-        y += 15
-        if self.te_tag_name != self.tag_name and self.te_tag_name != "" and self.tag_name != None and self.te_tag_name not in self.doc.descriptors:
-            text = "[+] to copy"
-            text = self.font.render(text, True, (200, 200, 200))
-            self.screen.blit(text, (x + 10, y + 2))
-            y += 15
-
-        modified = False
-        modified |= (self.tag_name != self.te_tag_name)
-        modified |= (desc.kind != old_desc.kind)
-        modified |= (desc.spec != old_desc.spec)
-        if self.tag_name != None and self.te_tag_name != "" and modified:
-            text = "shift+[ret] to move/commit"
-            text = self.font.render(text, True, (200, 200, 200))
-            self.screen.blit(text, (x + 10, y + 2))
-            y += 15
-
-        if self.tag_name != None:
-            text = "[del] to remove"
-            text = self.font.render(text, True, (200, 200, 200))
-            self.screen.blit(text, (x + 10, y + 2))
-            y += 15
-
-    def handle_tag_editor_key(self, ev):
-        mods = pygame.key.get_mods()
-        shift_held = mods & pygame.KMOD_SHIFT
-        if ev.key == pygame.K_RETURN and shift_held:
-            if self.te_tag_name != "":
-                if self.tag_name is not None:
-                    old_desc = self.doc.descriptors.pop(self.tag_name)
-                else:
-                    old_desc = None
-                self.doc.descriptors[self.te_tag_name] = Desc(self.te_desc.kind, self.te_desc.spec.copy())
-                for df in self.doc.drawfuncs:
-                    if df.tag == self.tag_name:
-                        df.tag = self.te_tag_name
-                if old_desc is not None:
-                    if self.te_desc.kind == "control" and self.old_desc != "control":
-                        for brush in list(self.doc.labels.values()):
-                            if isinstance(brush, ControlPoint) and brush.tag == self.tag_name:
-                                self.erase_brush(brush)
-                            if isinstance(brush, Clap):
-                                brush.generators.pop(self.tag_name, None)
-                    else:
-                        od = dict(old_desc.spec)
-                        nd = dict(self.te_desc.spec)
-                        remapper = {}
-                        for name, was in self.te_future.items():
-                            if was is not None and od[was] == nd[name]:
-                                remapper[was] = name
-                        remap = lambda args: {remapper[name]: value for name, value in args.items() if name in remapper}
-                        for brush in list(self.doc.labels.values()):
-                            if isinstance(brush, Clap):
-                                gen = brush.generators.pop(self.tag_name, None)
-                                if isinstance(gen, ConstGen):
-                                    gen.argslist = [remap(args) for args in gen.argslist]
-                                    brush.generators[self.te_tag_name] = gen
-                                if isinstance(gen, PolyGen):
-                                    gen.argslists = [[remap(args) for args in argslist] for argslist in gen.argslists]
-                                    brush.generators[self.te_tag_name] = gen
-                self.tag_name = self.te_tag_name
-                self.te_past = {}
-                self.te_future = {name: name for name, _ in self.te_desc.spec}
-        elif ev.key == pygame.K_PLUS:
-            if self.te_tag_name not in self.doc.descriptors and all(name != "" for name, _ in self.te_desc.spec):
-                self.doc.descriptors[self.te_tag_name] = Desc(self.te_desc.kind, self.te_desc.spec.copy())
-                self.tag_name = self.te_tag_name
-                self.te_past = {}
-                self.te_future = {name: name for name, _ in self.te_desc.spec}
-        elif ev.key == pygame.K_DELETE:
-            if self.tag_name is not None:
-                self.doc.descriptors.pop(self.tag_name)
-                for df in list(self.doc.drawfuncs):
-                    if df.tag == self.tag_name:
-                        self.doc.drawfuncs.remove(df)
-                for brush in list(self.doc.labels.values()):
-                    if isinstance(brush, ControlPoint) and brush.tag == self.tag_name:
-                        self.erase_brush(brush)
-                    if isinstance(brush, Clap):
-                        brush.generators.pop(self.tag_name, None)
-                self.tag_name = None
-                self.te_past = {}
-                self.te_future = {name: None for name, _ in self.te_desc.spec}
-        elif ev.key == pygame.K_BACKSPACE and self.tag_k >= 0:
-            value = self.get_tag_line()
-            i = max(0, self.tag_i - 1)
-            value = value[:i] + value[self.tag_i:]
-            self.update_tag_line(i, value)
-        elif ev.key == pygame.K_TAB:
-            desc = self.te_desc
-            if self.tag_k == 0:
-                ix = ["control", "oneshot", "gate"].index(desc.kind)
-                desc.kind = ["oneshot", "gate", "control"][ix]
-            else:
-                attr, flavor = desc.spec[self.tag_k - 1]
-                ix = ["bool", "unipolar", "number", "pitch", "db", "dur"].index(flavor)
-                flavor = ["unipolar", "number", "pitch", "db", "dur", "bool"][ix]
-                desc.spec[self.tag_k - 1] = attr, flavor
-        #elif ev.key == pygame.K_PAGEUP and mods & pygame.KMOD_SHIFT:
-        #    if self.tag_name in self.doc.descriptors:
-        #        xs = iter(reversed(self.doc.rows))
-        #        for xrow in xs:
-        #            if self.tag_name in xrow.tags:
-        #                break
-        #        ix = xrow.tags.index(self.tag_name)
-        #        if ix == 0:
-        #            for row in xs:
-        #                if (row.staves == 0 and len(row.tags) == 0) or row.staves > 0:
-        #                    row.tags.append(self.tag_name)
-        #                    xrow.tags.remove(self.tag_name)
-        #                    break
-        #        else:
-        #            xrow.tags[ix], xrow.tags[ix-1] = xrow.tags[ix-1], xrow.tags[ix]
-        #elif ev.key == pygame.K_PAGEDOWN and mods & pygame.KMOD_SHIFT:
-        #    if self.tag_name in self.doc.descriptors:
-        #        xs = iter(self.doc.rows)
-        #        for xrow in xs:
-        #            if self.tag_name in xrow.tags:
-        #                break
-        #        ix = xrow.tags.index(self.tag_name)
-        #        if ix + 1 >= len(xrow.tags):
-        #            for row in xs:
-        #                if (row.staves == 0 and len(row.tags) == 0) or row.staves > 0:
-        #                    row.tags.insert(0, self.tag_name)
-        #                    xrow.tags.remove(self.tag_name)
-        #                    break
-        #        else:
-        #            xrow.tags[ix], xrow.tags[ix+1] = xrow.tags[ix+1], xrow.tags[ix]
-        elif ev.key == pygame.K_PAGEUP:
-            self.walk_tag_name(direction=False, from_descriptors=shift_held)
-        elif ev.key == pygame.K_PAGEDOWN:
-            self.walk_tag_name(direction=True, from_descriptors=shift_held)
-        elif ev.key == pygame.K_RETURN:
-            spec = self.te_desc.spec
-            if self.tag_k == 0 or spec[self.tag_k-1][0] != "":
-                spec.insert(self.tag_k, ("", "number"))
-                self.te_future[""] = None
-                self.tag_k += 1
-                self.tag_i = 0
-        elif ev.key == pygame.K_UP and shift_held:
-            spec = self.te_desc.spec
-            if self.tag_k > 1:
-                spec[self.tag_k-2], spec[self.tag_k-1] = spec[self.tag_k-1], spec[self.tag_k-2] 
-                self.tag_k -= 1
-        elif ev.key == pygame.K_DOWN and shift_held:
-            spec = self.te_desc.spec
-            if 0 < self.tag_k < len(spec):
-                spec[self.tag_k], spec[self.tag_k-1] = spec[self.tag_k-1], spec[self.tag_k] 
-                self.tag_k += 1
-        elif ev.key == pygame.K_UP:
-            if self.tag_k > 0 and self.get_tag_line() == "":
-                self.te_desc.spec.pop(self.tag_k - 1)
-                past = self.te_future.pop("")
-                if past is not None:
-                    self.te_past[past] = None
-            if self.tag_k > 0:
-                self.tag_k = self.tag_k - 1
-        elif ev.key == pygame.K_DOWN:
-            spec = self.te_desc.spec
-            if self.tag_k > 0 and self.get_tag_line() == "":
-                if self.tag_k < len(spec):
-                    spec.pop(self.tag_k - 1)
-                    past = self.te_future.pop("")
-                    if past is not None:
-                        self.te_past[past] = None
-            elif self.tag_k < len(spec):
-                self.tag_k = self.tag_k + 1
-        elif ev.key == pygame.K_LEFT:
-            self.tag_i = max(0, self.tag_i - 1)
-        elif ev.key == pygame.K_RIGHT:
-            self.tag_i = min(len(self.get_tag_line()), self.tag_i + 1)
 
     def draw_clap_editor(self):
         sel = self.sel
