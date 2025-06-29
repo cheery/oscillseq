@@ -64,26 +64,28 @@ class LaneEditorView:
             else:
                 df = None
             if df is not None:
-                #desc = self.doc.descriptors.get(self.tag_name, Desc("", []))
-                for drawfuncs in [["string", "band"], ["note"], ["rhythm"]]:
+                dfn = get_dfn(df.tag, self.editor.doc, self.editor.definitions)
+                if dfn is None:
+                    text = font.render("cannot fetch dfn for this drawfunc", True, (200, 200, 200))
+                    screen.blit(text, (x + 10, y))
+                else:
+                    for drawfuncs in [["string", "band"], ["note"], ["rhythm"]]:
+                        px = x + 10
+                        for drawfunc in drawfuncs:
+                            active = (drawfunc == df.drawfunc)
+                            drawfunc = "[" + drawfunc[0] + "]" + drawfunc[1:]
+                            text = font.render(drawfunc, True, [(200, 200, 200), (0, 255, 0)][active])
+                            screen.blit(text, (px, py))
+                            px += text.get_width() + 10
+                        py += 15
+
                     px = x + 10
-                    for drawfunc in drawfuncs:
-                        active = (drawfunc == df.drawfunc)
-                        drawfunc = "[" + drawfunc[0] + "]" + drawfunc[1:]
-                        text = font.render(drawfunc, True, [(200, 200, 200), (0, 255, 0)][active])
+                    for i, (name, ty) in enumerate(drawfunc_table[df.drawfunc], 1):
+                        tag = df.params[name]
+                        ok = (tag in dfn.avail(ty))
+                        text = font.render("[" + str(i) + "] " + name + "->" + tag, True, [(255, 128, 128), (200, 200, 200)][ok])
                         screen.blit(text, (px, py))
                         px += text.get_width() + 10
-                    py += 15
-
-                px = x + 10
-                for i, (name, ty) in enumerate(drawfunc_table[df.drawfunc], 1):
-                    tag = df.params[name]
-                    # reimplement avail
-                    #ok = (tag in avail(desc.spec, ty))
-                    ok = True
-                    text = font.render("[" + str(i) + "] " + name + "->" + tag, True, [(255, 128, 128), (200, 200, 200)][ok])
-                    screen.blit(text, (px, py))
-                    px += text.get_width() + 10
 
     def handle_keydown(self, ev):
         mods = pygame.key.get_mods()
@@ -837,7 +839,7 @@ class TrackLayout:
             
 # boolean, unipolar, number, bipolar, pitch, hz, db, duration
 drawfunc_table = {
-    "string": [("value", ["bool", "number", "pitch", "db"])],
+    "string": [("value", ["boolean", "number", "pitch", "db"])],
     "band": [("value", ["unipolar", "db"])],
     "note": [("pitch", ["pitch"])],
     "rhythm": [],

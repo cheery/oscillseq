@@ -109,10 +109,10 @@ class NodeEditorView:
                 self.editor.doc.drawfuncs.remove(df)
                 return
             lane = df.lane + 1
-        #params = {"value": autoselect(desc.spec, ["bool", "number", "pitch", "db"])}
-        params = {"value": "n/a"} # TODO: implement descriptor autoselect.
+        params = {"value": "n/a"}
         df = DrawFunc(lane, "string", tag, params)
         self.editor.doc.drawfuncs.append(df)
+        self.editor.refresh_layout()
 
 class NodeEditorTool:
     def __init__(self, view):
