@@ -53,12 +53,10 @@ class ControlPoint:
     transition : bool
     value : Any
 
-    def construct(self, descriptors, sequencer, offset, key):
-        if self.tag not in descriptors:
-            return
+    def construct(self, sequencer, offset, key, spec):
         if self.tag == "tempo" and self.value <= 0:
             return
-        sequencer.control(offset, self.tag, self.transition, self.value)
+        sequencer.quadratic(offset, self.tag, self.transition, self.value)
 
     def annotate(self, graph_key_map, offset):
         pass
@@ -89,7 +87,7 @@ class Key:
     lanes : int
     index : int
 
-    def construct(self, descriptors, sequencer, offset, key):
+    def construct(self, sequencer, offset, key, spec):
         return
 
     def annotate(self, graph_key_map, offset):
@@ -121,10 +119,10 @@ class Clip:
     duration : int
     brushes : List[Entity]
 
-    def construct(self, descriptors, sequencer, offset, key):
+    def construct(self, sequencer, offset, key, spec):
         for i, e in enumerate(self.brushes):
             kv = key + (i,)
-            e.brush.construct(descriptors, sequencer, offset + e.shift, kv)
+            e.brush.construct(sequencer, offset + e.shift, kv, spec)
 
     def annotate(self, graph_key_map, offset):
         for i, e in enumerate(self.brushes):
@@ -209,9 +207,10 @@ class Clap:
     tree : measure.Tree
     generators : Dict[str, Any]
 
-    def construct(self, descriptors, sequencer, offset, key):
+    def construct(self, sequencer, offset, key, spec):
         starts, stops = self.tree.offsets(self.duration, offset)
         for tag, gen in self.generators.items():
+            assert False, "determine from spec"# TODO
             if tag not in descriptors:
                 continue
             kind = descriptors[tag].kind
@@ -225,7 +224,7 @@ class Clap:
             elif kind == "oneshot":
                 for i, start in enumerate(starts):
                     for kv, args in gen.pull(i, key, True):
-                        sequencer.oneshot(start, tag, args)
+                        sequencer.once(start, tag, args)
 
     def annotate(self, graph_key_map, offset):
         pass
@@ -380,10 +379,11 @@ class Document:
         self.labels = labels
         
 
-    def construct(self, sequencer, offset, key):
+    def construct(self, sequencer, offset, key, definitions):
+        spec = {cell.label: definitions.retrieve(cell.synth) for cell in self.cells}
         for i, e in enumerate(self.brushes):
             kv = key + (i,)
-            e.brush.construct(self.descriptors, sequencer, offset + e.shift, kv)
+            e.brush.construct(sequencer, offset + e.shift, kv, spec)
 
     def annotate(self, graph_key_map, offset):
         for i, e in enumerate(self.brushes):

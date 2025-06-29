@@ -164,15 +164,9 @@ class Editor:
 
         # Sequence is built so it could be visualized.
         self.group_ids = {}
-        if self.transport_status != 3:
-            self.group_ids.clear()
         sb = SequenceBuilder(self.group_ids)
-        #self.doc.construct(sb, 0, ())
-        sb.gate(1 / 4, 'm', 0, {'note': 80})
-        sb.gate(2 / 4, 'm', 0, {})
-        sb.gate(3 / 4, 'm', 1, {'note': 79})
-        sb.gate(4 / 4, 'm', 1, {})
-        self.sequence = sb.build(2)
+        self.doc.construct(sb, 0, (), self.definitions)
+        self.sequence = sb.build(self.doc.duration)
 
         self.transport_bar = TransportBar(self)
 
@@ -196,7 +190,14 @@ class Editor:
         self.view = NodeEditorView(self)
 
     def refresh_layout(self):
+        if self.transport_status != 3:
+            self.group_ids.clear()
+        sb = SequenceBuilder(self.group_ids)
+        self.doc.construct(sb, 0, (), self.definitions)
+        self.sequence = sb.build(self.doc.duration)
         self.layout = TrackLayout(self.doc, offset = 30)
+        if (point := self.get_playing()) is not None:
+            self.set_playing(Sequencer(self.sequence, point=self.sequence.t(point), **self.playback_params(self.sequence)))
 
     def set_offline(self):
         if self.transport_status > 0:
