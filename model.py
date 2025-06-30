@@ -210,19 +210,20 @@ class Clap:
     def construct(self, sequencer, offset, key, spec):
         starts, stops = self.tree.offsets(self.duration, offset)
         for tag, gen in self.generators.items():
+            gkey = key + (tag,)
             if tag not in spec:
                 continue
             dfn = spec[tag]
             if dfn.synthdef.has_gate:
                 for i, start in enumerate(starts):
-                    for kv, args in gen.pull(i, key, False):
+                    for kv, args in gen.pull(i, gkey, False):
                         sequencer.gate(start, tag, kv, args)
                 for i, stop in enumerate(stops):
-                    for kv, args in gen.pull(i, key, True):
+                    for kv, args in gen.pull(i, gkey, True):
                         sequencer.gate(stop, tag, kv, {})
             else:
                 for i, start in enumerate(starts):
-                    for kv, args in gen.pull(i, key, True):
+                    for kv, args in gen.pull(i, gkey, True):
                         sequencer.once(start, tag, args)
 
     def annotate(self, graph_key_map, offset):

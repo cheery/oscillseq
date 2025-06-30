@@ -83,8 +83,8 @@ class Fabric:
             return bgroup
 
         dummies = {}
-        def dummy_bus_by_type(name):
-            sm = retrieve_type(name)
+        def dummy_bus_by_type(name, mode):
+            sm = retrieve_type(name), mode
             if sm not in dummies:
                 dummies[sm] = allocate_by_type(name)
             return dummies[sm]
@@ -105,7 +105,8 @@ class Fabric:
             if busi >= 0:
                 self.busmap[cell_label][param_name] = buses[busi]
             else:
-                self.busmap[cell_label][param_name] = dummy_bus_by_type(name)
+                mode = descriptors[cell_label].mdesc[param_name].mode
+                self.busmap[cell_label][param_name] = dummy_bus_by_type(name, mode)
 
         relaydefs = {}
         def relay_synthdef(calculation_rate, count):

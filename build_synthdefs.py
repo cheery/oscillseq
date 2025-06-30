@@ -1,12 +1,36 @@
 from descriptors import *
-from supriya import Envelope, synthdef, ugens
-from supriya.ugens import EnvGen, Out, SinOsc
+from supriya import Envelope, synthdef
+from supriya.ugens import Sweep, Out, In, SinOsc, WhiteNoise, Saw, EnvGen, LPF, RLPF
 
 save = Saver("synthdefs")
 
 @synthdef('ir', 'kr', 'kr', 'kr', 'kr', 'tr')
+def saw(out=0, note=69, gate=1):
+    sig = Saw.ar(frequency=note.midi_to_hz())
+    sig *= EnvGen.kr(envelope=Envelope.adsr(), gate=gate, done_action=2)
+    Out.ar(bus=out, source=[sig, sig])
+
+save(saw,
+    out = bus("ar", "out", 2),
+    note = pitch)
+
+@synthdef('ir', 'kr', 'kr', 'kr', 'kr', 'tr')
+def resonant_low_pass(out=0, source=0, freq=440, rcq=0.5):
+    sig = RLPF.ar(
+        source = In.ar(bus=source, channel_count=2),
+        frequency = freq,
+        reciprocal_of_q = rcq)
+    Out.ar(bus=out, source=sig)
+
+save(resonant_low_pass,
+    out = bus("ar", "out", 2),
+    source = bus("ar", "in", 2),
+    freq = hz,
+    rcq = unipolar)
+
+@synthdef('ir', 'kr', 'kr', 'kr', 'kr', 'tr')
 def quadratic(out=0, a=0, b=0, c=0, t=0, trigger=0):
-    x = min(t, ugens.Sweep.kr(trigger=trigger))
+    x = min(t, Sweep.kr(trigger=trigger))
     v = a*x*x + b*x + c
     Out.kr(bus=out, source=v)
 save(quadratic,
@@ -21,7 +45,7 @@ save(simple,
 
 @synthdef()
 def musical(out=0, note=69, gate=1, amplitude=1.0):
-    sig = ugens.Saw.ar(frequency=note.midi_to_hz()) * amplitude
+    sig = Saw.ar(frequency=note.midi_to_hz()) * amplitude
     sig *= EnvGen.kr(envelope=Envelope.adsr(), gate=gate, done_action=2)
     Out.ar(bus=out, source=[sig, sig])
 save(musical,
@@ -41,7 +65,7 @@ save(test_signal,
 
 @synthdef()
 def white_noise(out=0, amplitude=0.5):
-    noise = ugens.WhiteNoise.ar() * amplitude
+    noise = WhiteNoise.ar() * amplitude
     Out.ar(bus=out, source=[noise, noise])
 save(white_noise,
     out = bus("ar", "out", 2),
@@ -49,10 +73,10 @@ save(white_noise,
 
 @synthdef()
 def low_pass(out=0, source=0, frequency=440):
-    sig = ugens.LPF.ar(
-        source = ugens.In.ar(bus=source, channel_count=2),
+    sig = LPF.ar(
+        source = In.ar(bus=source, channel_count=2),
         frequency=frequency)
-    ugens.Out.ar(bus=out, source=sig)
+    Out.ar(bus=out, source=sig)
 save(low_pass,
     source = bus("ar", "in", 2),
     out = bus("ar", "out", 2),
