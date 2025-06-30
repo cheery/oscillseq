@@ -4,15 +4,17 @@ from supriya.ugens import Sweep, Out, In, SinOsc, WhiteNoise, Saw, EnvGen, LPF, 
 
 save = Saver("synthdefs")
 
-@synthdef('ir', 'kr', 'kr', 'kr', 'kr', 'tr')
-def saw(out=0, note=69, gate=1):
+@synthdef()
+def saw(out=0, note=69, gate=1, volume=0):
     sig = Saw.ar(frequency=note.midi_to_hz())
     sig *= EnvGen.kr(envelope=Envelope.adsr(), gate=gate, done_action=2)
+    sig *= volume.db_to_amplitude()
     Out.ar(bus=out, source=[sig, sig])
 
 save(saw,
     out = bus("ar", "out", 2),
-    note = pitch)
+    note = pitch,
+    volume = db)
 
 @synthdef()
 def resonant_low_pass(out=0, source=0, freq=440, rcq=0.5):

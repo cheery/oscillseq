@@ -149,6 +149,10 @@ class NodeEditorTool:
                         self.view.tool.adjust_slider(ev.pos)
                     elif ev.button == 3:
                         gcell.cell.params.pop(ui.name, None)
+                        if self.view.editor.fabric:
+                            d = self.view.editor.definitions.descriptor(gcell.cell)
+                            val = d.synthdef.parameters[ui.name][0].value
+                            self.view.editor.fabric.control(gcell.cell.label, **{ui.name: val})
                     return
         if ev.button == 3:
             self.view.tool = ScrollingTool(self, np.array(ev.pos))
@@ -598,7 +602,7 @@ def any_to_slider(val, ty):
             val = 440 * 2**((int(val) - 69) / 12)
         return (math.log2(val / 440) - lhzbound) / whzbound
     if ty == 'db':
-        return linlin(val, -100, 0, 0, 1)
+        return linlin(val, -80, 10, 0, 1)
     if ty == 'duration':
         return linlin(val, 0, 10, 0, 1)
     return val
@@ -615,7 +619,7 @@ def slider_to_any(val, ty):
     if ty == 'hz':
         return 440 * 2**(val * whzbound + lhzbound)
     if ty == 'db':
-        return linlin(val, 0, 1, -100, 0)
+        return linlin(val, 0, 1, -80, 10)
     if ty == 'duration':
         return linlin(val, 0, 1, 0, 10)
     return val
