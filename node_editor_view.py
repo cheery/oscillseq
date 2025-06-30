@@ -15,13 +15,12 @@ import numpy as np
 from model import Cell
 from fabric import Definitions, Fabric
 import music
-from descriptors import simple, bus
+from descriptors import bus
 from node_editor import ray_intersect_aabb, line_intersect_line
 import time
 import node_editor
 import sequencer
 
-# TODO: fx with a,b,c,t,trigger allows linear control.
 # TODO: create a layout object.
 
 class NodeEditorView:
@@ -53,14 +52,14 @@ class NodeEditorView:
         for element in gui:
             element.draw(screen, font, self.editor.definitions, scroll, self.editor.fabric)
         
-        for point in wire_inputs.values():
-                point = point[0] + scroll[0], point[1] + scroll[1]
-                pygame.draw.circle(screen, (255, 0, 0), point, 7.5, 0)
-                pygame.draw.circle(screen, (255, 255, 0), point, 7.5, 1)
-        for point in wire_outputs.values():
-                point = point[0] + scroll[0], point[1] + scroll[1]
-                pygame.draw.circle(screen, (255, 0, 0), point, 7.5, 0)
-                pygame.draw.circle(screen, (255, 255, 0), point, 7.5, 1)
+        for point, spec in wire_inputs.values():
+            point = point[0] + scroll[0], point[1] + scroll[1]
+            pygame.draw.circle(screen, color_of_bus(spec), point, 7.5, 0)
+            pygame.draw.circle(screen, (255, 255, 255), point, 7.5, 1)
+        for point, spec in wire_outputs.values():
+            point = point[0] + scroll[0], point[1] + scroll[1]
+            pygame.draw.circle(screen, color_of_bus(spec), point, 7.5, 0)
+            pygame.draw.circle(screen, (255, 255, 255), point, 7.5, 1)
         
         point = 400, 0
         point = point[0] + scroll[0], point[1] + scroll[1]
@@ -146,15 +145,15 @@ class NodeEditorTool:
             self.view.tool = ScrollingTool(self, np.array(ev.pos))
             return
         if ev.button == 1:
-            for name, pt in wire_inputs.items():
+            for name, (pt,bus) in wire_inputs.items():
                 delta = np.array(point) - np.array(pt)
                 if np.sqrt(np.sum(delta**2)) < 50:
-                    self.view.tool = ConnectionTool(self, name, pt)
+                    self.view.tool = ConnectionTool(self, name, pt, bus)
                     return
-            for name, pt in wire_outputs.items():
+            for name, (pt,bus) in wire_outputs.items():
                 delta = np.array(point) - np.array(pt)
                 if np.sqrt(np.sum(delta**2)) < 50:
-                    self.view.tool = ConnectionTool(self, name, pt)
+                    self.view.tool = ConnectionTool(self, name, pt, bus)
                     return
             self.view.tool = DisconnectionTool(self, point)
 
@@ -221,11 +220,12 @@ class ScrollingTool:
             self.open_menu = False
 
 class ConnectionTool:
-    def __init__(self, tool, port, point):
+    def __init__(self, tool, port, point, bus):
         self.view = tool.view
         self.tool = tool
         self.port = port
         self.point = point
+        self.bus = bus
         self.wire = []
 
     def draw(self, screen):
@@ -246,11 +246,15 @@ class ConnectionTool:
         gui, wire_inputs, wire_outputs, wires, router = self.view.layout
         point = np.array(ev.pos) - np.array(self.view.scroll)
         selected = None
-        for name, pt in wire_inputs.items():
+        for name, (pt,bus) in wire_inputs.items():
+            if bus != self.bus:
+                continue
             delta = np.array(point) - np.array(pt)
             if np.sqrt(np.sum(delta**2)) < 50:
                 selected = name
-        for name, pt in wire_outputs.items():
+        for name, (pt,_) in wire_outputs.items():
+            if bus != self.bus:
+                continue
             delta = np.array(point) - np.array(pt)
             if np.sqrt(np.sum(delta**2)) < 50:
                 selected = name
@@ -336,14 +340,14 @@ class CellMenu:
                 pygame.draw.rect(screen, (200, 200, 200), element.rect, 2, 3)
             element.draw(screen, font, self.view.editor.definitions, scroll, None)
 
-        for point in self.wire_inputs.values():
+        for point, spec in self.wire_inputs.values():
             point = point[0] + scroll[0], point[1] + scroll[1]
-            pygame.draw.circle(screen, (255, 0, 0), point, 7.5, 0)
-            pygame.draw.circle(screen, (255, 255, 0), point, 7.5, 1)
-        for point in self.wire_outputs.values():
+            pygame.draw.circle(screen, color_of_bus(spec), point, 7.5, 0)
+            pygame.draw.circle(screen, (255, 255, 255), point, 7.5, 1)
+        for point, spec in self.wire_outputs.values():
             point = point[0] + scroll[0], point[1] + scroll[1]
-            pygame.draw.circle(screen, (255, 0, 0), point, 7.5, 0)
-            pygame.draw.circle(screen, (255, 255, 0), point, 7.5, 1)
+            pygame.draw.circle(screen, color_of_bus(spec), point, 7.5, 0)
+            pygame.draw.circle(screen, (255, 255, 255), point, 7.5, 1)
 
     def handle_mousebuttondown(self, ev):
         self.view.tool = self.tool
@@ -405,7 +409,7 @@ class GUICell:
 
     def draw(element, screen, font, definitions, scroll, fabric):
         cell = element.cell
-        d = definitions.retrieve(cell.definition)
+        d = definitions.descriptor(cell)
         x, y = element.rect.x + scroll[0], element.rect.y + scroll[1]
         rect = pygame.Rect(element.rect.x + scroll[0],
                            element.rect.y + scroll[1],
@@ -442,11 +446,11 @@ class GUICell:
             screen.blit(text, (x + 75 - text.get_width()//2,y + k*45 + 30))
 
 def layout_cell(cell, wire_inputs, wire_outputs, definitions):
-    d = definitions.retrieve(cell.definition)
+    d = definitions.descriptor(cell)
     inputs = []
     outputs = []
     valueparams = []
-    for name, ty in d.desc:
+    for name, ty in d.mdesc.items():
         if isinstance(ty, bus):
             if ty.mode == "out":
                 outputs.append((name, ty))
@@ -460,10 +464,10 @@ def layout_cell(cell, wire_inputs, wire_outputs, definitions):
     gcell = GUICell(cell, rect, inputs, outputs, valueparams)
     for k, (name, ty) in enumerate(inputs):
         point = rect.x, rect.y + 30*k + 30
-        wire_inputs[f"{cell.label}:{name}"] = point
+        wire_inputs[f"{cell.label}:{name}"] = point, d.field_bus(name)
     for k, (name, ty) in enumerate(outputs):
         point = rect.x + 150, rect.y + 30*k + 30
-        wire_outputs[f"{cell.label}:{name}"] = point
+        wire_outputs[f"{cell.label}:{name}"] = point, d.field_bus(name)
     return gcell
 
 def layout_gui(cells, connections, definitions):
@@ -472,7 +476,7 @@ def layout_gui(cells, connections, definitions):
     wire_outputs = {}
     
     point = 400, 0
-    wire_inputs['output'] = point
+    wire_inputs['output'] = point, ('ar', 2)
     
     for cell in cells:
         gcell = layout_cell(cell, wire_inputs, wire_outputs, definitions)
@@ -484,18 +488,28 @@ def layout_gui(cells, connections, definitions):
 
     start_time = time.monotonic() * 1000
 
-    for name, (x,y) in wire_inputs.items():
+    for name, ((x,y), _) in wire_inputs.items():
         rb.cast_ray((x-5, y), (-1, 0))
-    for name, (x,y) in wire_outputs.items():
+    for name, ((x,y), _) in wire_outputs.items():
         rb.cast_ray((x+5, y), (+1, 0))
 
     router = rb.build()
 
     wires = []
     for src, dst in connections:
-        s = wire_outputs[src]
-        e = wire_inputs[dst]
+        s = wire_outputs[src][0]
+        e = wire_inputs[dst][0]
         wire = router.route(s, e)
-        wires.append((wire, (255,255,255), (src,dst)))
+        wires.append((wire, color_of_bus(wire_inputs[dst][1]), (src,dst)))
 
     return gui, wire_inputs, wire_outputs, wires, router
+
+def color_of_bus(bus):
+    if bus == ('ar', 1):
+        return (100, 255, 0)
+    if bus == ('ar', 2):
+        return (255, 0, 0)
+    if bus == ('kr', 1):
+        return (255, 255, 0)
+    return (255, 255, 255)
+    

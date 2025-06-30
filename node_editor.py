@@ -1,4 +1,4 @@
-import astar
+#import astar
 import numpy as np
 import math
 import time
@@ -155,24 +155,24 @@ class PurePythonWireRouter:
         else:
             return []
 
-class WireRouter:
-    def __init__(self, cost_map, adj_map, points):
-        self.cost_map = cost_map
-        self.adj_map = adj_map
-        self.points = points
-
-    def get_nearest(self, point):
-        return min(((i, manhattan(point, p))
-                    for i, p in enumerate(self.points)), key=lambda x: x[1])[0]
-
-    def route(self, start, end, add_cost=True):
-        i = self.get_nearest(start)
-        j = self.get_nearest(end)
-        path = astar.route(self.cost_map, self.adj_map, i, j)
-        if add_cost:
-            for i in path:
-                self.cost_map[i] += 50
-        return Wire(self, start, path, end)
+#class WireRouter:
+#    def __init__(self, cost_map, adj_map, points):
+#        self.cost_map = cost_map
+#        self.adj_map = adj_map
+#        self.points = points
+#
+#    def get_nearest(self, point):
+#        return min(((i, manhattan(point, p))
+#                    for i, p in enumerate(self.points)), key=lambda x: x[1])[0]
+#
+#    def route(self, start, end, add_cost=True):
+#        i = self.get_nearest(start)
+#        j = self.get_nearest(end)
+#        path = astar.route(self.cost_map, self.adj_map, i, j)
+#        if add_cost:
+#            for i in path:
+#                self.cost_map[i] += 50
+#        return Wire(self, start, path, end)
 
 class Wire:
     def __init__(self, router, start, path, end):

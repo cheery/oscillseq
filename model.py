@@ -319,6 +319,7 @@ class Cell:
     synth : str
     pos : Tuple[int, int]
     params : Dict[str, Union[int, float, music.Pitch]]
+    type_param : Optional[str] = None
 
     # TODO: remove
     @property
@@ -331,7 +332,8 @@ class Cell:
             'multi': self.multi,
             'synth': self.synth,
             'pos': tuple(self.pos),
-            'params': {name: value_to_json(a) for name,a in self.params.items()}
+            'params': {name: value_to_json(a) for name,a in self.params.items()},
+            'type_param': self.type_param
         }
 
     @classmethod
@@ -341,7 +343,8 @@ class Cell:
             multi = obj['multi'],
             synth = obj['synth'],
             pos = tuple(obj['pos']),
-            params = {name: json_to_value(o) for name, o in obj['params'].items()})
+            params = {name: json_to_value(o) for name, o in obj['params'].items()},
+            type_param = obj.get('type_param', None))
 
 @dataclass(eq=False)
 class Document:
@@ -379,7 +382,7 @@ class Document:
         
 
     def construct(self, sequencer, offset, key, definitions):
-        spec = {cell.label: definitions.retrieve(cell.synth) for cell in self.cells}
+        spec = {cell.label: definitions.descriptor(cell) for cell in self.cells}
         for i, e in enumerate(self.brushes):
             kv = key + (i,)
             e.brush.construct(sequencer, offset + e.shift, kv, spec)

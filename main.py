@@ -23,6 +23,8 @@ from brush_editor_view import BrushEditorView, modify
 from node_editor_view import NodeEditorView
 from lane_editor_view import LaneEditorView, drawfunc_table
 
+# TODO: remove type annotation from buses.
+
 class DummyView:
     def __init__(self, editor):
         self.editor = editor
@@ -130,7 +132,8 @@ class Editor:
             multi = False,
             synth = "quadratic",
             pos = (-400, 0),
-            params = {})))
+            params = {},
+            type_param = "number")))
 
         if len(sys.argv) > 1:
             self.filename = sys.argv[1]
@@ -159,7 +162,7 @@ class Editor:
         self.player = None
         self.set_online()
 
-        self.playback_range = (0, 2)
+        self.playback_range = None
         self.playback_loop  = True
 
         # Sequence is built so it could be visualized.
@@ -473,7 +476,7 @@ class Editor:
     def get_dfn(self, tag):
         cell = self.doc.labels.get(tag, None)
         if isinstance(cell, Cell):
-            return self.definitions.retrieve(cell.synth)
+            return self.definitions.descriptor(cell)
     
     def validate(self, df):
         if dfn := self.get_dfn(df.tag):

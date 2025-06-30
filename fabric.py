@@ -1,7 +1,7 @@
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from typing import List, Dict, Set, Optional, Callable, Tuple, Any, Union, DefaultDict
-from descriptors import simple, bus, read_desc
+from descriptors import bus, read_desc, Descriptor
 from supriya import synthdef
 from supriya.ugens import In, Out
 from model import Cell
@@ -19,12 +19,16 @@ class Definitions:
         self.synthdef_directory = synthdef_directory
         self.table = {}
 
-    def retrieve(self, name):
+    def definition(self, name):
         if name in self.table:
             return self.table[name]
         filename = os.path.join(self.synthdef_directory, name)
-        self.table[name] = d = load_definition(filename)
-        return d
+        self.table[name] = dfn = load_definition(filename)
+        return dfn
+
+    def descriptor(self, cell):
+        synthdef, mdesc = self.definition(cell.synth)
+        return Descriptor(synthdef, mdesc, cell.type_param)
 
     def list_available(self):
         for name in os.listdir(self.synthdef_directory):
@@ -35,52 +39,7 @@ def load_definition(filename):
     with open(f"{filename}.synthdef", 'rb') as fd:
         data = fd.read()
     synthdef = supriya.ugens.decompile_synthdef(data)
-    return Definition(synthdef, read_desc(f"{filename}.desc"))
-
-@dataclass
-class Definition:
-    def __init__(self, synthdef, desc):
-        self.synthdef = synthdef
-        self.desc = desc
-        self.mdesc = dict(desc)
-
-    @property
-    def inputs(self):
-        for name, spec in self.desc:
-            if isinstance(spec, bus) and spec.mode == 'in':
-                yield name
-        
-    @property
-    def outputs(self):
-        for name, spec in self.desc:
-            if isinstance(spec, bus) and spec.mode == 'out':
-                yield name
-
-    def field_type(self, name):
-        spec = self.mdesc.get(name, None)
-        if isinstance(spec, simple):
-            return spec.to_text()
-
-    def field_bus(self, name):
-        spec = self.mdesc.get(name, None)
-        if isinstance(spec, bus):
-            return spec.messy
-
-    def avail(self, ty):
-        available_fields = []
-        for name, spec in [("n/a", simple("n/a"))] + self.desc:
-            if isinstance(spec, simple) and spec.to_text() in ty:
-                available_fields.append(name)
-            elif isinstance(spec, simple) and len(ty) == 0:
-                available_fields.append(name)
-        # this is a hax. TODO: think of a solution to avoid 'arbitrary' -type.
-        if all(x in self.mdesc for x in ['a', 'b', 'c', 't', 'trigger']):
-            available_fields.append("*")
-        return available_fields
-
-    def autoselect(self, ty):
-        a = self.avail(ty)
-        return a[0] if len(a) else "n/a"
+    return (synthdef, dict(read_desc(f"{filename}.desc")))
 
 @dataclass
 class Relay:
@@ -88,26 +47,22 @@ class Relay:
     o : int
 
 class Fabric:
-    def __init__(self, server, cells, connections, definitions_):
+    def __init__(self, server, cells, connections, definitions):
         self.trail = defaultdict(dict)
-        definitions = {}
-        synthdefs = []
-        for cell in cells:
-            if cell.definition not in definitions:
-                d = definitions_.retrieve(cell.definition)
-                definitions[cell.definition] = d
-                synthdefs.append(d.synthdef)
+        descriptors = {cell.label: definitions.descriptor(cell) for cell in cells}
+        synthdefs = set(desc.synthdef for desc in descriptors.values())
         if synthdefs:
             server.add_synthdefs(*synthdefs)
+
         if not isinstance(server, supriya.Score):
             server.sync()
 
         W = []
         R = ['output']
         for cell in cells:
-            d = definitions[cell.definition]
-            R.extend(f"{cell.label}:{name}" for name in d.inputs)
-            W.extend(f"{cell.label}:{name}" for name in d.outputs)
+            desc = descriptors[cell.label]
+            R.extend(f"{cell.label}:{name}" for name in desc.inputs)
+            W.extend(f"{cell.label}:{name}" for name in desc.outputs)
         E = connections
         assignment, relays = bus_assignment(W,R,E)
         cells = cells + [Relay(*ii) for ii in relays]
@@ -116,27 +71,22 @@ class Fabric:
         self.bus_groups = []
 
         def retrieve_type(name):
+            if name == "output":
+                return ("ar", 2)
             cell_label, param_name = name.split(':')
-            for cell in cells:
-                if cell.label == cell_label:
-                    d = definitions[cell.definition]
-                    for n, ty in d.desc:
-                        if n == param_name:
-                            return ty
+            return descriptors[cell_label].field_bus(param_name)
 
         def allocate_by_type(name):
-            bustype = retrieve_type(name)
-            bgroup = server.add_bus_group(bustype.rate, bustype.channel_count)
+            rate, channel_count = retrieve_type(name)
+            bgroup = server.add_bus_group(rate, channel_count)
             self.bus_groups.append(bgroup)
             return bgroup
 
         dummies = {}
         def dummy_bus_by_type(name):
-            bustype = retrieve_type(name)
-            sm = bustype.sans_mode()
+            sm = retrieve_type(name)
             if sm not in dummies:
-                dummies[sm] = server.add_bus_group(bustype.rate, bustype.channel_count)
-                self.bus_groups.append(dummies[sm])
+                dummies[sm] = allocate_by_type(name)
             return dummies[sm]
 
         output_busi = assignment['output']
@@ -175,7 +125,7 @@ class Fabric:
                 relaydefs[(calculation_rate, count)] = relay_synth
             return relaydefs[(calculation_rate, count)]
 
-        self.definitions = definitions
+        self.descriptors = descriptors
         self.synths = {}
         self.root = server.add_group()
         for c in reversed(self.cells):
@@ -188,14 +138,14 @@ class Fabric:
                     sd = relay_synthdef(b.calculation_rate, b.count)
                 self.root.add_synth(sd, input_bus=b, output_bus=buses[c.o])
             else:
-                d = self.definitions[c.definition]
+                d = self.descriptors[c.label]
                 #print("INSERT SYNTH GROUP/SYNTH", c.label)
                 #print("", name, {m: int(v) for m, v in self.busmap[c.label].items()})
                 if c.multi:
                     subgroup = self.root.add_group()
                     self.synths[c.label] = c, subgroup
                 else:
-                    params = self.map_params(c.synth, c.params)
+                    params = self.map_params(c.label, c.params)
                     params.update(self.busmap[c.label])
                     synth = self.root.add_synth(d.synthdef, **params)
                     self.synths[c.label] = c, synth
@@ -205,10 +155,9 @@ class Fabric:
         for group in self.bus_groups:
             group.free()
 
-    def map_params(self, synth_name, params):
-        dfn = self.definitions[synth_name]
-        return {n: self.map_param(dfn.field_type(n), v)
-                for n, v in params.items()}
+    def map_params(self, tag, params):
+        d = self.descriptors[tag]
+        return {n: self.map_param(d.field_type(n), v) for n, v in params.items()}
 
     def map_param(self, ty, param):
         if isinstance(param, music.Pitch) and ty == "hz":
@@ -219,30 +168,29 @@ class Fabric:
 
     def control(self, label, **args):
         c, synth = self.synths[label]
-        synth.set(**self.map_params(c.synth, args))
+        synth.set(**self.map_params(label, args))
         self.trail[label].update(args)
 
     def synth(self, label, **args):
         c, g = self.synths[label]
         if c.multi:
-            d = self.definitions[c.definition]
+            d = self.descriptors[label]
             params = c.params.copy()
             params.update(self.busmap[label])
             params.update(args)
-            synth = g.add_synth(d.synthdef, **self.map_params(c.synth, params))
+            synth = g.add_synth(d.synthdef, **self.map_params(label, params))
             self.trail[label].update(params)
-            return LabeledSynth(label, c.synth, self, synth)
+            return LabeledSynth(label, self, synth)
 
 class LabeledSynth:
-    def __init__(self, label, synth_name, fabric, synth):
+    def __init__(self, label, fabric, synth):
         self.label = label
-        self.synth_name = synth_name
         self.fabric = fabric
         self.synth = synth
 
     def set(self, **params):
         self.fabric.trail[self.label].update(params)
-        params = self.fabric.map_params(self.synth_name, params)
+        params = self.fabric.map_params(self.label, params)
         return self.synth.set(**params)
 
 def topological_sort(cells, definitions, assignment):
@@ -251,8 +199,8 @@ def topological_sort(cells, definitions, assignment):
         if isinstance(cell, Relay):
             var_to_producers[cell.o].append(idx)
         else:
-            defn = definitions[cell.definition]
-            for out_param in defn.outputs:
+            desc = definitions.descriptor(cell)
+            for out_param in desc.outputs:
                 if (a := assignment[f"{cell.label}:{out_param}"]) >= 0:
                     var_to_producers[a].append(idx)
 
@@ -271,8 +219,8 @@ def topological_sort(cells, definitions, assignment):
         if isinstance(cell, Relay):
             mark(idx, cell.i)
         else:
-            defn = definitions[cell.definition]
-            for in_param in defn.inputs:
+            desc = definitions.descriptor(cell)
+            for in_param in desc.inputs:
                 if (a := assignment[f"{cell.label}:{in_param}"]) >= 0:
                     mark(idx, a)
 
