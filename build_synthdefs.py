@@ -14,7 +14,7 @@ save(saw,
     out = bus("ar", "out", 2),
     note = pitch)
 
-@synthdef('ir', 'kr', 'kr', 'kr', 'kr', 'tr')
+@synthdef()
 def resonant_low_pass(out=0, source=0, freq=440, rcq=0.5):
     sig = RLPF.ar(
         source = In.ar(bus=source, channel_count=2),

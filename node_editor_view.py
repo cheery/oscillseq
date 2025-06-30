@@ -34,6 +34,7 @@ class NodeEditorView:
         
     def draw(self, screen):
         font = self.editor.font
+        mouse_pos = pygame.mouse.get_pos()
 
         half_height = self.editor.SCREEN_HEIGHT / 2
         quad_height = half_height / 2
@@ -50,7 +51,7 @@ class NodeEditorView:
             pygame.draw.lines(screen, color, False, wire, 4)
 
         for element in gui:
-            element.draw(screen, font, self.editor.definitions, scroll, self.editor.fabric)
+            element.draw(screen, font, self.editor.definitions, scroll, self.editor.fabric, mouse_pos)
         
         for point, spec in wire_inputs.values():
             point = point[0] + scroll[0], point[1] + scroll[1]
@@ -141,6 +142,14 @@ class NodeEditorTool:
                         ("remove", self.view.remove_cell),
                     ], gcell.cell)
                 return
+            for ui in gcell.valueparams:
+                if ui.rect.collidepoint(point):
+                    if ev.button == 1:
+                        self.view.tool = KnobMotion(self, ui, gcell.cell)
+                        self.view.tool.adjust_slider(ev.pos)
+                    elif ev.button == 3:
+                        gcell.cell.params.pop(ui.name, None)
+                    return
         if ev.button == 3:
             self.view.tool = ScrollingTool(self, np.array(ev.pos))
             return
@@ -320,7 +329,7 @@ class CellMenu:
             gcell = layout_cell(cell, self.wire_inputs, self.wire_outputs, self.view.editor.definitions)
             self.gui.append(gcell)
             x += 200
-            if x >= 800:
+            if x >= 1000:
                 x = 150
                 y += 200
 
@@ -338,7 +347,7 @@ class CellMenu:
         for element in self.gui:
             if element.rect.collidepoint(mouse_pos):
                 pygame.draw.rect(screen, (200, 200, 200), element.rect, 2, 3)
-            element.draw(screen, font, self.view.editor.definitions, scroll, None)
+            element.draw(screen, font, self.view.editor.definitions, scroll, None, None)
 
         for point, spec in self.wire_inputs.values():
             point = point[0] + scroll[0], point[1] + scroll[1]
@@ -362,6 +371,7 @@ class CellMenu:
             cell.pos = tuple(np.array(cell.pos) - self.view.scroll)
             self.view.editor.doc.cells.append(cell)
             self.view.tool = CellPositionTool(self.tool, gcell.rect.move(-self.view.scroll), cell, np.array(ev.pos) - self.view.scroll)
+            restart_fabric(self.view.editor)
 
     def handle_mousebuttonup(self, ev):
         pass
@@ -407,14 +417,11 @@ class GUICell:
         self.outputs = outputs
         self.valueparams = valueparams
 
-    def draw(element, screen, font, definitions, scroll, fabric):
+    def draw(element, screen, font, definitions, scroll, fabric, point):
         cell = element.cell
         d = definitions.descriptor(cell)
         x, y = element.rect.x + scroll[0], element.rect.y + scroll[1]
-        rect = pygame.Rect(element.rect.x + scroll[0],
-                           element.rect.y + scroll[1],
-                           element.rect.width,
-                           element.rect.height)
+        rect = element.rect.move(scroll)
         pygame.draw.rect(screen, (70, 70, 70), rect, 0, 3)
         if cell.multi:
             pygame.draw.rect(screen, (70, 200, 200), rect, 2, 3)
@@ -429,21 +436,8 @@ class GUICell:
             text = font.render(name, True, (200, 200, 200))
             screen.blit(text, (x + 150 - text.get_width() - 10,y + k*30 + 22))
         y += 30 * max(len(element.inputs), len(element.outputs))
-        for k, (name, ty) in enumerate(element.valueparams):
-            color = (200, 200, 200)
-            val = cell.params.get(name, None)
-            if val is None:
-                parameter = d.synthdef.parameters[name][0]
-                val = parameter.value[0]
-                color = (255, 255, 200)
-            trl = fabric.trail[cell.label].get(name, None) if fabric is not None else None
-            text = font.render(f"{name} : {ty}", True, (200, 200, 200))
-            screen.blit(text, (x + 75 - text.get_width()//2,y + k*45 + 15))
-            if trl is not None:
-                text = font.render(f"{val} [{trl}]", True, color)
-            else:
-                text = font.render(f"{val}", True, color)
-            screen.blit(text, (x + 75 - text.get_width()//2,y + k*45 + 30))
+        for ui in element.valueparams:
+            ui.draw(screen, font, cell, d, fabric, scroll, point)
 
 def layout_cell(cell, wire_inputs, wire_outputs, definitions):
     d = definitions.descriptor(cell)
@@ -458,10 +452,19 @@ def layout_cell(cell, wire_inputs, wire_outputs, definitions):
                 inputs.append((name, ty))
         else:
             valueparams.append((name, ty))
-    h = 15 + max(len(inputs), len(outputs))*30 + len(valueparams) * 45
+
     x, y = cell.pos
-    rect = pygame.Rect(x - 75, y - h // 2, 150, h)
-    gcell = GUICell(cell, rect, inputs, outputs, valueparams)
+    h = 15 + 30 * max(len(inputs), len(outputs)) + 45 * len(valueparams)
+    y -= h // 2
+    rect = pygame.Rect(x - 75, y, 150, h)
+
+    y += 15 + 30 * max(len(inputs), len(outputs))
+    sliders = []
+    for name, ty in valueparams:
+        sliders.append(ParameterSlider(name, ty, pygame.Rect(x - 75, y, 150, 45)))
+        y += 45
+
+    gcell = GUICell(cell, rect, inputs, outputs, valueparams=sliders)
     for k, (name, ty) in enumerate(inputs):
         point = rect.x, rect.y + 30*k + 30
         wire_inputs[f"{cell.label}:{name}"] = point, d.field_bus(name)
@@ -513,3 +516,110 @@ def color_of_bus(bus):
         return (255, 255, 0)
     return (255, 255, 255)
     
+class ParameterSlider:
+    def __init__(self, name, ty, rect):
+        self.name = name
+        self.ty = ty
+        self.rect = rect
+
+    def draw(self, screen, font, cell, d, fabric, scroll, point):
+        color = (200, 200, 200)
+        val = cell.params.get(self.name, None)
+        if val is None:
+            parameter = d.synthdef.parameters[self.name][0]
+            val = parameter.value[0]
+            color = (255, 255, 200)
+        rect = self.rect.move(scroll)
+        if point and rect.collidepoint(point) and (t := any_to_slider(val, self.ty)) is not None:
+            inset = rect.inflate((-20, -20))
+            pygame.draw.rect(screen, (200,200,200), inset, 0, 3)
+            slider = rect.inflate((-40, -40))
+            pygame.draw.rect(screen, (20,20,20), slider, 0, 3)
+            x = slider.left + slider.width*t
+            knob = pygame.Rect(x - 3, slider.centery - 8, 6, 17)
+            pygame.draw.rect(screen, (50,50,50), knob, 0, 3)
+        else:
+            x, y = rect.topleft
+            trl = fabric.trail[cell.label].get(self.name, None) if fabric is not None else None
+            text = font.render(f"{self.name} : {self.ty}", True, (200, 200, 200))
+            screen.blit(text, (x + 75 - text.get_width()//2,y))
+            if trl is not None:
+                text = font.render(f"{val} [{trl}]", True, color)
+            else:
+                text = font.render(f"{val}", True, color)
+            screen.blit(text, (x + 75 - text.get_width()//2,y + 15))
+
+class KnobMotion:
+    def __init__(self, tool, slider, cell):
+        self.view = tool.view
+        self.tool = tool
+        self.slider = slider
+        self.cell = cell
+
+    def draw(self, screen):
+        pass
+
+    def handle_mousebuttondown(self, ev):
+        pass
+
+    def handle_mousebuttonup(self, ev):
+        self.view.tool = self.tool
+
+    def handle_mousemotion(self, ev):
+        self.adjust_slider(ev.pos)
+
+    def adjust_slider(self, pos):
+        slider = self.slider.rect.inflate((-40, -40))
+        t = (pos[0] - self.view.scroll[0] - slider.left) / slider.width
+        t = max(0, min(1, t))
+        self.cell.params[self.slider.name] = slider_to_any(t, self.slider.ty)
+        if self.view.editor.fabric:
+            self.view.editor.fabric.control(self.cell.label, **self.cell.params)
+
+lhzbound = math.log2(10 / 440)
+hhzbound = math.log2(24000 / 440)
+whzbound = hhzbound - lhzbound
+
+def any_to_slider(val, ty):
+    if ty == 'boolean':
+        return int(val)
+    if ty == 'unipolar':
+        return val
+    if ty == 'number':
+        return None
+    if ty == 'bipolar':
+        return linlin(val, -1, 1, 0, 1)
+    if ty == 'pitch':
+        if isinstance(val, music.Pitch):
+            val = int(val)
+        return val / 127
+    if ty == 'hz':
+        if isinstance(val, music.Pitch):
+            val = 440 * 2**((int(val) - 69) / 12)
+        return (math.log2(val / 440) - lhzbound) / whzbound
+    if ty == 'db':
+        return linlin(val, -100, 0, 0, 1)
+    if ty == 'duration':
+        return linlin(val, 0, 10, 0, 1)
+    return val
+
+def slider_to_any(val, ty):
+    if ty == 'boolean':
+        return round(val)
+    if ty == 'unipolar':
+        return val
+    if ty == 'bipolar':
+        return linlin(val, 0, 1, -1, 1)
+    if ty == 'pitch':
+        return int(val * 127)
+    if ty == 'hz':
+        return 440 * 2**(val * whzbound + lhzbound)
+    if ty == 'db':
+        return linlin(val, 0, 1, -100, 0)
+    if ty == 'duration':
+        return linlin(val, 0, 1, 0, 10)
+    return val
+
+def linlin(val, a0, a1, b0, b1):
+    return ((val - a0) / (a1-a0)) * (b1-b0) + b0
+
