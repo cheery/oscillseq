@@ -149,6 +149,7 @@ def json_to_gen(obj):
         "const": ConstGen,
         "poly": PolyGen,
         "control": ControlGen,
+        "quadratic": QuadraticGen,
     }[obj["type"]].from_json(obj)
 
 def generate_note(sequencer, spec, tag, start, duration, kv, args):
@@ -246,6 +247,25 @@ class ControlGen:
     @classmethod
     def from_json(cls, obj):
         return cls([{name: json_to_value(o) for name,o in args.items()} for args in obj["argslist"]])
+
+@dataclass(eq=False)
+class QuadraticGen:
+    params : List[Optional[Tuple[bool, Any]]]
+    def generate(self, sequencer, spec, tag, rhythm, key):
+        for i, ((start, duration), params) in enumerate(zip(rhythm, self.params)):
+            if param is not None:
+                sequencer.quadratic(start, tag, *param)
+
+    def to_json(self):
+        return {
+            "type": "quadratic",
+            "params": [((a[0], value_to_json(a[1])) if a is not None else a) for a in self.params]
+        }
+        
+    @classmethod
+    def from_json(cls, obj):
+        return cls([(a[0], json_to_value(a[1]) if a is not None else a) for a in obj["params"]])
+
 
 @dataclass(eq=False)
 class Clap:
