@@ -44,6 +44,8 @@ def json_to_brush(label, obj):
         "clap": Clap,
         "controlpoint": ControlPoint,
         "key": Key,
+        "cell": Cell,
+        "clap_view": ClapView,
     }[obj["type"]].from_json(label, obj)
 
 @dataclass(eq=False)
@@ -313,7 +315,7 @@ class PitchLane:
             margin_below = obj["margin"][1],
         )
 
-@dataclass
+@dataclass(eq=False)
 class Cell:
     label : str
     multi : bool
@@ -322,14 +324,9 @@ class Cell:
     params : Dict[str, Union[int, float, music.Pitch]]
     type_param : Optional[str] = None
 
-    # TODO: remove
-    @property
-    def definition(self):
-        return self.synth
-
     def to_json(self):
         return {
-            'label': self.label,
+            'type': "cell",
             'multi': self.multi,
             'synth': self.synth,
             'pos': tuple(self.pos),
@@ -338,7 +335,28 @@ class Cell:
         }
 
     @classmethod
-    def from_json(cls, obj):
+    def from_json(cls, label, obj):
+        return cls(
+            label = label,
+            multi = obj['multi'],
+            synth = obj['synth'],
+            pos = tuple(obj['pos']),
+            params = {name: json_to_value(o) for name, o in obj['params'].items()},
+            type_param = obj.get('type_param', None))
+
+@dataclass(eq=False)
+class View:
+    label : str
+
+@dataclass(eq=False)
+class ClapView(View):
+    def to_json(self):
+        return {
+            'type': "clap_view",
+        }
+
+    @classmethod
+    def from_json(cls, label, obj):
         return cls(
             label = obj['label'],
             multi = obj['multi'],
@@ -355,6 +373,7 @@ class Document:
     graphs : List[PitchLane]
     drawfuncs: List[DrawFunc]
     cells : List[Brush]
+    views : Dict[str, Brush]
     connections : Set[Tuple[str, str]]
 
     def intro(self, brush):
@@ -378,9 +397,10 @@ class Document:
         for e in self.brushes:
             visit(e.brush)
         for cell in self.cells:
-            labels[cell.label] = cell
+            visit(cell)
+        for view in self.views:
+            visit(view)
         self.labels = labels
-        
 
     def construct(self, sequencer, offset, key, definitions):
         spec = {cell.label: definitions.descriptor(cell) for cell in self.cells}
@@ -407,24 +427,30 @@ class Document:
             'duration': self.duration,
             'brushes': [e.to_json() for e in self.brushes]
         }
+        for cell in self.cells:
+            brushes[cell.label] = cell.to_json()
+        for view in self.views:
+            brushes[cell.label] = view.to_json()
         return {
             "brushes": brushes,
             "graphs": [r.to_json() for r in self.graphs],
             "drawfuncs": [r.to_json() for r in self.drawfuncs],
-            "cells": [c.to_json() for c in self.cells],
             "connections": list(self.connections),
         }
 
     @classmethod
     def from_json(cls, obj):
         brushes = {label: json_to_brush(label,o) for label, o in obj["brushes"].items()}
+        cells = []
+        views = {}
         for brush in brushes.values():
             if isinstance(brush, Clip):
                 brush.brushes = [Entity.from_json(brushes, e) for e in brush.brushes]
+            if isinstance(brush, Cell):
+                cells.append(brush)
+            if isinstance(brush, View):
+                views[brush.label] = brush
         root = brushes.pop("")
-        cells = [Cell.from_json(o) for o in obj.get("cells", [])]
-        for cell in cells:
-            brushes[cell.label] = cell
         return cls(
             brushes = root.brushes,
             duration = root.duration,
@@ -432,6 +458,7 @@ class Document:
             graphs = [PitchLane.from_json(o) for o in obj["graphs"]],
             drawfuncs = [DrawFunc.from_json(o) for o in obj["drawfuncs"]],
             cells = cells,
+            views = views,
             connections = set(tuple(o) for o in obj.get("connections", [])),
         )
 

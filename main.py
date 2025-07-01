@@ -1,7 +1,6 @@
 from dataclasses import dataclass, field
 from fractions import Fraction
 from model import Entity, ControlPoint, Key, Clip, ConstGen, PolyGen, Clap, Desc, DrawFunc, PitchLane, Cell, Document, json_to_brush
-from pythonosc import udp_client, dispatcher, osc_server
 from typing import List, Dict, Optional, Callable, Tuple, Any
 from sequencer import Player, Sequencer, SequenceBuilder
 from fabric import Definitions, Fabric
@@ -126,6 +125,7 @@ class Editor:
                 DrawFunc(0, "string", "tempo", {"value": "*"}),
             ],
             cells = [],
+            views = [],
             connections = set([]),
         )
         self.doc.cells.append(self.doc.intro(Cell("tempo",

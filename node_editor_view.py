@@ -429,7 +429,7 @@ class GUICell:
         pygame.draw.rect(screen, (70, 70, 70), rect, 0, 3)
         if cell.multi:
             pygame.draw.rect(screen, (70, 200, 200), rect, 2, 3)
-        text = font.render(f"{cell.label}:{cell.definition}", True, (200, 200, 200))
+        text = font.render(f"{cell.label}:{cell.synth}", True, (200, 200, 200))
         screen.blit(text, (x + 5,y))
         
         for k, (name, ty) in enumerate(element.inputs):
