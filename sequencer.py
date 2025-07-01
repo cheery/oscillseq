@@ -30,20 +30,23 @@ class Sequencer:
     def status(self):
         dt = time.monotonic() - self.time
         point = self.point + dt
-        if point <= self.end_point:
+        if point < self.end_point:
             return self.sequence.tempo.time_to_bar(point)
 
     def resume(self, clavier, fabric):
         self.time = time.monotonic()
-        goal_clavier, quadratics = {}, {}
+        goal_clavier, quadratics, controls = {}, {}, {}
         index = 0
         for index, event in enumerate(self.sequence.com):
             if event.time <= self.point:
-                event.sim(goal_clavier, quadratics)
+                event.sim(goal_clavier, quadratics, controls)
             else:
                 break
         else:
             index += 1
+        for tag, args in controls.items():
+            if tag in fabric.synths:
+                fabric.control(tag, **args)
         for q in quadratics.values():
             q.forward(self.point).send(clavier, fabric)
         for group_id in list(clavier):
@@ -59,7 +62,7 @@ class Sequencer:
         dt, self.time = now - self.time, now
         allow_loop = (self.point <= self.loop_point)
         self.point += dt
-        if self.point <= self.end_point or self.end_point == self.loop_point:
+        if self.point < self.end_point or self.end_point == self.loop_point:
             target = self.point
             if allow_loop:
                 target = min(target, self.loop_point)
@@ -69,15 +72,21 @@ class Sequencer:
                 self.point = self.loop_start
                 self.resume(clavier, fabric)
                 self.point += dt
-                self._seek(self.point, clavier, fabric)
+            self._seek_end(self.point, clavier, fabric)
             return self._estimate_next_event()
         else:
+            self._seek_end(self.end_point, clavier, fabric)
             for synth in clavier.values():
                 synth.set(gate=0)
             clavier.clear()
 
     def _seek(self, target, clavier, fabric):
         while self.index < len(self.sequence.com) and self.sequence.com[self.index].time < target:
+            self.sequence.com[self.index].send(clavier, fabric)
+            self.index += 1
+
+    def _seek_end(self, target, clavier, fabric):
+        while self.index < len(self.sequence.com) and self.sequence.com[self.index].time <= target:
             self.sequence.com[self.index].send(clavier, fabric)
             self.index += 1
 
@@ -127,7 +136,7 @@ class Quadratic:
         fabric.control(self.tag,
             a=self.a, b=self.b, c=self.c, t=self.t, trigger=1)
 
-    def sim(self, clavier, quadratics):
+    def sim(self, clavier, quadratics, controls):
         quadratics[self.tag] = self
 
     def forward(self, time):
@@ -135,6 +144,24 @@ class Quadratic:
         b = self.a*2*dt + self.b
         c = self.a*dt*dt + self.b*dt + self.c
         return Quadratic(time, self.tag, self.a, b, c, max(0, self.t - dt))
+
+@dataclass
+class Control:
+    time : float
+    tag : str
+    kwargs : Dict[str, Any]
+
+    def send(self, clavier, fabric):
+        #print('CONTROL', self.time, self.tag)
+        if self.tag not in fabric.synths:
+            return
+        fabric.control(self.tag, **self.kwargs)
+
+    def sim(self, clavier, quadratics, controls):
+        if self.tag in controls:
+            controls[self.tag].update(self.kwargs)
+        else:
+            controls[self.tag] = self.kwargs.copy()
 
 @dataclass
 class Once:
@@ -148,7 +175,7 @@ class Once:
             return
         fabric.synth(self.tag, **self.kwargs)
 
-    def sim(self, clavier, quadratics):
+    def sim(self, clavier, quadratics, controls):
         pass
 
 @dataclass
@@ -174,7 +201,7 @@ class Gate:
             if synth is not None:
                 clavier[self.group_id] = synth
 
-    def sim(self, clavier, quadratics):
+    def sim(self, clavier, quadratics, controls):
         if self.release and self.group_id in clavier:
             clavier.pop(self.group_id)
         elif not self.release:
@@ -188,12 +215,16 @@ class Gate:
 class SequenceBuilder:
     def __init__(self, group_ids):
         self.quadratics = defaultdict(list)
-        self.onces = {}
+        self.controls = []
+        self.onces = []
         self.gates = []
         self.group_ids = group_ids
 
     def quadratic(self, bar, tag, transition, value):
         self.quadratics[tag].append((bar, transition, value))
+
+    def control(self, bar, tag, args):
+        self.controls.append((bar, tag, args))
  
     def once(self, bar, tag, args):
         self.onces.append((bar, tag, args))
@@ -228,6 +259,10 @@ class SequenceBuilder:
         for name, env in quadratics.items():
             if name != "tempo":
                 output.extend(quadratic_events(tempo, env, name))
+
+        for bar, tag, args in self.controls:
+            time = tempo.bar_to_time(bar)
+            output.append(Control(time, tag, args))
  
         for bar, tag, args in self.onces:
             time = tempo.bar_to_time(bar)

@@ -148,15 +148,33 @@ def json_to_gen(obj):
     return {
         "const": ConstGen,
         "poly": PolyGen,
+        "control": ControlGen,
     }[obj["type"]].from_json(obj)
+
+def generate_note(sequencer, spec, tag, start, duration, kv, args):
+    if tag not in spec:
+        return
+    dfn = spec[tag]
+    if dfn.synthdef.has_gate:
+        sequencer.gate(start, tag, kv, args)
+        if duration > 0:
+            sequencer.gate(start + duration, tag, kv, {})
+    else:
+        sequencer.once(start, tag, args)
 
 @dataclass(eq=False)
 class ConstGen:
     argslist : List[Args]
+    def generate(self, sequencer, spec, tag, rhythm, key):
+        for i, (start, duration) in enumerate(rhythm):
+            for j, args in enumerate(self.argslist):
+                kv = key + (i,j)
+                generate_note(sequencer, spec, tag, start, duration, kv, args)
+                
     def pull(self, index, key, close):
-        for j, args in enumerate(self.argslist):
-            kv = key + (index,j)
-            yield kv, args
+            for j, args in enumerate(self.argslist):
+                kv = key + (index,j)
+                yield kv, args
 
     def to_json(self):
         return {
@@ -175,6 +193,12 @@ class ConstGen:
 @dataclass(eq=False)
 class PolyGen:
     argslists : List[List[Args]]
+    def generate(self, sequencer, spec, tag, rhythm, key):
+        for i, ((start, duration), argslist) in enumerate(zip(rhythm, self.argslists)):
+            for j, args in enumerate(argslist):
+                kv = key + (i,j)
+                generate_note(sequencer, spec, tag, start, duration, kv, args)
+
     def pull(self, index, key, close):
         if index < len(self.argslists):
             for j, args in enumerate(self.argslists[index]):
@@ -203,6 +227,27 @@ class PolyGen:
         )
 
 @dataclass(eq=False)
+class ControlGen:
+    argslist : List[Args]
+    def generate(self, sequencer, spec, tag, rhythm, key):
+        for i, ((start, duration), args) in enumerate(zip(rhythm, self.argslist)):
+            sequencer.control(start, tag, args)
+
+    def pull(self, index, key, close):
+        if index < len(self.argslist):
+            yield key + (index,), self.argslists[index]
+
+    def to_json(self):
+        return {
+            "type": "control",
+            "argslist": [{name: value_to_json(a) for name,a in args.items()} for args in self.argslist]
+        }
+        
+    @classmethod
+    def from_json(cls, obj):
+        return cls([{name: json_to_value(o) for name,o in args.items()} for args in obj["argslist"]])
+
+@dataclass(eq=False)
 class Clap:
     label : str
     duration : int
@@ -211,22 +256,9 @@ class Clap:
 
     def construct(self, sequencer, offset, key, spec):
         starts, stops = self.tree.offsets(self.duration, offset)
+        rhythm = [(start, stop-start) for start, stop in zip(starts, stops)]
         for tag, gen in self.generators.items():
-            gkey = key + (tag,)
-            if tag not in spec:
-                continue
-            dfn = spec[tag]
-            if dfn.synthdef.has_gate:
-                for i, start in enumerate(starts):
-                    for kv, args in gen.pull(i, gkey, False):
-                        sequencer.gate(start, tag, kv, args)
-                for i, stop in enumerate(stops):
-                    for kv, args in gen.pull(i, gkey, True):
-                        sequencer.gate(stop, tag, kv, {})
-            else:
-                for i, start in enumerate(starts):
-                    for kv, args in gen.pull(i, gkey, True):
-                        sequencer.once(start, tag, args)
+            gen.generate(sequencer, spec, tag, rhythm, key + (tag,))
 
     def annotate(self, graph_key_map, offset):
         pass
