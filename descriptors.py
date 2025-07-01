@@ -49,7 +49,7 @@ class Saver:
 
     def __call__(self, synthdef, **params):
         desc = "\n".join(f"{n}: {v}" for n,v in params.items())
-        with open(os.path.join(self.directory, f'{synthdef.effective_name}.synthdef'), 'wb') as fd:
+        with open(os.path.join(self.directory, f'{synthdef.effective_name}.scsynthdef'), 'wb') as fd:
             fd.write(synthdef.compile())
         with open(os.path.join(self.directory, f'{synthdef.effective_name}.desc'), 'w') as fd:
             fd.write(desc)

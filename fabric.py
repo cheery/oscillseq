@@ -36,7 +36,7 @@ class Definitions:
                 yield os.path.splitext(name)[0]
 
 def load_definition(filename):
-    with open(f"{filename}.synthdef", 'rb') as fd:
+    with open(f"{filename}.scsynthdef", 'rb') as fd:
         data = fd.read()
     synthdef = supriya.ugens.decompile_synthdef(data)
     return (synthdef, dict(read_desc(f"{filename}.desc")))
