@@ -26,6 +26,9 @@ class Definitions:
         self.table[name] = dfn = load_definition(filename)
         return dfn
 
+    def descriptors(self, cells):
+        return {cell.label: self.descriptor(cell) for cell in cells}
+
     def descriptor(self, cell):
         synthdef, mdesc = self.definition(cell.synth)
         return Descriptor(synthdef, mdesc, cell.type_param)
@@ -49,7 +52,7 @@ class Relay:
 class Fabric:
     def __init__(self, server, cells, connections, definitions):
         self.trail = defaultdict(dict)
-        descriptors = {cell.label: definitions.descriptor(cell) for cell in cells}
+        descriptors = definitions.descriptors(cells)
         synthdefs = set(desc.synthdef for desc in descriptors.values())
         if synthdefs:
             server.add_synthdefs(*synthdefs)

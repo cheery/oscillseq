@@ -276,6 +276,24 @@ class SequenceBuilder:
 
         return Sequence(tempo, output, tempo.bar_to_time(end))
 
+class SequenceBuilder2(SequenceBuilder):
+    def __init__(self, group_ids, descriptors):
+        super().__init__(group_ids)
+        self.descriptors = descriptors
+
+    def has_gate(self, tag):
+        if tag in self.descriptors:
+            return self.descriptors[tag].synthdef.has_gate
+        return False
+
+    def note(self, tag, start, duration, group_key, args):
+        if self.has_gate(tag):
+            self.gate(start, tag, group_key, args)
+            if duration > 0:
+                self.gate(start + duration, tag, group_key, {})
+        else:
+            self.once(start, tag, args)
+
 def tempo_events(tempo):
     for i, t in enumerate(tempo.xs):
         dt = tempo.xs[i+1] - t if i+1 < len(tempo.xs) else 0

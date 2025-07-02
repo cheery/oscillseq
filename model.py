@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Callable, Tuple, Any, Set, Union
+import itertools
 import measure
 import music
 import json
@@ -55,7 +56,7 @@ class ControlPoint:
     transition : bool
     value : Any
 
-    def construct(self, sequencer, offset, key, spec):
+    def construct(self, sequencer, offset, key):
         if self.tag == "tempo" and self.value <= 0:
             return
         sequencer.quadratic(offset, self.tag, self.transition, self.value)
@@ -89,7 +90,7 @@ class Key:
     lanes : int
     index : int
 
-    def construct(self, sequencer, offset, key, spec):
+    def construct(self, sequencer, offset, key):
         return
 
     def annotate(self, graph_key_map, offset):
@@ -121,10 +122,10 @@ class Clip:
     duration : int
     brushes : List[Entity]
 
-    def construct(self, sequencer, offset, key, spec):
+    def construct(self, sequencer, offset, key):
         for i, e in enumerate(self.brushes):
             kv = key + (i,)
-            e.brush.construct(sequencer, offset + e.shift, kv, spec)
+            e.brush.construct(sequencer, offset + e.shift, kv)
 
     def annotate(self, graph_key_map, offset):
         for i, e in enumerate(self.brushes):
@@ -146,139 +147,85 @@ class Clip:
 
 def json_to_gen(obj):
     return {
+        "note": NoteGen,
         "const": ConstGen,
         "poly": PolyGen,
         "control": ControlGen,
         "quadratic": QuadraticGen,
     }[obj["type"]].from_json(obj)
 
-def generate_note(sequencer, spec, tag, start, duration, kv, args):
-    if tag not in spec:
-        return
-    dfn = spec[tag]
-    if dfn.synthdef.has_gate:
-        sequencer.gate(start, tag, kv, args)
-        if duration > 0:
-            sequencer.gate(start + duration, tag, kv, {})
-    else:
-        sequencer.once(start, tag, args)
+def args_to_json(args):
+    if args is not None:
+        return {name: value_to_json(a) for name, a in args.items()}
+
+def json_to_args(obj):
+    if obj is not None:
+        return {name: json_to_value(o) for name, o in obj.items()}
 
 @dataclass(eq=False)
-class ConstGen:
-    argslist : List[Args]
-    def generate(self, sequencer, spec, tag, rhythm, key):
-        for i, (start, duration) in enumerate(rhythm):
-            for j, args in enumerate(self.argslist):
-                kv = key + (i,j)
-                generate_note(sequencer, spec, tag, start, duration, kv, args)
+class NoteGen:
+    tag : str
+    track : List[Optional[Args]]
+    loop : bool
+    flavor : str = "note"
+
+    def generate(self, sequencer, rhythm, key):
+        for i, (start, duration), args in zip(itertools.count(), rhythm, itertools.cycle(self.track)):
+            if args is not None:
+                if self.flavor == 'note':
+                    sequencer.note(self.tag, start, duration, key + (i,), args)
+                elif self.flavor == 'control':
+                    sequencer.control(start, self.tag, args)
+                elif self.flavor == 'quadratic':
+                    sequencer.quadratic(start, tag, args["~"], args["*"])
                 
-    def pull(self, index, key, close):
-            for j, args in enumerate(self.argslist):
-                kv = key + (index,j)
-                yield kv, args
-
     def to_json(self):
         return {
-            "type": "const",
-            "argslist": [{name: value_to_json(a) for name,a in args.items()}
-                     for args in self.argslist],
+            "type": self.flavor,
+            "tag": self.tag,
+            "track": [args_to_json(args) for args in self.track],
+            "loop": self.loop,
         }
         
     @classmethod
     def from_json(cls, obj):
         return cls(
-            [{name: json_to_value(o) for name, o in args.items()}
-             for args in obj["argslist"]]
+            tag = obj["tag"],
+            track = [json_to_args(args) for args in obj["track"]],
+            loop = obj["loop"],
+            flavor = obj["type"]
         )
 
-@dataclass(eq=False)
-class PolyGen:
-    argslists : List[List[Args]]
-    def generate(self, sequencer, spec, tag, rhythm, key):
-        for i, ((start, duration), argslist) in enumerate(zip(rhythm, self.argslists)):
-            for j, args in enumerate(argslist):
-                kv = key + (i,j)
-                generate_note(sequencer, spec, tag, start, duration, kv, args)
-
-    def pull(self, index, key, close):
-        if index < len(self.argslists):
-            for j, args in enumerate(self.argslists[index]):
-                kv = key + (index, j)
-                yield kv, args
-
-    def to_json(self):
-        return {
-            "type": "poly",
-            "argslists": [
-                [
-                    {name: value_to_json(a) for name,a in args.items()}
-                    for args in argslist
-                ] for argslist in self.argslists]
-        }
-        
-    @classmethod
-    def from_json(cls, obj):
-        return cls(
-            [
-                [
-                    {name: json_to_value(o) for name,o in args.items()}
-                    for args in argsl
-                ]
-            for argsl in obj["argslists"]]
-        )
-
-@dataclass(eq=False)
-class ControlGen:
-    argslist : List[Args]
-    def generate(self, sequencer, spec, tag, rhythm, key):
-        for i, ((start, duration), args) in enumerate(zip(rhythm, self.argslist)):
-            sequencer.control(start, tag, args)
-
-    def pull(self, index, key, close):
-        if index < len(self.argslist):
-            yield key + (index,), self.argslists[index]
-
-    def to_json(self):
-        return {
-            "type": "control",
-            "argslist": [{name: value_to_json(a) for name,a in args.items()} for args in self.argslist]
-        }
-        
-    @classmethod
-    def from_json(cls, obj):
-        return cls([{name: json_to_value(o) for name,o in args.items()} for args in obj["argslist"]])
-
-@dataclass(eq=False)
-class QuadraticGen:
-    params : List[Optional[Tuple[bool, Any]]]
-    def generate(self, sequencer, spec, tag, rhythm, key):
-        for i, ((start, duration), params) in enumerate(zip(rhythm, self.params)):
-            if param is not None:
-                sequencer.quadratic(start, tag, *param)
-
-    def to_json(self):
-        return {
-            "type": "quadratic",
-            "params": [((a[0], value_to_json(a[1])) if a is not None else a) for a in self.params]
-        }
-        
-    @classmethod
-    def from_json(cls, obj):
-        return cls([(a[0], json_to_value(a[1]) if a is not None else a) for a in obj["params"]])
-
+def legacy_to_notegens(generators):
+    if isinstance(generators, list):
+        return generators
+    for tag, obj in generators.items():
+        if obj['type'] == "const":
+            for args in obj['argslist']:
+                args = json_to_args(args)
+                yield NoteGen(tag, [args], loop=True)
+        if obj['type'] == "poly":
+            tracks = [[] for _ in range(max(len(argl) for argl in obj['argslists']))]
+            for argl in obj['argslists']:
+                for i, args in enumerate(argl):
+                    args = json_to_args(args)
+                    tracks[i].append(args)
+                for i in range(i+1, len(tracks)):
+                    tracks[i].append(None)
+            for track in tracks:
+                yield NoteGen(tag, track, loop=False)
 
 @dataclass(eq=False)
 class Clap:
     label : str
     duration : int
-    tree : measure.Tree
-    generators : Dict[str, Any]
+    rhythm : Any
+    generators : List[Any]
 
-    def construct(self, sequencer, offset, key, spec):
-        starts, stops = self.tree.offsets(self.duration, offset)
-        rhythm = [(start, stop-start) for start, stop in zip(starts, stops)]
-        for tag, gen in self.generators.items():
-            gen.generate(sequencer, spec, tag, rhythm, key + (tag,))
+    def construct(self, sequencer, offset, key):
+        rhythm = self.rhythm.to_events(offset, self.duration)
+        for i, gen in enumerate(self.generators):
+            gen.generate(sequencer, rhythm, key + (i,))
 
     def annotate(self, graph_key_map, offset):
         pass
@@ -287,36 +234,20 @@ class Clap:
         return {
             "type": "clap",
             "duration": self.duration,
-            "tree": str(self.tree),
-            "generators": {tag: gen.to_json()
-                           for tag, gen in self.generators.items()},
+            "rhythm": str(self.rhythm),
+            "generators": [gen.to_json() for gen in self.generators]
         }
         
     @classmethod
     def from_json(cls, label, obj):
+        if 'tree' in obj:
+            rhythm = measure.Tree.from_string(obj["tree"])
+        else:
+            rhythm = measure.from_string(obj["rhythm"])
         return cls(label,
             duration = obj["duration"],
-            tree = measure.Tree.from_string(obj["tree"]),
-            generators = {tag: json_to_gen(o)
-                          for tag,o in obj["generators"].items()}
-        )
-
-@dataclass(eq=False)
-class Desc:
-    kind : str
-    spec : List[Tuple[str, str]]
-
-    def to_json(self):
-        return {
-            "kind": self.kind,
-            "spec": [list(t) for t in self.spec],
-        }
-        
-    @classmethod
-    def from_json(cls, obj):
-        return cls(
-            kind = obj["kind"],
-            spec = [tuple(l) for l in obj["spec"]],
+            rhythm = rhythm,
+            generators = list(legacy_to_notegens(obj["generators"]))
         )
 
 @dataclass(eq=False)
@@ -454,11 +385,10 @@ class Document:
             visit(view)
         self.labels = labels
 
-    def construct(self, sequencer, offset, key, definitions):
-        spec = {cell.label: definitions.descriptor(cell) for cell in self.cells}
+    def construct(self, sequencer, offset, key):
         for i, e in enumerate(self.brushes):
             kv = key + (i,)
-            e.brush.construct(sequencer, offset + e.shift, kv, spec)
+            e.brush.construct(sequencer, offset + e.shift, kv)
 
     def annotate(self, graph_key_map, offset):
         for i, e in enumerate(self.brushes):

@@ -1,8 +1,8 @@
 from dataclasses import dataclass, field
 from fractions import Fraction
-from model import Entity, ControlPoint, Key, Clip, ConstGen, PolyGen, Clap, Desc, DrawFunc, PitchLane, Cell, Document, json_to_brush
+from model import Entity, ControlPoint, Key, Clip, NoteGen, Clap, DrawFunc, PitchLane, Cell, Document, json_to_brush
 from typing import List, Dict, Optional, Callable, Tuple, Any
-from sequencer import Player, Sequencer, SequenceBuilder
+from sequencer import Player, Sequencer, SequenceBuilder2
 from fabric import Definitions, Fabric
 from components import ContextMenu
 from controllers import quick_connect
@@ -167,8 +167,8 @@ class Editor:
 
         # Sequence is built so it could be visualized.
         self.group_ids = {}
-        sb = SequenceBuilder(self.group_ids)
-        self.doc.construct(sb, 0, (), self.definitions)
+        sb = SequenceBuilder2(self.group_ids, self.definitions.descriptors(self.doc.cells))
+        self.doc.construct(sb, 0, ())
         self.sequence = sb.build(self.doc.duration)
 
         self.transport_bar = TransportBar(self)
@@ -195,8 +195,8 @@ class Editor:
     def refresh_layout(self):
         if self.transport_status != 3:
             self.group_ids.clear()
-        sb = SequenceBuilder(self.group_ids)
-        self.doc.construct(sb, 0, (), self.definitions)
+        sb = SequenceBuilder2(self.group_ids, self.definitions.descriptors(self.doc.cells))
+        self.doc.construct(sb, 0, ())
         self.sequence = sb.build(self.doc.duration)
         self.layout = TrackLayout(self.doc, offset = 30)
         if (point := self.get_playing()) is not None:
@@ -674,8 +674,8 @@ class TrackLayout:
                 return
             if isinstance(brush, Clip):
                 process_clip(brush)
-            elif isinstance(brush, Clap):
-                self.brush_heights[brush] = 15 + 3 * (brush.tree.depth) + 20
+            elif isinstance(brush, Clap) and isinstance(brush.rhythm, measure.Tree):
+                self.brush_heights[brush] = 15 + 3 * (brush.rhythm.depth) + 20
             else:
                 self.brush_heights[brush] = 15
         def process_clip(clip):
@@ -752,7 +752,7 @@ class TrackLayout:
                 screen.blit(text, (start*w + 10 + editor.MARGIN, y))
                 if isinstance(e.brush, Clip):
                     draw_clip_contents(e.brush, shift + e.shift, y + 15, seli + [e])
-                if isinstance(e.brush, Clap):
+                if isinstance(e.brush, Clap) and isinstance(e.brush.rhythm, measure.Tree):
                     leafs = []
                     def draw_tree(x, y, span, tree):
                         color = (200, 200, 200) #[(200, 200, 200), (255, 0, 255)][tree == s_tree]
@@ -771,7 +771,7 @@ class TrackLayout:
                                 pygame.draw.rect(screen, color, rect)
                                 draw_tree(x + i*w, y+3, w, stree)
                     span = duration*w
-                    draw_tree(start*w+editor.MARGIN, y + 15, span, e.brush.tree)
+                    draw_tree(start*w+editor.MARGIN, y + 15, span, e.brush.rhythm)
         draw_clip_contents(editor.doc, 0, bs, [])
 
         #screen.set_clip(pygame.Rect(0, 15 + 15, self.SCREEN_WIDTH, self.SCREEN_HEIGHT - 15 + 15))

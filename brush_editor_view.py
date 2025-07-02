@@ -1,4 +1,4 @@
-from model import Entity, ControlPoint, Key, Clip, ConstGen, PolyGen, Clap, Desc, DrawFunc, PitchLane, Cell, Document, json_to_brush
+from model import Entity, ControlPoint, Key, Clip, NoteGen, Clap, DrawFunc, PitchLane, Cell, Document, json_to_brush
 import collections
 import measure
 import pygame
