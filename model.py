@@ -95,9 +95,7 @@ class Key:
         return
 
     def annotate(self, graph_key_map, offset):
-        for graph in graph_key_map:
-            if self.lanes & (1 << graph.lane):
-                graph_key_map[graph].append((offset, self.index))
+        graph_key_map.append((offset, self.index))
 
     @property
     def duration(self):
@@ -197,22 +195,24 @@ class NoteGen:
 
 def legacy_to_notegens(generators):
     if isinstance(generators, list):
-        return generators
-    for tag, obj in generators.items():
-        if obj['type'] == "const":
-            for args in obj['argslist']:
-                args = json_to_args(args)
-                yield NoteGen(tag, [args], loop=True)
-        if obj['type'] == "poly":
-            tracks = [[] for _ in range(max(len(argl) for argl in obj['argslists']))]
-            for argl in obj['argslists']:
-                for i, args in enumerate(argl):
+        for generator in generators:
+            yield json_to_gen(generator)
+    else:
+        for tag, obj in generators.items():
+            if obj['type'] == "const":
+                for args in obj['argslist']:
                     args = json_to_args(args)
-                    tracks[i].append(args)
-                for i in range(i+1, len(tracks)):
-                    tracks[i].append(None)
-            for track in tracks:
-                yield NoteGen(tag, track, loop=False)
+                    yield NoteGen(tag, [args], loop=True)
+            if obj['type'] == "poly":
+                tracks = [[] for _ in range(max(len(argl) for argl in obj['argslists']))]
+                for argl in obj['argslists']:
+                    for i, args in enumerate(argl):
+                        args = json_to_args(args)
+                        tracks[i].append(args)
+                    for i in range(i+1, len(tracks)):
+                        tracks[i].append(None)
+                for track in tracks:
+                    yield NoteGen(tag, track, loop=False)
 
 @dataclass(eq=False)
 class Tracker:
@@ -320,6 +320,7 @@ class Staves:
     def to_json(self):
         return {
             "type": "staves",
+            "count": self.count,
             "above": self.above,
             "below": self.below,
             "edit": self.edit
@@ -328,6 +329,7 @@ class Staves:
     @classmethod
     def from_json(cls, obj):
         return cls(
+            count = obj["count"],
             above = obj["above"],
             below = obj["below"],
             edit = [tuple(o) for o in obj["edit"]],
@@ -369,7 +371,7 @@ class TrackerView(View):
     @classmethod
     def from_json(cls, label, obj):
         return cls(
-            label = obj['label'],
+            label = label,
             lanes = [json_to_view_lane(o) for o in obj['lanes']])
 
 @dataclass(eq=False)
@@ -433,8 +435,8 @@ class Document:
         }
         for cell in self.cells:
             brushes[cell.label] = cell.to_json()
-        for view in self.views:
-            brushes[cell.label] = view.to_json()
+        for view in self.views.values():
+            brushes[view.label] = view.to_json()
         return {
             "brushes": brushes,
             "connections": list(self.connections),

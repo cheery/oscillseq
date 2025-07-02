@@ -1,6 +1,7 @@
 from components import ContextMenu, Toolbar
 from model import Tracker, TrackerView, Staves, Grid, PianoRoll
 from descriptors import kinds
+import music
 import pygame
 
 class ViewEditorView:
@@ -35,6 +36,8 @@ class ViewEditorView:
         else:
             for item in self.layout:
                 item.draw(screen, font, self.editor)
+                x, y = item.rect.topleft
+                draw_editparams(screen, font, x, y, item.lane.edit, self.editor)
             pygame.draw.line(screen, (70, 70, 70), item.rect.bottomleft, item.rect.bottomright)
 
     def handle_keydown(self, ev):
@@ -85,10 +88,16 @@ class ViewEditorView:
         del self.current.lanes[index]
         self.refresh()
 
+    def discard_editparam(self, elem, label, name):
+        def _impl_():
+            elem.lane.edit.remove((label, name))
+        return _impl_
+
     def editparam_menu(self, pos, elem):
         def add_editparam(label, name):
             def _impl_():
-                elem.lane.edit.append((label, name))
+                k = (pos[1] - elem.rect.y - 7) // 15
+                elem.lane.edit.insert(k, (label, name))
                 self.refresh()
             return _impl_
         def menu():
@@ -116,6 +125,71 @@ class ViewEditorView:
             self.tool = ContextMenu(self.tool, pygame.mouse.get_pos(), choices)
         return menu
 
+    def edit_top(self, elem):
+        def set_to(top):
+            def _impl_():
+                elem.lane.top = top
+                elem.lane.bot = min(elem.lane.bot, top)
+                self.refresh()
+            return _impl_
+        def menu():
+            pitches = []
+            pitches.extend(range(0,127,12))
+            pitches.extend(range(9,127,12))
+            pitches.sort()
+            choices = [(str(music.Pitch.from_midi(m)), set_to(m)) for m in reversed(pitches)]
+            self.tool = ContextMenu(self.tool, pygame.mouse.get_pos(), choices)
+        return menu
+
+    def edit_bot(self, elem):
+        def set_to(bot):
+            def _impl_():
+                elem.lane.bot = bot
+                elem.lane.top = max(elem.lane.top, bot)
+                self.refresh()
+            return _impl_
+        def menu():
+            pitches = []
+            pitches.extend(range(0,127,12))
+            pitches.extend(range(9,127,12))
+            pitches.sort()
+            choices = [(str(music.Pitch.from_midi(m)), set_to(m)) for m in reversed(pitches)]
+            self.tool = ContextMenu(self.tool, pygame.mouse.get_pos(), choices)
+        return menu
+
+    def edit_above(self, elem):
+        def set_to(value):
+            def _impl_():
+                elem.lane.above = value
+                self.refresh()
+            return _impl_
+        def menu():
+            choices = [(str(m), set_to(m)) for m in range(0, 3)]
+            self.tool = ContextMenu(self.tool, pygame.mouse.get_pos(), choices)
+        return menu
+
+    def edit_below(self, elem):
+        def set_to(value):
+            def _impl_():
+                elem.lane.below = value
+                self.refresh()
+            return _impl_
+        def menu():
+            choices = [(str(m), set_to(m)) for m in range(0, 3)]
+            self.tool = ContextMenu(self.tool, pygame.mouse.get_pos(), choices)
+        return menu
+
+    def edit_count(self, elem):
+        def set_to(value):
+            def _impl_():
+                elem.lane.count = value
+                self.refresh()
+            return _impl_
+        def menu():
+            choices = [(str(m), set_to(m)) for m in range(1, 5)]
+            self.tool = ContextMenu(self.tool, pygame.mouse.get_pos(), choices)
+        return menu
+
 class DummyTool:
     def __init__(self, view):
         self.view = view
@@ -132,9 +206,19 @@ class DummyTool:
             options = []
             for i, elem in enumerate(self.view.layout):
                 if elem.rect.collidepoint(ev.pos):
+                    for k, (label, name) in enumerate(elem.lane.edit):
+                        if 0 <= ev.pos[1] - elem.rect.y - k*15 < 15:
+                            options.append((f'discard {editparam_text(label, name, self.view.editor)}', self.view.discard_editparam(elem, label, name)))
                     options.append((f'add editparam', self.view.editparam_menu(ev.pos, elem)))
                     if isinstance(elem.lane, Grid):
                         options.append((f'kind={elem.lane.kind}', self.view.kind_edit(elem)))
+                    if isinstance(elem.lane, Staves):
+                        options.append((f'count={elem.lane.count}', self.view.edit_count(elem)))
+                        options.append((f'above={elem.lane.above}', self.view.edit_above(elem)))
+                        options.append((f'below={elem.lane.below}', self.view.edit_below(elem)))
+                    if isinstance(elem.lane, PianoRoll):
+                        options.append((f'top={music.Pitch.from_midi(elem.lane.top)}', self.view.edit_top(elem)))
+                        options.append((f'bot={music.Pitch.from_midi(elem.lane.bot)}', self.view.edit_bot(elem)))
                     options.append((f'discard lane', (lambda i: lambda: self.view.discard_lane(i))(i)))
             self.view.tool = ContextMenu(self.view.tool, ev.pos, options + [
                 (f'new staves', lambda: self.view.add_lane(ev.pos, Staves(1, 1, 1, []))),
@@ -187,8 +271,55 @@ class StavesLayout:
         for _ in range(self.staves.count):
             for p in range(2, 12, 2):
                 pygame.draw.line(screen, (70, 70, 70), (x, y+p*k/12), (x+w, y+p*k/12))
-        x, y = self.rect.topleft
-        draw_editparams(screen, font, x, y, self.lane.edit, editor)
+            y += k
+
+    def query_pitch(self, editor, pointer, rhythm, get_accidentals, accidental, editparam, w):
+        k = self.rect.height / (self.staves.count + self.staves.above + self.staves.below)
+        x = self.rect.left + editor.MARGIN
+        y = self.rect.top + self.staves.above*k
+        for i, (b, span) in enumerate(rhythm):
+            span *= w
+            if 0 <= pointer[0] - x - b*w <= span:
+                y1 = (pointer[1] - y) // (k/12) * (k/12) + y
+                if self.rect.top < y1 < self.rect.bottom:
+                    position = 40 - int((pointer[1] - y) // (k/12))
+                    acci = get_accidentals(b)
+                    acc = accidental or acci[position%7]
+                    return music.Pitch(position, acc)
+
+    def draw_tracks(self, screen, font, editor, rhythm, generators, get_accidentals, pointer, w, accidental):
+        k = self.rect.height / (self.staves.count + self.staves.above + self.staves.below)
+        x = self.rect.left + editor.MARGIN
+        y = self.rect.top + self.staves.above*k
+        colors = [(0,0,128), (0,0,255), (255,128,0), (255, 0, 0), (128,0,0)]
+        for tag,param in self.lane.edit:
+            for gen in generators:
+                if gen.tag != tag:
+                    continue
+                for i, (b, span) in enumerate(rhythm):
+                    acci = get_accidentals(b)
+                    args = gen.track[i % len(gen.track)]
+                    if args is None:
+                        continue
+                    pitch = args.get(param, music.Pitch(33))
+                    color = colors[pitch.accidental + 2]
+                    if pitch.accidental == acci[pitch.position % 7]:
+                        color = (255,255,255)
+                    y1 = y + (40 - pitch.position) * k / 12
+                    span *= w
+                    pygame.draw.line(screen, color, (x + b*w + span*0.05, y1), (x + b*w + span*0.95, y1), int(k/9))
+
+        for i, (b, span) in enumerate(rhythm):
+            span *= w
+            if 0 <= pointer[0] - x - b*w <= span:
+                y1 = (pointer[1] - y) // (k/12) * (k/12) + y
+                if self.rect.top < y1 < self.rect.bottom:
+                    rect = pygame.Rect(x + b*w + span*0.05, y1 - k / 24, span*0.9, k / 12)
+                    if accidental is None:
+                        color = (255,255,255)
+                    else:
+                        color = colors[accidental + 2]
+                    pygame.draw.rect(screen, color, rect, 1)
 
 class PianoRollLayout:
     def __init__(self, rect, pianoroll):
@@ -216,8 +347,50 @@ class PianoRollLayout:
                 pygame.draw.line(screen, (70, 70, 70), (x, py), (self.rect.right, py))
             else:
                 pygame.draw.line(screen, (50, 50, 50), (x, py), (self.rect.right, py))
-        x, y = self.rect.topleft
-        draw_editparams(screen, font, x, y, self.lane.edit, editor)
+
+    def query_pitch(self, editor, pointer, rhythm, get_accidentals, accidental, editparam, w):
+        if editparam not in self.lane.edit:
+            return
+        k = self.rect.height / (self.pianoroll.top - self.pianoroll.bot + 1)
+        x = self.rect.left + editor.MARGIN
+        y = self.rect.bottom
+        for i, (b, span) in enumerate(rhythm):
+            span *= w
+            if 0 <= pointer[0] - x - b*w <= span:
+                y1 = (pointer[1] - y) // k * k + y
+                if self.rect.top <= y1 < self.rect.bottom:
+                    return self.pianoroll.bot - int((pointer[1] - y) // k) - 1
+
+    def draw_tracks(self, screen, font, editor, rhythm, generators, get_accidentals, pointer, w, accidental):
+        k = self.rect.height / (self.pianoroll.top - self.pianoroll.bot + 1)
+        x = self.rect.left + editor.MARGIN
+        y = self.rect.bottom
+        for tag,param in self.lane.edit:
+            for gen in generators:
+                if gen.tag != tag:
+                    continue
+                for i, (b, span) in enumerate(rhythm):
+                    span *= w
+                    args = gen.track[i % len(gen.track)]
+                    if args is None:
+                        continue
+                    pitch = int(args.get(param, music.Pitch(33)))
+                    color = (255,255,255)
+                    if self.pianoroll.bot <= pitch <= self.pianoroll.top:
+                        y1 = y - (pitch - self.pianoroll.bot + 1)*k
+                        pygame.draw.rect(screen, color, (x + b*w + span*0.05, y1 + k * 0.05, span*0.90, k * 0.9))
+
+        for i, (b, span) in enumerate(rhythm):
+            span *= w
+            if 0 <= pointer[0] - x - b*w <= span:
+                y1 = (pointer[1] - y) // k * k + y
+                if self.rect.top <= y1 < self.rect.bottom:
+                    rect = pygame.Rect(x + b*w + span*0.05, y1, span*0.9, k)
+                    if accidental is None:
+                        color = (255,255,255)
+                    else:
+                        color = colors[accidental + 2]
+                    pygame.draw.rect(screen, color, rect, 1)
 
 class GridLayout:
     def __init__(self, rect, grid):
@@ -228,13 +401,40 @@ class GridLayout:
 
     def draw(self, screen, font, editor):
         pygame.draw.line(screen, (70, 70, 70), self.rect.topleft, self.rect.topright)
-        x, y = self.rect.topleft
-        draw_editparams(screen, font, x, y, self.lane.edit, editor)
 
-def draw_editparams(screen, font, x, y, edit, editor):
+    def query_pitch(self, editor, pointer, rhythm, get_accidentals, accidental, editparam, w):
+        return None
+
+    def draw_tracks(self, screen, font, editor, rhythm, generators, get_accidentals, pointer, w, accidental):
+        y = self.rect.top
+        x = self.rect.left + editor.MARGIN
+        for tag,param in self.lane.edit:
+            for gen in generators:
+                if gen.tag != tag:
+                    continue
+                text = font.render(editparam_text(tag, param, editor), True, (200,200,200))
+                screen.blit(text, (x - text.get_width() - 10, y + 2))
+                for i, (b, span) in enumerate(rhythm):
+                    span *= w
+                    args = gen.track[i % len(gen.track)]
+                    if args is None:
+                        text = " "
+                    else:
+                        text = str(args.get(param, "_"))
+                    text = font.render(text, True, (200,200,200))
+                    screen.blit(text, (x + b*w, y + 2))
+                    if 0 <= pointer[0] - x - b*w <= span and y <= pointer[1] <= y + 15:
+                        rect = pygame.Rect(x + b*w + span*0.05, y, span*0.9, 15)
+                        pygame.draw.rect(screen, (200,200,200), rect, 1)
+                y += 15
+
+def draw_editparams(screen, font, x, y, edit, editor, selected=None):
     for label, name in edit:
         text = font.render(editparam_text(label, name, editor), True, (200,200,200))
         screen.blit(text, (x + 10, y + 2))
+        if (label,name) == selected:
+            rect = pygame.Rect(editor.MARGIN - 10, y+2, 5, 11)
+            pygame.draw.rect(screen, (100,255,100), rect)
         y += 15
 
 def editparam_text(label, name, editor):

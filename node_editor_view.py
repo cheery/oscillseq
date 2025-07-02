@@ -94,25 +94,6 @@ class NodeEditorView:
         cell.multi = not cell.multi
         restart_fabric(self.editor)
 
-    def in_lane(self, cell):
-        for df in self.editor.doc.drawfuncs:
-            if df.tag == cell.label:
-                return True
-        return False
-
-    def toggle_lane(self, cell):
-        tag = cell.label
-        lane = 0
-        for df in self.editor.doc.drawfuncs[:]:
-            if df.tag == tag:
-                self.editor.doc.drawfuncs.remove(df)
-                return
-            lane = df.lane + 1
-        params = {"value": "n/a"}
-        df = DrawFunc(lane, "string", tag, params)
-        self.editor.doc.drawfuncs.append(df)
-        self.editor.refresh_layout()
-
 class NodeEditorTool:
     def __init__(self, view):
         self.view = view
@@ -134,10 +115,8 @@ class NodeEditorTool:
                     self.view.tool = CellPositionTool(self, gcell.rect, gcell.cell, point)
                 if ev.button == 3:
                     multi_on_off = ["off", "on"][gcell.cell.multi]
-                    on_lane = ["put on lane", "remove from lane"][self.view.in_lane(gcell.cell)]
                     self.view.tool = ContextMenu(self, np.array(ev.pos), [
                         (f"multi={multi_on_off}", self.view.toggle_multi),
-                        (on_lane, self.view.toggle_lane),
                         ("remove", self.view.remove_cell),
                     ], gcell.cell)
                 return

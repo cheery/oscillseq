@@ -119,7 +119,7 @@ class Editor:
             duration = 1,
             labels = {},
             cells = [],
-            views = [],
+            views = {},
             connections = set([]),
         )
         self.doc.cells.append(self.doc.intro(Cell("tempo",

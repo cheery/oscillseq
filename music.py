@@ -11,8 +11,7 @@ class Pitch:
         assert accidental is not None
 
     def __repr__(self):
-        a = ['bb', 'b', 'n', 's', 'ss'][self.accidental+2]
-        return f"{a}{self.position}"
+        return str(self)
 
     def to_pair(self):
         return self.position, self.accidental
@@ -38,6 +37,14 @@ class Pitch:
             return cls + str(octave) + char_accidental[self.accidental]
         elif self.accidental in [-2, +2]:
             return cls + str(octave) + char_accidental[self.accidental // 2]*2
+
+    @classmethod
+    def from_midi(cls, midi):
+        octave = (midi // 12) - 1
+        pclass = midi % 12
+        position = [0,0,1,1,2,3,3,4,4,5,5,6][pclass] + octave*7
+        accidental = [0,1,0,1,0,0,1,0,1,0,1,0][pclass]
+        return cls(position, accidental)
 
 base_key = [0,2,4,5,7,9,11]
 def resolve_pitch(note):
