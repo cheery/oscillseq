@@ -42,11 +42,12 @@ def json_to_value(value):
 def json_to_brush(label, obj):
     return {
         "clip": Clip,
-        "clap": Clap,
+        "clap": Tracker,
+        "tracker": Tracker,
         "controlpoint": ControlPoint,
         "key": Key,
         "cell": Cell,
-        "clap_view": ClapView,
+        "tracker_view": TrackerView,
     }[obj["type"]].from_json(label, obj)
 
 @dataclass(eq=False)
@@ -216,11 +217,12 @@ def legacy_to_notegens(generators):
                 yield NoteGen(tag, track, loop=False)
 
 @dataclass(eq=False)
-class Clap:
+class Tracker:
     label : str
     duration : int
     rhythm : Any
     generators : List[Any]
+    view : Any
 
     def construct(self, sequencer, offset, key):
         rhythm = self.rhythm.to_events(offset, self.duration)
@@ -232,10 +234,11 @@ class Clap:
 
     def to_json(self):
         return {
-            "type": "clap",
+            "type": "tracker",
             "duration": self.duration,
             "rhythm": str(self.rhythm),
-            "generators": [gen.to_json() for gen in self.generators]
+            "generators": [gen.to_json() for gen in self.generators],
+            "view": self.view.label,
         }
         
     @classmethod
@@ -247,7 +250,8 @@ class Clap:
         return cls(label,
             duration = obj["duration"],
             rhythm = rhythm,
-            generators = list(legacy_to_notegens(obj["generators"]))
+            generators = list(legacy_to_notegens(obj["generators"])),
+            view = obj.get("view", None),
         )
 
 @dataclass(eq=False)
@@ -332,21 +336,16 @@ class View:
     label : str
 
 @dataclass(eq=False)
-class ClapView(View):
+class TrackerView(View):
     def to_json(self):
         return {
-            'type': "clap_view",
+            'type': "tracker_view",
         }
 
     @classmethod
     def from_json(cls, label, obj):
         return cls(
-            label = obj['label'],
-            multi = obj['multi'],
-            synth = obj['synth'],
-            pos = tuple(obj['pos']),
-            params = {name: json_to_value(o) for name, o in obj['params'].items()},
-            type_param = obj.get('type_param', None))
+            label = obj['label'])
 
 @dataclass(eq=False)
 class Document:
@@ -428,6 +427,8 @@ class Document:
         for brush in brushes.values():
             if isinstance(brush, Clip):
                 brush.brushes = [Entity.from_json(brushes, e) for e in brush.brushes]
+            if isinstance(brush, Tracker):
+                brush.view = brushes.get(brush.view, None)
             if isinstance(brush, Cell):
                 cells.append(brush)
             if isinstance(brush, View):

@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from fractions import Fraction
-from model import Entity, ControlPoint, Key, Clip, NoteGen, Clap, DrawFunc, PitchLane, Cell, Document, json_to_brush
+from model import Entity, ControlPoint, Key, Clip, NoteGen, Tracker, DrawFunc, PitchLane, Cell, Document, json_to_brush
 from typing import List, Dict, Optional, Callable, Tuple, Any
 from sequencer import Player, Sequencer, SequenceBuilder2
 from fabric import Definitions, Fabric
@@ -674,7 +674,7 @@ class TrackLayout:
                 return
             if isinstance(brush, Clip):
                 process_clip(brush)
-            elif isinstance(brush, Clap) and isinstance(brush.rhythm, measure.Tree):
+            elif isinstance(brush, Tracker) and isinstance(brush.rhythm, measure.Tree):
                 self.brush_heights[brush] = 15 + 3 * (brush.rhythm.depth) + 20
             else:
                 self.brush_heights[brush] = 15
@@ -742,7 +742,7 @@ class TrackLayout:
                 name = "???"
                 if isinstance(e.brush, Clip):
                     name = f"{e.brush.label}"
-                if isinstance(e.brush, Clap):
+                if isinstance(e.brush, Tracker):
                     name = f"{e.brush.label}"
                 if isinstance(e.brush, ControlPoint):
                     name = f"{e.brush.tag} {' ~'[e.brush.transition]} {e.brush.value}"
@@ -752,20 +752,29 @@ class TrackLayout:
                 screen.blit(text, (start*w + 10 + editor.MARGIN, y))
                 if isinstance(e.brush, Clip):
                     draw_clip_contents(e.brush, shift + e.shift, y + 15, seli + [e])
-                if isinstance(e.brush, Clap) and isinstance(e.brush.rhythm, measure.Tree):
+                if isinstance(e.brush, Tracker) and isinstance(e.brush.rhythm, measure.Tree):
                     leafs = []
+                    extra = {}
                     def draw_tree(x, y, span, tree):
                         color = (200, 200, 200) #[(200, 200, 200), (255, 0, 255)][tree == s_tree]
-                        if len(tree) == 0:
+                        count = 1
+                        if tree in extra:
+                            x, sp, count = extra[tree]
+                            span += sp
+                            count += 1
+                        if len(tree) == 0 and tree.label == 'o' and (n := tree.next_cousin()) is not None:
+                            extra[n] = x, span, count
+                        elif len(tree) == 0:
                             if tree.label == "n":
                                 leafs.append((x, span))
                             text = font.render(tree.label, True, color)
                             w = span/2 - text.get_width() / 2
                             screen.blit(text, (x + w, y))
                         else:
-                            w = span / len(tree)
+                            w = span / len(tree) if count == 1 else span / count
                             rect = pygame.Rect(x + w/2, y, span - w, 1)
                             pygame.draw.rect(screen, color, rect)
+                            w = span / len(tree)
                             for i, stree in enumerate(tree):
                                 rect = pygame.Rect(x + i*w + w/2 - 1, y, 2, 3)
                                 pygame.draw.rect(screen, color, rect)
@@ -1049,7 +1058,7 @@ class SequencerEditor:
 
     def draw_clap_editor(self):
         sel = self.sel
-        if not sel or not isinstance(sel[-1].brush, Clap):
+        if not sel or not isinstance(sel[-1].brush, Tracker):
             text = self.font.render("select clap brush in mode=1 first", True, (255, 0, 0))
             x = self.SCREEN_WIDTH / 2 - text.get_width() / 2
             self.screen.blit(text, (x, self.SCREEN_HEIGHT/2))
@@ -1154,7 +1163,7 @@ class SequencerEditor:
 
     def handle_clap_editor_key(self, ev):
         sel = self.sel
-        if not sel or not isinstance(sel[-1].brush, Clap):
+        if not sel or not isinstance(sel[-1].brush, Tracker):
             return
         sel = sel[-1].brush
         mods = pygame.key.get_mods()
@@ -1310,7 +1319,7 @@ class SequencerEditor:
             else:
                 spec = []
             sel = self.sel
-            if not sel or not isinstance(sel[-1].brush, Clap):
+            if not sel or not isinstance(sel[-1].brush, Tracker):
                 return
             clap = sel[-1].brush
             if self.tag_name in clap.generators:
@@ -1324,7 +1333,7 @@ class SequencerEditor:
                     self.e_v_focus -= 1
         elif ev.key == pygame.K_RETURN:
             sel = self.sel
-            if not sel or not isinstance(sel[-1].brush, Clap):
+            if not sel or not isinstance(sel[-1].brush, Tracker):
                 return
             clap = sel[-1].brush
             if self.tag_name in self.doc.descriptors:
@@ -1344,7 +1353,7 @@ class SequencerEditor:
                     clap.generators[self.tag_name] = ConstGen([{}])
         elif ev.key == pygame.K_DELETE:
             sel = self.sel
-            if not sel or not isinstance(sel[-1].brush, Clap):
+            if not sel or not isinstance(sel[-1].brush, Tracker):
                 return
             clap = sel[-1].brush
             if self.tag_name in self.doc.descriptors:
@@ -1366,7 +1375,7 @@ class SequencerEditor:
                     pass
         elif ev.key == pygame.K_PLUS:
             sel = self.sel
-            if not sel or not isinstance(sel[-1].brush, Clap):
+            if not sel or not isinstance(sel[-1].brush, Tracker):
                 return
             clap = sel[-1].brush
             if self.tag_name in self.doc.descriptors:
@@ -1444,7 +1453,7 @@ class SequencerEditor:
 
     def modify_event_field(self, amount, erase=False):
             sel = self.sel
-            if not sel or not isinstance(sel[-1].brush, Clap):
+            if not sel or not isinstance(sel[-1].brush, Tracker):
                 return
             clap = sel[-1].brush
             if self.tag_name in self.doc.descriptors:

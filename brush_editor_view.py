@@ -1,4 +1,4 @@
-from model import Entity, ControlPoint, Key, Clip, NoteGen, Clap, DrawFunc, PitchLane, Cell, Document, json_to_brush
+from model import Entity, ControlPoint, Key, Clip, NoteGen, Tracker, DrawFunc, PitchLane, Cell, Document, json_to_brush
 import collections
 import measure
 import pygame
@@ -38,7 +38,7 @@ class BrushEditorView:
         shift_held = mods & pygame.KMOD_SHIFT
         if ev.key == pygame.K_RETURN:
             brush = self.get_brush()
-            if isinstance(brush, Clap):
+            if isinstance(brush, Tracker):
                 self.tool = NoteEditorTool(self, brush, sum(e.shift for e in self.selection))
         elif ev.key == pygame.K_PAGEUP:
             self.editor.timeline_vertical_scroll -= self.editor.SCREEN_HEIGHT / 4
@@ -141,7 +141,7 @@ class BrushEditorView:
             else:
                 self.selection = brushlist[0] if brushlist else []
         elif ev.key == pygame.K_a:
-            self.insert_brush(1, lambda duration: (Clap("", duration, measure.Tree.from_string("n"), {})))
+            self.insert_brush(1, lambda duration: (Tracker("", duration, measure.Tree.from_string("n"), {})))
         elif ev.key == pygame.K_s:
             self.insert_brush(1, lambda duration: (Clip("", duration, [])))
         elif ev.key == pygame.K_c and self.editor.lane_tag is not None:
@@ -163,7 +163,7 @@ class BrushEditorView:
             brush = self.get_brush()
             if isinstance(brush, ControlPoint):
                 brush.transition = not brush.transition
-            elif isinstance(brush, Clap):
+            elif isinstance(brush, Tracker):
                 brush.duration += 1
                 a = adjust_boundaries(self.editor.doc)
                 self.editor.timeline_head -= a
@@ -172,7 +172,7 @@ class BrushEditorView:
                 self.editor.timeline_scroll = max(self.editor.timeline_head - self.editor.BARS_VISIBLE + 1, self.editor.timeline_scroll)
         elif ev.key == pygame.K_MINUS:
             brush = self.get_brush()
-            if isinstance(brush, Clap):
+            if isinstance(brush, Tracker):
                 brush.duration = max(1, brush.duration-1)
         elif ev.key == pygame.K_j:
             self.modify_control_point(+1)
@@ -404,25 +404,34 @@ class NoteEditorTool:
         pygame.draw.rect(screen, (30, 30, 30), rect, False)
         pygame.draw.rect(screen, (0, 255, 0), rect, True)
 
+        extra = {}
         def draw_tree(x, y, span, tree):
             color = (200, 200, 200)
-            if len(tree) == 0:
+            count = 1
+            if tree in extra:
+                x, sp, count = extra[tree]
+                span += sp
+                count += 1
+            if len(tree) == 0 and tree.label == 'o' and (n := tree.next_cousin()) is not None:
+                extra[n] = x, span, count
+            elif len(tree) == 0:
                 text = font.render(tree.label, True, color)
                 w = span/2 - text.get_width() / 2
                 screen.blit(text, (x + w, y))
             else:
-                w = span / len(tree)
+                w = span / len(tree) if count == 1 else span / count
                 rect = pygame.Rect(x + w/2, y, span - w, 1)
                 pygame.draw.rect(screen, color, rect)
+                w = span / len(tree)
                 for i, stree in enumerate(tree):
                     rect = pygame.Rect(x + i*w + w/2 - 1, y, 2, 3)
                     pygame.draw.rect(screen, color, rect)
                     draw_tree(x + i*w, y+3, w, stree)
-        draw_tree(x, y + 3, min(4, brush.duration)*w, brush.tree)
+        draw_tree(x, y + 3, min(4, brush.duration)*w, brush.rhythm)
         y1 = y + SCREEN_HEIGHT / 2
-        y += 3*brush.tree.depth + 23
+        y += 3*brush.rhythm.depth + 23
 
-        starts, stops = brush.tree.offsets(min(4, brush.duration), 0)
+        starts, stops = brush.rhythm.offsets(min(4, brush.duration), 0)
 
         setup = self.note_editor()
         if setup is None:
@@ -456,11 +465,13 @@ class NoteEditorTool:
             ix = bisect.bisect_right(graph_key, d_ratio * b + location, key=lambda z: z[0])
             return music.accidentals(graph_key[ix-1][1])
 
-        if df.tag in brush.generators:
-            gen = brush.generators[df.tag]
+        for gen in brush.generators:
+            if df.tag != gen.tag:
+                continue
             for i, (s, e) in enumerate(zip(starts, stops)):
                 acci = get_accidentals(s)
-                for _, args in gen.pull(i, (), False):
+                args = gen.track[i % len(gen.track)]
+                if args is not None:
                     pitch = args.get(df.params["pitch"], music.Pitch(33))
                     color = colors[pitch.accidental + 2]
                     if pitch.accidental == acci[pitch.position % 7]:
@@ -529,6 +540,7 @@ class NoteEditorTool:
         if setup is None:
             return
         df, graph = setup
+        self.note_tail = None
 
         band1 = ["bb", "b", "n", "s", "ss"]
         band2 = ["draw", "r", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11"]
@@ -569,9 +581,9 @@ class NoteEditorTool:
         # TODO: avoid repeating this code
         x = editor.MARGIN
         y = SCREEN_HEIGHT/4
-        y += 3*brush.tree.depth + 23
+        y += 3*brush.rhythm.depth + 23
         yg = y + graph.margin_above * layout.STAVE_HEIGHT * 2
-        starts, stops = brush.tree.offsets(min(4, brush.duration), 0)
+        starts, stops = brush.rhythm.offsets(min(4, brush.duration), 0)
 
         location = self.location
         graph_key_map = {graph: [(0, 0)]}
@@ -585,7 +597,6 @@ class NoteEditorTool:
 
         if self.note_tool == "split":
             mx, my = ev.pos
-            self.note_tail = None
             for i, (s, e) in enumerate(zip(starts, stops)):
                 if s*w <= mx - x <= e*w:
                     self.note_tail = i
@@ -597,31 +608,59 @@ class NoteEditorTool:
                 if s*w <= mx - x <= e*w:
                     acci = get_accidentals(s)
                     acc = self.accidental or acci[position%7]
-                    total = sum(1 for leaf in brush.tree.leaves if leaf.label == "n")
-                    gen = brush.generators.get(df.tag, None)
-                    if isinstance(gen, ConstGen):
-                        a = [ [args.copy() for args in gen.argslist] for _ in range(total)]
-                        gen = brush.generators[df.tag] = PolyGen(a)
-                    elif gen is None:
-                        a = [ [] for _ in range(total)]
-                        gen = brush.generators[df.tag] = PolyGen(a)
-                    argslist = gen.argslists[i]
-                    gen.argslists[i] = []
+                    total = sum(1 for leaf in brush.rhythm.leaves if leaf.label == "n")
+                    gens = [gen for gen in brush.generators if gen.tag == df.tag]
                     if ev.button == 1:
-                        found = False
-                        for args in argslist:
-                            pitch = args.get(df.params["pitch"], music.Pitch(33))
-                            if pitch.position == position:
-                                args[df.params["pitch"]] = music.Pitch(position, acc)
-                                found = True
-                            gen.argslists[i].append(args)
-                        if not found:
-                            gen.argslists[i].append({df.params["pitch"]: music.Pitch(position, acc)})
-                    elif ev.button == 3:
-                        for args in argslist:
-                            pitch = args.get(df.params["pitch"], music.Pitch(33))
-                            if pitch.position != position:
-                                gen.argslists[i].append(args)
+                        blank_row = None
+                        for gen in gens:
+                            if gen.track[i] is not None:
+                                pitch = gen.track[i].get(df.params["pitch"], music.Pitch(33))
+                                if pitch.position == position:
+                                    gen.track[i][df.params["pitch"]] = music.Pitch(position, acc)
+                                    break
+                            else:
+                                blank_row = gen
+                        else:
+                            if blank_row is None:
+                                blank_row = NoteGen(df.tag, [None]*len(starts), loop=False)
+                                brush.generators.append(blank_row)
+                            blank_row.track[i] = {df.params["pitch"]: music.Pitch(position, acc)}
+                    if ev.button == 2:
+                        for gen in gens:
+                            gen.track[i] = None
+                    if ev.button == 3:
+                        for gen in gens:
+                            if gen.track[i] is not None:
+                                pitch = gen.track[i].get(df.params["pitch"], music.Pitch(33))
+                                if pitch.position == position:
+                                    gen.track[i] = None
+                    for gen in gens:
+                        if all(a is None for a in gen.track):
+                            brush.generators.remove(gen)
+                    #gen = brush.generators.get(df.tag, None)
+                    #if isinstance(gen, ConstGen):
+                    #    a = [ [args.copy() for args in gen.argslist] for _ in range(total)]
+                    #    gen = brush.generators[df.tag] = PolyGen(a)
+                    #elif gen is None:
+                    #    a = [ [] for _ in range(total)]
+                    #    gen = brush.generators[df.tag] = PolyGen(a)
+                    #argslist = gen.argslists[i]
+                    #gen.argslists[i] = []
+                    #if ev.button == 1:
+                    #    found = False
+                    #    for args in argslist:
+                    #        pitch = args.get(df.params["pitch"], music.Pitch(33))
+                    #        if pitch.position == position:
+                    #            args[df.params["pitch"]] = music.Pitch(position, acc)
+                    #            found = True
+                    #        gen.argslists[i].append(args)
+                    #    if not found:
+                    #        gen.argslists[i].append({df.params["pitch"]: music.Pitch(position, acc)})
+                    #elif ev.button == 3:
+                    #    for args in argslist:
+                    #        pitch = args.get(df.params["pitch"], music.Pitch(33))
+                    #        if pitch.position != position:
+                    #            gen.argslists[i].append(args)
         self.view.editor.refresh_layout()
 
     def handle_mousebuttonup(self, ev):
@@ -640,9 +679,9 @@ class NoteEditorTool:
         # TODO: avoid repeating this code
         x = editor.MARGIN
         y = SCREEN_HEIGHT/4
-        y += 3*brush.tree.depth + 23
+        y += 3*brush.rhythm.depth + 23
         yg = y + graph.margin_above * layout.STAVE_HEIGHT * 2
-        starts, stops = brush.tree.offsets(min(4, brush.duration), 0)
+        starts, stops = brush.rhythm.offsets(min(4, brush.duration), 0)
 
         location = self.location
         graph_key_map = {graph: [(0, 0)]}
@@ -670,7 +709,7 @@ class NoteEditorTool:
                     elif leaf.label == "s":
                         segs[-1].append(leaf)
                 return [seg for seg in segs if seg[0].label == "n"]
-            xs = segments(brush.tree)
+            xs = segments(brush.rhythm)
             first_leaf = xs[first][0]
             last_leaf = xs[last][-1]
             def left_corner(leaf):
@@ -699,7 +738,7 @@ class NoteEditorTool:
                     tree = tree.children[side]
                     yield tree
 
-            lca = brush.tree
+            lca = brush.rhythm
             ex1 = extrapolate(lca, first_leaf.get_path(), 0)
             ex2 = extrapolate(lca, last_leaf.get_path(), -1)
             for lca0, lca1 in zip(ex1, ex2):
@@ -745,7 +784,7 @@ class NoteEditorTool:
                     this.children = []
                 assert first_leaf.label == "n"
 
-            leaves = brush.tree.leaves
+            leaves = brush.rhythm.leaves
             ix0 = leaves.index(first_leaf)
             first1 = sum(1 for leaf in leaves[:ix0] if leaf.label == "n")
             ix1 = leaves.index(last_leaf)
@@ -790,16 +829,18 @@ class NoteEditorTool:
                     child.parent = ll
                 d1 = sum(1 for leaf in ll.leaves if leaf.label == "n")
 
-            for name, gen in brush.generators.items():
-                if isinstance(gen, PolyGen) and d1 != d0 and d0 == 1:
-                    pat = gen.argslists[first]
-                    gen.argslists[first:last+1] = [[a.copy() for a in pat] for _ in range(d1)]
-                elif isinstance(gen, PolyGen) and d1 != d0:
-                    gen.argslists[first:last+1] = [[{}] for _ in range(d1)]
+            dup = lambda a: a if a is None else a.copy()
+            for gen in brush.generators[:]:
+                if d1 != d0 and d0 == 1:
+                    gen.track[first:last+1] = [dup(gen.track[first]) for _ in range(d1)]
+                elif d1 != d0:
+                    gen.track[first:last+1] = [None for _ in range(d1)]
+                if all(a is None for a in gen.track):
+                    brush.generators.remove(gen)
 
-            tree = measure.simplify(brush.tree.copy())
+            tree = measure.simplify(brush.rhythm.copy())
             if tree and tree.is_valid():
-                brush.tree = tree
+                brush.rhythm = tree
         self.view.editor.refresh_layout()
 
     def handle_mousemotion(self, ev):
@@ -808,7 +849,7 @@ class NoteEditorTool:
     def remove_rests(self):
         brush = self.clap
         ix = 0
-        for leaf in brush.tree.leaves:
+        for leaf in brush.rhythm.leaves:
             if leaf.label == "n":
                 ix += 1
             if leaf.label == "r":
