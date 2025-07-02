@@ -175,6 +175,9 @@ class NoteGen:
                     sequencer.control(start, self.tag, args)
                 elif self.flavor == 'quadratic':
                     sequencer.quadratic(start, tag, args["~"], args["*"])
+
+    def loop_group(self):
+        return len(self.track) if self.loop else None
                 
     def to_json(self):
         return {

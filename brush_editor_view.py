@@ -377,6 +377,7 @@ class TrackEditorView:
         self.tool = NoteEditorTool(self)
         self.accidental = None
         self.editparam = None
+        self.loop = None
         self.refresh()
 
     def refresh(self):
@@ -433,12 +434,18 @@ class TrackEditorView:
 
         pointer = pygame.mouse.get_pos()
 
-        for point, span in rhythm:
+        loop_groups = set(gen.loop_group() for gen in tracker.generators)
+        for i, (point, span) in enumerate(rhythm, 1):
             if 0 <= point < editor.BARS_VISIBLE:
                 pygame.draw.line(screen, (70, 70, 70), (x + point*w, 47), (x + point*w, SCREEN_HEIGHT))
             point += span
             if 0 <= point < editor.BARS_VISIBLE:
-                pygame.draw.line(screen, (70, 70, 70), (x + point*w, 47), (x + point*w, SCREEN_HEIGHT))
+                if i == self.loop:
+                    pygame.draw.line(screen, (70, 255, 70), (x + point*w, 47), (x + point*w, SCREEN_HEIGHT), 4)
+                elif i in loop_groups:
+                    pygame.draw.line(screen, (70, 70, 255), (x + point*w, 47), (x + point*w, SCREEN_HEIGHT), 4)
+                else:
+                    pygame.draw.line(screen, (70, 70, 70), (x + point*w, 47), (x + point*w, SCREEN_HEIGHT))
 
         get_accidentals = self.key_signature_mapper()
 
@@ -472,12 +479,19 @@ class TrackEditorView:
             px += 32
         px = SCREEN_WIDTH / 2
         py = SCREEN_HEIGHT - 64
-        band3 = ["r -> n"]
+        band3 = ["r -> n", "loop", "no loop"]
         for i, text in enumerate(band3):
-            selected = False
             rect = pygame.Rect(px, py, 64, 32)
+            selected = False
+            if text == "no loop" and self.loop is None:
+                selected = True
+            if text == "loop" and self.loop is not None:
+                selected = True
             pygame.draw.rect(screen, (100, 100 + 50 * selected, 100), rect, 0)
-            pygame.draw.rect(screen, (200, 200, 200), rect, 1)
+            if text == "loop" and isinstance(self.tool, NoteEditorTool) and (self.tool.flavor == "loop"):
+                pygame.draw.rect(screen, (100, 255, 100), rect, 2)
+            else:
+                pygame.draw.rect(screen, (200, 200, 200), rect, 1)
             text = font.render(text, True, (200, 200, 200))
             screen.blit(text, (px + 32 - text.get_width()/2, py + 16 - text.get_height()/2))
             px += 64
@@ -568,12 +582,17 @@ class NoteEditorTool:
             px += 32
         px = SCREEN_WIDTH / 2
         py = SCREEN_HEIGHT - 64
-        band3 = ["r -> n"]
+        band3 = ["r -> n", "loop", "no loop"]
         for i, text in enumerate(band3):
             rect = pygame.Rect(px, py, 64, 32)
             if rect.collidepoint(ev.pos) and ev.type == pygame.MOUSEBUTTONDOWN:
                 if i == 0:
                     self.remove_rests()
+                elif i == 1:
+                    self.view.loop = self.view.loop or 1
+                    self.flavor = "loop"
+                elif i == 2:
+                    self.view.loop = None
                 return
             px += 64
 
@@ -589,6 +608,10 @@ class NoteEditorTool:
             for i, (s, span) in enumerate(rhythm):
                 if s <= (ev.pos[0] - x)/w <= s+span:
                     self.note_tail = i
+        if self.flavor == "loop":
+            for i, (s, span) in enumerate(rhythm):
+                if s <= (ev.pos[0] - x)/w <= s+span:
+                    self.view.loop = i + 1
         if self.flavor == "draw":
             pitch = this_param = None
             for item in self.view.layout:
@@ -603,31 +626,36 @@ class NoteEditorTool:
                 tag,param = this_param
                 for i, (s, span) in enumerate(rhythm):
                     if s <= (ev.pos[0] - x)/w <= s+span:
+                        gens0 = [gen for gen in tracker.generators if gen.tag == tag and gen.loop_group() == self.view.loop]
                         gens = [gen for gen in tracker.generators if gen.tag == tag]
                         if ev.button == 1:
                             blank_row = None
-                            for gen in gens:
-                                if gen.track[i] is not None:
-                                    arg = gen.track[i].get(param, music.Pitch(33))
+                            for gen in gens0:
+                                j = i % len(gen.track)
+                                if gen.track[j] is not None:
+                                    arg = gen.track[j].get(param, music.Pitch(33))
                                     if equals(arg, pitch):
-                                        gen.track[i][param] = pitch
+                                        gen.track[j][param] = pitch
                                         break
                                 else:
                                     blank_row = gen
                             else:
                                 if blank_row is None:
-                                    blank_row = NoteGen(tag, [None]*len(rhythm), loop=False)
+                                    blank_row = NoteGen(tag, [None]*(self.view.loop or len(rhythm)), loop=self.view.loop is not None)
                                     tracker.generators.append(blank_row)
-                                blank_row.track[i] = {param: pitch}
+                                j = i % len(blank_row.track)
+                                blank_row.track[j] = {param: pitch}
                         if ev.button == 2:
-                            for gen in gens:
-                                gen.track[i] = None
+                            for gen in gens0:
+                                j = i % len(gen.track)
+                                gen.track[j] = None
                         if ev.button == 3:
                             for gen in gens:
-                                if gen.track[i] is not None:
-                                    arg = gen.track[i].get(param, music.Pitch(33))
+                                j = i % len(gen.track)
+                                if gen.track[j] is not None:
+                                    arg = gen.track[j].get(param, music.Pitch(33))
                                     if equals(arg, pitch):
-                                        gen.track[i] = None
+                                        gen.track[j] = None
                         for gen in gens:
                             if all(a is None for a in gen.track):
                                 tracker.generators.remove(gen)
@@ -782,6 +810,8 @@ class NoteEditorTool:
 
             dup = lambda a: a if a is None else a.copy()
             for gen in tracker.generators[:]:
+                if gen.loop:
+                    continue
                 if d1 != d0 and d0 == 1:
                     gen.track[first:last+1] = [dup(gen.track[first]) for _ in range(d1)]
                 elif d1 != d0:
@@ -798,7 +828,7 @@ class NoteEditorTool:
         pass
 
     def remove_rests(self):
-        tracker = self.tracker
+        tracker = self.view.tracker
         ix = 0
         for leaf in tracker.rhythm.leaves:
             if leaf.label == "n":
