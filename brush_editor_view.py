@@ -382,7 +382,7 @@ class TrackEditorView:
 
     def refresh(self):
         if self.tracker.view is not None:
-            self.layout = layout_lanes(self.editor, self.tracker.view.lanes, 47)
+            self.layout = layout_lanes(self.editor, self.tracker.view.lanes, 47, self.tracker.generators)
         else:
             self.layout = []
 
@@ -405,6 +405,7 @@ class TrackEditorView:
         w = (SCREEN_WIDTH - editor.MARGIN) / editor.BARS_VISIBLE
         x = editor.MARGIN
 
+        # TODO: Instead of drawing a tree, draw notes.
         extra = {}
         def draw_tree(x, y, span, tree):
             color = (200, 200, 200)
@@ -660,6 +661,7 @@ class NoteEditorTool:
                             if all(a is None for a in gen.track):
                                 tracker.generators.remove(gen)
         self.view.editor.refresh_layout()
+        self.view.refresh()
 
     def handle_mousebuttonup(self, ev):
         tracker = self.view.tracker
@@ -823,6 +825,7 @@ class NoteEditorTool:
             if tree and tree.is_valid():
                 tracker.rhythm = tree
         self.view.editor.refresh_layout()
+        self.view.refresh()
 
     def handle_mousemotion(self, ev):
         pass

@@ -7,7 +7,7 @@ import pygame
 class ViewEditorView:
     def __init__(self, editor):
         self.editor = editor
-        self.tool = DummyTool(self)
+        self.tool = ViewEditorTool(self)
         self.current = None
         self.refresh()
 
@@ -21,7 +21,7 @@ class ViewEditorView:
         if self.current is None:
             self.layout = []
         else:
-            self.layout = layout_lanes(self.editor, self.current.lanes, 47)
+            self.layout = layout_lanes(self.editor, self.current.lanes, 47, [])
 
     def draw(self, screen):
         font = self.editor.font
@@ -190,14 +190,12 @@ class ViewEditorView:
             self.tool = ContextMenu(self.tool, pygame.mouse.get_pos(), choices)
         return menu
 
-class DummyTool:
+class ViewEditorTool:
     def __init__(self, view):
         self.view = view
 
     def draw(self, screen):
-        pos = pygame.mouse.get_pos()
-        text = self.view.editor.font.render("DUMMY", True, (200,200,200))
-        screen.blit(text, pos)
+        pass
 
     def handle_mousebuttondown(self, ev):
         if self.view.toolbar.handle_mousebuttondown(ev):
@@ -233,7 +231,7 @@ class DummyTool:
     def handle_mousemotion(self, ev):
         pass
 
-def layout_lanes(editor, lanes, y):
+def layout_lanes(editor, lanes, y, generators):
     layout = []
     for lane in lanes:
         if isinstance(lane, Staves):
@@ -248,7 +246,8 @@ def layout_lanes(editor, lanes, y):
             layout.append(PianoRollLayout(rect, lane))
         if isinstance(lane, Grid):
             height = max(1, len(lane.edit))
-            height *= editor.layout.STAVE_HEIGHT * 6 / 12
+            height = max(height, sum(1 for tag,param in lane.edit for gen in generators if gen.tag == tag))
+            height *= 15
             rect = pygame.Rect(0, y, editor.SCREEN_WIDTH, height)
             layout.append(GridLayout(rect, lane))
         y += height

@@ -20,7 +20,6 @@ import sys
 import spectroscope
 from brush_editor_view import BrushEditorView, modify
 from node_editor_view import NodeEditorView
-from lane_editor_view import LaneEditorView, drawfunc_table
 from view_editor_view import ViewEditorView
 
 class DummyView:
@@ -171,7 +170,6 @@ class Editor:
             [
                 ("track editor", BrushEditorView),
                 ("view editor", ViewEditorView),
-                ("lane editor", LaneEditorView),
                 ("cell editor", NodeEditorView)
             ],
             (lambda ev, view: self.change_view(view)),
@@ -301,10 +299,8 @@ class Editor:
             if ev.key == pygame.K_2:
                 self.change_view(ViewEditorView)
             elif ev.key == pygame.K_3:
-                self.change_view(LaneEditorView)
-            elif ev.key == pygame.K_4:
                 self.change_view(NodeEditorView)
-            #elif ev.key == pygame.K_5:
+            #elif ev.key == pygame.K_4:
             #elif ev.key == pygame.K_6:
             #elif ev.key == pygame.K_7:
             elif ev.key == pygame.K_s:
