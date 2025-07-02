@@ -27,7 +27,10 @@ class Definitions:
         return dfn
 
     def descriptors(self, cells):
-        return {cell.label: self.descriptor(cell) for cell in cells}
+        descriptors = {cell.label: self.descriptor(cell) for cell in cells}
+        if 'tempo' not in descriptors:
+            descriptors['tempo'] = Descriptor(None, {}, "number")
+        return descriptors
 
     def descriptor(self, cell):
         synthdef, mdesc = self.definition(cell.synth)

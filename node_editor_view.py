@@ -4,7 +4,6 @@ from supriya import Envelope, synthdef, ugens
 from supriya.ugens import EnvGen, Out, SinOsc
 from typing import List, Dict, Set, Optional, Callable, Tuple, Any, Union, DefaultDict
 from components import ContextMenu
-from model import DrawFunc
 import math
 import os
 import pygame

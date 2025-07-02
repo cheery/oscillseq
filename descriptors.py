@@ -40,6 +40,7 @@ pitch     = "pitch"
 hz        = "hz"
 db        = "db"
 duration  = "duration"
+kinds = [boolean, unipolar, number, bipolar, pitch, hz, db, duration]
 
 class Saver:
     def __init__(self, directory):
@@ -67,6 +68,8 @@ class Descriptor:
     def field_type(self, name):
         if name == "*":
             return self.type_param
+        if name == "~" and self.type_param is not None:
+            return "boolean"
         spec = self.mdesc.get(name, None)
         if isinstance(spec, str):
             return spec
@@ -83,8 +86,12 @@ class Descriptor:
                 available_fields.append(name)
             elif isinstance(spec, str) and len(ty) == 0:
                 available_fields.append(name)
+            elif spec == "hz" and "pitch" in ty:
+                available_fields.append(name)
         if self.type_param is not None and self.type_param in ty:
             available_fields.append("*")
+        if self.type_param is not None and "boolean" in ty:
+            available_fields.append("~")
         return available_fields
 
     def autoselect(self, ty):

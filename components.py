@@ -320,3 +320,30 @@ class ContextMenu:
 #        elif ev.key == pygame.K_RIGHT:
 #            self.tag_i = min(len(self.get_tag_line()), self.tag_i + 1)
 #
+
+class Toolbar:
+    def __init__(self, rect, items, action, selected, button_width=32*3):
+        self.rect = rect
+        self.items = items
+        self.action = action
+        self.selected = selected
+        self.button_width = button_width
+
+    def draw(self, screen, font):
+        pygame.draw.rect(screen, (60, 60, 60), self.rect, 0, 0)
+        for i, (name, obj) in enumerate(self.items):
+            rect = pygame.Rect(self.rect.x + i*self.button_width, self.rect.y, self.button_width, self.rect.height)
+            if self.selected(name, obj):
+                pygame.draw.rect(screen, (20, 20, 20), rect, 0, 0)
+            pygame.draw.rect(screen, (200, 200, 200), rect, 1, 0)
+            text = font.render(name, True, (200, 200, 200))
+            screen.blit(text, (rect.centerx - text.get_width()/2, rect.centery - text.get_height()/2))
+
+    def handle_mousebuttondown(self, ev):
+        for i, (name, obj) in enumerate(self.items):
+            rect = pygame.Rect(self.rect.x + i*self.button_width, self.rect.y, self.button_width, self.rect.height)
+            if rect.collidepoint(ev.pos):
+                self.action(ev, obj)
+                return True
+        return False
+

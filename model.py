@@ -47,7 +47,7 @@ def json_to_brush(label, obj):
         "controlpoint": ControlPoint,
         "key": Key,
         "cell": Cell,
-        "tracker_view": TrackerView,
+        "trackerview": TrackerView,
     }[obj["type"]].from_json(label, obj)
 
 @dataclass(eq=False)
@@ -149,10 +149,8 @@ class Clip:
 def json_to_gen(obj):
     return {
         "note": NoteGen,
-        "const": ConstGen,
-        "poly": PolyGen,
-        "control": ControlGen,
-        "quadratic": QuadraticGen,
+        "control": NoteGen,
+        "quadratic": NoteGen,
     }[obj["type"]].from_json(obj)
 
 def args_to_json(args):
@@ -238,7 +236,7 @@ class Tracker:
             "duration": self.duration,
             "rhythm": str(self.rhythm),
             "generators": [gen.to_json() for gen in self.generators],
-            "view": self.view.label,
+            "view": self.view.label if self.view is not None else None,
         }
         
     @classmethod
@@ -252,54 +250,6 @@ class Tracker:
             rhythm = rhythm,
             generators = list(legacy_to_notegens(obj["generators"])),
             view = obj.get("view", None),
-        )
-
-@dataclass(eq=False)
-class DrawFunc:
-    lane : int
-    drawfunc : str
-    tag : str
-    params : Dict[str, str]
-
-    def to_json(self):
-        return {
-            "lane": self.lane,
-            "drawfunc": self.drawfunc,
-            "tag": self.tag,
-            "params": self.params,
-        }
-        
-    @classmethod
-    def from_json(cls, obj):
-        return cls(
-            lane = obj["lane"],
-            drawfunc = obj["drawfunc"],
-            tag = obj["tag"],
-            params = obj["params"],
-        )
-
-@dataclass(eq=False)
-class PitchLane:
-    lane : int
-    staves: int
-    margin_above: int = 0
-    margin_below: int = 0
-
-    def to_json(self):
-        return {
-            "type": "pitch",
-            "lane": self.lane,
-            "staves": self.staves,
-            "margin": [self.margin_above, self.margin_below],
-        }
-        
-    @classmethod
-    def from_json(cls, obj):
-        return cls(
-            lane = obj["lane"],
-            staves = obj["staves"],
-            margin_above = obj["margin"][0],
-            margin_below = obj["margin"][1],
         )
 
 @dataclass(eq=False)
@@ -331,29 +281,102 @@ class Cell:
             params = {name: json_to_value(o) for name, o in obj['params'].items()},
             type_param = obj.get('type_param', None))
 
+def json_to_view_lane(obj):
+    return {
+        "staves": Staves,
+        "pianoroll": PianoRoll,
+        "grid": Grid,
+    }[obj["type"]].from_json(obj)
+
+@dataclass(eq=False)
+class PianoRoll:
+    bot : int
+    top : int
+    edit : List[Tuple[str, str]]
+
+    def to_json(self):
+        return {
+            "type": "pianoroll",
+            "bot": self.bot,
+            "top": self.top,
+            "edit": self.edit
+        }
+        
+    @classmethod
+    def from_json(cls, obj):
+        return cls(
+            bot = obj["bot"],
+            top = obj["top"],
+            edit = [tuple(o) for o in obj["edit"]],
+        )
+
+@dataclass(eq=False)
+class Staves:
+    count : int
+    above : int
+    below : int
+    edit : List[Tuple[str, str]]
+
+    def to_json(self):
+        return {
+            "type": "staves",
+            "above": self.above,
+            "below": self.below,
+            "edit": self.edit
+        }
+        
+    @classmethod
+    def from_json(cls, obj):
+        return cls(
+            above = obj["above"],
+            below = obj["below"],
+            edit = [tuple(o) for o in obj["edit"]],
+        )
+
+@dataclass(eq=False)
+class Grid:
+    kind : str
+    edit : List[Tuple[str, str]]
+
+    def to_json(self):
+        return {
+            "type": "grid",
+            "kind": self.kind,
+            "edit": self.edit
+        }
+        
+    @classmethod
+    def from_json(cls, obj):
+        return cls(
+            kind = obj["kind"],
+            edit = [tuple(o) for o in obj["edit"]],
+        )
+
 @dataclass(eq=False)
 class View:
     label : str
 
 @dataclass(eq=False)
 class TrackerView(View):
+    lanes : List[Any]
+
     def to_json(self):
         return {
-            'type': "tracker_view",
+            'type': "trackerview",
+            'lanes': [lane.to_json() for lane in self.lanes],
         }
 
     @classmethod
     def from_json(cls, label, obj):
         return cls(
-            label = obj['label'])
+            label = obj['label'],
+            lanes = [json_to_view_lane(o) for o in obj['lanes']])
 
 @dataclass(eq=False)
 class Document:
     brushes : List[Entity]
     duration : int
     labels : Dict[str, Brush]
-    graphs : List[PitchLane]
-    drawfuncs: List[DrawFunc]
     cells : List[Brush]
     views : Dict[str, Brush]
     connections : Set[Tuple[str, str]]
@@ -414,8 +437,6 @@ class Document:
             brushes[cell.label] = view.to_json()
         return {
             "brushes": brushes,
-            "graphs": [r.to_json() for r in self.graphs],
-            "drawfuncs": [r.to_json() for r in self.drawfuncs],
             "connections": list(self.connections),
         }
 
@@ -438,8 +459,6 @@ class Document:
             brushes = root.brushes,
             duration = root.duration,
             labels = brushes,
-            graphs = [PitchLane.from_json(o) for o in obj["graphs"]],
-            drawfuncs = [DrawFunc.from_json(o) for o in obj["drawfuncs"]],
             cells = cells,
             views = views,
             connections = set(tuple(o) for o in obj.get("connections", [])),

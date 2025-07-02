@@ -1,10 +1,10 @@
 from dataclasses import dataclass, field
 from fractions import Fraction
-from model import Entity, ControlPoint, Key, Clip, NoteGen, Tracker, DrawFunc, PitchLane, Cell, Document, json_to_brush
+from model import Entity, ControlPoint, Key, Clip, NoteGen, Tracker, Cell, Document, json_to_brush
 from typing import List, Dict, Optional, Callable, Tuple, Any
 from sequencer import Player, Sequencer, SequenceBuilder2
 from fabric import Definitions, Fabric
-from components import ContextMenu
+from components import ContextMenu, Toolbar
 from controllers import quick_connect
 import numpy as np
 import bisect
@@ -21,8 +21,7 @@ import spectroscope
 from brush_editor_view import BrushEditorView, modify
 from node_editor_view import NodeEditorView
 from lane_editor_view import LaneEditorView, drawfunc_table
-
-# TODO: remove type annotation from buses.
+from view_editor_view import ViewEditorView
 
 class DummyView:
     def __init__(self, editor):
@@ -119,11 +118,6 @@ class Editor:
             brushes = [],
             duration = 1,
             labels = {},
-            graphs = [
-            ],
-            drawfuncs = [
-                DrawFunc(0, "string", "tempo", {"value": "*"}),
-            ],
             cells = [],
             views = [],
             connections = set([]),
@@ -176,10 +170,11 @@ class Editor:
         self.toolbar = Toolbar(pygame.Rect(0, self.SCREEN_HEIGHT - 32, self.SCREEN_WIDTH, 32),
             [
                 ("track editor", BrushEditorView),
+                ("view editor", ViewEditorView),
                 ("lane editor", LaneEditorView),
                 ("cell editor", NodeEditorView)
             ],
-            (lambda view: self.change_view(view)),
+            (lambda ev, view: self.change_view(view)),
             (lambda name, cls: isinstance(self.view, cls)))
 
         self.timeline_head = 0
@@ -304,10 +299,11 @@ class Editor:
             if ev.key == pygame.K_1:
                 self.change_view(BrushEditorView)
             if ev.key == pygame.K_2:
-                self.change_view(LaneEditorView)
+                self.change_view(ViewEditorView)
             elif ev.key == pygame.K_3:
+                self.change_view(LaneEditorView)
+            elif ev.key == pygame.K_4:
                 self.change_view(NodeEditorView)
-            #elif ev.key == pygame.K_4:
             #elif ev.key == pygame.K_5:
             #elif ev.key == pygame.K_6:
             #elif ev.key == pygame.K_7:
@@ -483,32 +479,6 @@ class Editor:
             return all(df.params[name] in dfn.avail(ty) for name, ty in drawfunc_table[df.drawfunc])
         return False
 
-class Toolbar:
-    def __init__(self, rect, items, action, selected, button_width=32*3):
-        self.rect = rect
-        self.items = items
-        self.action = action
-        self.selected = selected
-        self.button_width = button_width
-
-    def draw(self, screen, font):
-        pygame.draw.rect(screen, (60, 60, 60), self.rect, 0, 0)
-        for i, (name, obj) in enumerate(self.items):
-            rect = pygame.Rect(self.rect.x + i*self.button_width, self.rect.y, self.button_width, self.rect.height)
-            if self.selected(name, obj):
-                pygame.draw.rect(screen, (20, 20, 20), rect, 0, 0)
-            pygame.draw.rect(screen, (200, 200, 200), rect, 1, 0)
-            text = font.render(name, True, (200, 200, 200))
-            screen.blit(text, (rect.centerx - text.get_width()/2, rect.centery - text.get_height()/2))
-
-    def handle_mousebuttondown(self, ev):
-        for i, (name, obj) in enumerate(self.items):
-            rect = pygame.Rect(self.rect.x + i*self.button_width, self.rect.y, self.button_width, self.rect.height)
-            if rect.collidepoint(ev.pos):
-                self.action(obj)
-                return True
-        return False
-
 class TransportBar:
     def __init__(self, editor):
         self.editor = editor
@@ -649,22 +619,22 @@ class TrackLayout:
         self.calculate_brush_lanes()
         self.brush_offset = offset
         self.offset = offset = offset + 15 + (self.brush_heights[self.doc] - 15)
-        max_lanes = 1 + max(
-           [g.lane for g in self.doc.graphs]
-           + [df.lane for df in self.doc.drawfuncs], default=0)
-        heights = [self.LANE_HEIGHT] * max_lanes
-        graphs = [None] * max_lanes
-        for g in self.doc.graphs:
-            heights[g.lane] = (g.staves + g.margin_above + g.margin_below) * self.STAVE_HEIGHT
-            graphs[g.lane] = g
-        drawfuncs = [[] for _ in range(max_lanes)]
-        for df in self.doc.drawfuncs:
-            drawfuncs[df.lane].append(df)
-        lanes = []
-        for i, h in enumerate(heights):
-            lanes.append((offset, h, drawfuncs[i], graphs[i]))
-            offset += h
-        self.lanes = lanes
+        #max_lanes = 1 + max(
+        #   [g.lane for g in self.doc.graphs]
+        #   + [df.lane for df in self.doc.drawfuncs], default=0)
+        #heights = [self.LANE_HEIGHT] * max_lanes
+        #graphs = [None] * max_lanes
+        #for g in self.doc.graphs:
+        #    heights[g.lane] = (g.staves + g.margin_above + g.margin_below) * self.STAVE_HEIGHT
+        #    graphs[g.lane] = g
+        #drawfuncs = [[] for _ in range(max_lanes)]
+        #for df in self.doc.drawfuncs:
+        #    drawfuncs[df.lane].append(df)
+        #lanes = []
+        #for i, h in enumerate(heights):
+        #    lanes.append((offset, h, drawfuncs[i], graphs[i]))
+        #    offset += h
+        #self.lanes = lanes
 
     def calculate_brush_lanes(self):
         self.clip_lanes = {}
@@ -786,28 +756,28 @@ class TrackLayout:
         #screen.set_clip(pygame.Rect(0, 15 + 15, self.SCREEN_WIDTH, self.SCREEN_HEIGHT - 15 + 15))
 
         pygame.draw.line(screen, (40, 40, 40), (0, self.offset - vs), (SCREEN_WIDTH, self.offset - vs))
-        for y, height, drawfuncs, graph in self.lanes:
-            y -= vs
-            for k, df in enumerate(drawfuncs):
-                ok = editor.validate(df)
-                text = font.render(df.tag, True, [(255, 100, 100), (200, 200, 200)][ok])
-                screen.blit(text, (10, y + 15 * k))
+        #for y, height, drawfuncs, graph in self.lanes:
+        #    y -= vs
+        #    for k, df in enumerate(drawfuncs):
+        #        ok = editor.validate(df)
+        #        text = font.render(df.tag, True, [(255, 100, 100), (200, 200, 200)][ok])
+        #        screen.blit(text, (10, y + 15 * k))
 
-                if df.tag == editor.lane_tag:
-                    center_x = editor.MARGIN - 15
-                    center_y = y + 15 * k + 8
-                    draw_diamond(screen, (0, 255, 0), (center_x, center_y), (4, 4))
+        #        if df.tag == editor.lane_tag:
+        #            center_x = editor.MARGIN - 15
+        #            center_y = y + 15 * k + 8
+        #            draw_diamond(screen, (0, 255, 0), (center_x, center_y), (4, 4))
 
-            if isinstance(graph, PitchLane):
-                y += graph.margin_above * self.STAVE_HEIGHT
-                for _ in range(graph.staves):
-                    for p in range(2, 12, 2):
-                        pygame.draw.line(screen, (70, 70, 70), (editor.MARGIN, y + p*(self.STAVE_HEIGHT / 12)), (SCREEN_WIDTH, y + p*(self.STAVE_HEIGHT / 12)))
-                    y += self.STAVE_HEIGHT
-                y += graph.margin_below * self.STAVE_HEIGHT
-            else:
-                y += height
-            pygame.draw.line(screen, (40, 40, 40), (0, y), (SCREEN_WIDTH, y))
+        #    if isinstance(graph, PitchLane):
+        #        y += graph.margin_above * self.STAVE_HEIGHT
+        #        for _ in range(graph.staves):
+        #            for p in range(2, 12, 2):
+        #                pygame.draw.line(screen, (70, 70, 70), (editor.MARGIN, y + p*(self.STAVE_HEIGHT / 12)), (SCREEN_WIDTH, y + p*(self.STAVE_HEIGHT / 12)))
+        #            y += self.STAVE_HEIGHT
+        #        y += graph.margin_below * self.STAVE_HEIGHT
+        #    else:
+        #        y += height
+        #    pygame.draw.line(screen, (40, 40, 40), (0, y), (SCREEN_WIDTH, y))
 
         for i in range(editor.BARS_VISIBLE + 1):
             x = i * w + editor.MARGIN
