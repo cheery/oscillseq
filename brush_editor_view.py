@@ -1,6 +1,7 @@
 from model import Entity, ControlPoint, Key, Clip, NoteGen, Tracker, Cell, PianoRoll, Staves, Grid, Document, json_to_brush
 from view_editor_view import layout_lanes, draw_editparams
 from components import ContextMenu
+from fractions import Fraction
 import collections
 import measure
 import pygame
@@ -405,6 +406,112 @@ class TrackEditorView:
         w = (SCREEN_WIDTH - editor.MARGIN) / editor.BARS_VISIBLE
         x = editor.MARGIN
 
+        durations = tracker.rhythm.durations(tracker.duration)
+        spans = []
+        tuplets = []
+        values  = []
+        ties    = []
+        def layout_notes(ix, tree, duration):
+            ix0 = ix
+            o = tree.count_o() + 1
+            if len(tree) == 0:
+                if tree.label == "r":
+                    values.append(-duration)
+                    spans.append(durations[tree])
+                    ix += 1
+                elif tree.label == "n":
+                    values.append(+duration)
+                    spans.append(durations[tree])
+                    ix += 1
+                elif tree.label == "s":
+                    ties.append(ix - 1)
+                    values.append(+duration)
+                    spans.append(durations[tree])
+                    ix += 1
+            else:
+                for subtree in tree:
+                    ix = layout_notes(ix, subtree, duration / 2)
+            if (len(tree) > 0 or o > 1) and ix0 < ix:
+                if len(tuplets) > 0 and tuplets[0][2] == ix0 and tuplets[0][3] == ix-1:
+                    pass
+                else:
+                    tuplets.insert(0, (len(tree), o, ix0, ix - 1, duration / 2))
+            return ix
+        layout_notes(0, tracker.rhythm, Fraction(tracker.duration))
+
+        px = x
+        points = []
+        for duration, span in zip(values, spans):
+            cx = px + float(span)*w*0.5
+            points.append(cx + 3)
+            px += abs(span)*w
+
+        depths = [0]*len(points)
+        flags = [0]*len(points)
+        flaglines = set()
+        py = 50
+        for tot, rat, ix0, ix1, duration in tuplets:
+            x0 = points[ix0]
+            x1 = points[ix1]
+            d0 = max(depths[ix0:ix1+1])
+
+            if all(abs(d) <= duration for d in values[ix0:ix1+1]):
+                k = -1
+                d = duration*4
+                while d < 1:
+                    d *= 2
+                    k += 1
+                    flaglines.add((x0, x1, k))
+                for i in range(ix0,ix1+1):
+                    flags[i] = max(flags[i], k)
+
+            if tot == 2 and rat == 1:
+                continue
+            for i in range(ix0,ix1+1):
+                depths[i] += 1
+            text = f"{tot}" if rat == 1 else f"{tot}:{rat}"
+            text = font.render(text, True, (200,200,200))
+            px0 = (x0+x1 - text.get_width()) / 2
+            px1 = px0 + text.get_width()
+            screen.blit(text, (px0, py + d0*15))
+            pygame.draw.rect(screen, (200, 200, 200), (x0,  py+5 + d0*15, px0-x0, 2))
+            pygame.draw.rect(screen, (200, 200, 200), (px1, py+5 + d0*15, x1-px1, 2))
+            pygame.draw.rect(screen, (200, 200, 200), (x0,  py+5 + d0*15, 1, 4))
+            pygame.draw.rect(screen, (200, 200, 200), (x1-1,py+5 + d0*15, 1, 4))
+        py += max(depths)*15
+
+        stem = 16
+        px = x
+        py += stem
+        for x0, x1, k in flaglines:
+            pygame.draw.rect(screen, (200, 200, 200), (x0, py-stem + k*3, x1-x0, 2))
+
+        for ix in ties:
+            x0 = points[ix]
+            x1 = points[ix+1]
+            pygame.draw.lines(screen, (200, 200, 200), False, [
+                (x0, py + 8),
+                ((x0+x1)/2, py + 12),
+                (x1, py + 8)
+            ])
+
+        for i, (duration, span) in enumerate(zip(values, spans)):
+            cx, cy = (px + float(span)*w*0.5, py)
+            if duration <= 0:
+                pygame.draw.rect(screen, (200, 200, 200), (cx-4, cy-4, 8, 8), 0 if abs(duration)*2 < 1 else 1)
+            else:
+                pygame.draw.circle(screen, (200, 200, 200), (cx, cy), 4, 0 if abs(duration)*2 < 1 else 1)
+            if abs(duration) < 1:
+                pygame.draw.rect(screen, (200, 200, 200), (cx+2, cy-stem, 2, stem), 0)
+            duration = abs(duration)
+            k = 0
+            while duration*4 < 1:
+                if flags[i] < k:
+                    pygame.draw.rect(screen, (200, 200, 200), (cx+2, cy-stem + k*3, 5, 2), 0)
+                duration *= 2
+                k += 1
+            px += abs(span)*w
+
         # TODO: Instead of drawing a tree, draw notes.
         extra = {}
         def draw_tree(x, y, span, tree):
@@ -429,7 +536,7 @@ class TrackEditorView:
                     rect = pygame.Rect(x + i*w + w/2 - 1, y, 2, 3)
                     pygame.draw.rect(screen, color, rect)
                     draw_tree(x + i*w, y+3, w, stree)
-        draw_tree(x, 15 + 3, min(4, tracker.duration)*w, tracker.rhythm)
+        draw_tree(x, 15 + 3, tracker.duration*w, tracker.rhythm)
 
         rhythm = tracker.rhythm.to_events(0, tracker.duration)
 

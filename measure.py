@@ -135,6 +135,15 @@ class Tree:
             return None
         return p_cousin.children[0]
 
+    def count_o(self):
+        p = self
+        count = 0
+        while (p := p.prev_cousin()) is not None:
+            if p.label != "o":
+                break
+            count += 1
+        return count
+
     def durations(self, duration):
         durs = {self: duration}
         for tree in self.subtrees:
@@ -163,6 +172,14 @@ class Tree:
                 leaves.append(leaf.label)
         #assert sum(output) == duration, (sum(output), duration)
         return list(zip(output, leaves))
+
+    # TODO: figure out if this is needed.
+    #def to_edges(self, start, duration):
+    #    edges = [start]
+    #    for duration, label in self.sequence(duration):
+    #        start += duration
+    #        edges.append(start)
+    #    return edges
 
     def to_events(self, start, duration):
         starts, stops = self.offsets(duration, start)

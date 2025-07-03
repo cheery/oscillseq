@@ -301,6 +301,8 @@ class StavesLayout:
                     if args is None:
                         continue
                     pitch = args.get(param, music.Pitch(33))
+                    if not isinstance(pitch, music.Pitch):
+                        pitch = music.Pitch.from_midi(pitch)
                     color = colors[pitch.accidental + 2]
                     if pitch.accidental == acci[pitch.position % 7]:
                         color = (255,255,255)
