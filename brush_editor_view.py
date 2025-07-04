@@ -7,6 +7,7 @@ import measure
 import pygame
 import bisect
 import music
+import math
 
 class BrushEditorView:
     def __init__(self, editor):
@@ -406,85 +407,101 @@ class TrackEditorView:
         w = (SCREEN_WIDTH - editor.MARGIN) / editor.BARS_VISIBLE
         x = editor.MARGIN
 
-        durations = tracker.rhythm.durations(tracker.duration)
-        spans = []
-        tuplets = []
-        values  = []
-        ties    = []
-        def layout_notes(ix, tree, duration):
-            ix0 = ix
-            o = tree.count_o() + 1
-            if len(tree) == 0:
-                if tree.label == "r":
-                    values.append(-duration)
-                    spans.append(durations[tree])
-                    ix += 1
-                elif tree.label == "n":
-                    values.append(+duration)
-                    spans.append(durations[tree])
-                    ix += 1
-                elif tree.label == "s":
-                    ties.append(ix - 1)
-                    values.append(+duration)
-                    spans.append(durations[tree])
-                    ix += 1
+        dtree = tracker.rhythm.make_display_tree()
+        #text = repr(dtree)
+        #text = font.render(text, True, (200,200,200))
+        #screen.blit(text, (20, 80))
+
+        def decompose(n):
+            numerator = n.numerator
+            if numerator in [1,3,7]:
+                return [n]
+            p = Fraction(measure.highest_bit_mask(numerator), n.denominator)
+            p32 = p*3/2
+            if n > p32:
+                return [p32] + decompose(n - p32)
             else:
-                for subtree in tree:
-                    ix = layout_notes(ix, subtree, duration / 2)
-            if (len(tree) > 0 or o > 1) and ix0 < ix:
-                if len(tuplets) > 0 and tuplets[0][2] == ix0 and tuplets[0][3] == ix-1:
-                    pass
-                else:
-                    tuplets.insert(0, (len(tree), o, ix0, ix - 1, duration / 2))
-            return ix
-        layout_notes(0, tracker.rhythm, Fraction(tracker.duration))
+                return [p] + decompose(n - p)
+
+        stem = 16
+        details = {}
+        distances = []
+        values = []
+        shapes = []
+        ties   = []
+        def layout_notes(ix1, dtree, duration, distance):
+            ix0 = ix1
+            if len(dtree.children) == 0:
+                for k, d in enumerate(decompose(duration)):
+                    distances.append(distance * (float(d) / float(duration)))
+                    values.append(d)
+                    if dtree.label == "s" or k > 0:
+                        ties.append(ix1-1)
+                        shapes.append(shapes[-1])
+                    elif dtree.label == "r":
+                        shapes.append('rest')
+                    elif dtree.label == "n":
+                        shapes.append('note')
+                    ix1 += 1
+            else:
+                span = dtree.span
+                distance *= dtree.label / span
+                duration *= dtree.label
+                divider = measure.highest_bit_mask(span)
+                for subtree in dtree.children:
+                    ix1 = layout_notes(ix1, subtree, duration / divider, distance)
+                details[dtree] = ix0, ix1-1, duration, divider, span
+            return ix1
+        layout_notes(0, dtree, Fraction(tracker.duration), tracker.duration)
+
+        # Spacing configuration for note heads
+        p = 20 # width of 1/128th beat note
+        q = 50 # width of 1/1 beat note
+        a = math.log(p / q) / math.log(1 / 128)
 
         px = x
         points = []
-        for duration, span in zip(values, spans):
-            cx = px + float(span)*w*0.5
-            points.append(cx + 3)
-            px += abs(span)*w
+        for value in values:
+            d = q * value ** a
+            cx = px + d*0.5 #float(distance)*w*0.5
+            points.append(cx - 2)
+            px += d #distance*w
+        beams  = [0] * len(points)
 
-        depths = [0]*len(points)
-        flags = [0]*len(points)
-        flaglines = set()
+        #depths = [0]*len(points)
+        #flags = [-1]*len(points)
+        #flaglines = set()
         py = 50
-        for tot, rat, ix0, ix1, duration in tuplets:
-            x0 = points[ix0]
-            x1 = points[ix1]
-            d0 = max(depths[ix0:ix1+1])
 
-            if all(abs(d) <= duration for d in values[ix0:ix1+1]):
-                k = -1
-                d = duration*4
-                while d < 1:
-                    d *= 2
-                    k += 1
-                    flaglines.add((x0, x1, k))
-                for i in range(ix0,ix1+1):
-                    flags[i] = max(flags[i], k)
+        def draw_tuplets(dtree, depth=0):
+            deepest = depth
+            if len(dtree.children) > 0:
+                ix0, ix1, duration, divider, span = details[dtree]
+                draw_tuplet = True
+                if span == divider:
+                    draw_tuplet = False
+                for subtree in dtree.children:
+                    deep = draw_tuplets(subtree, depth+1*draw_tuplet)
+                    deepest = max(deep, deepest)
+                bm = measure.get_beams(duration / divider)
+                for ix in range(ix0+1, ix1+1):
+                    beams[ix] = max(beams[ix], bm)
+                x0 = points[ix0] + 3
+                x1 = points[ix1] + 3
+                if draw_tuplet:
+                    text = f"{span}:{divider}"
+                    text = font.render(text, True, (200,200,200))
+                    px0 = (x0+x1 - text.get_width()) / 2
+                    px1 = px0 + text.get_width()
+                    screen.blit(text, (px0, py + depth*15))
+                    pygame.draw.rect(screen, (200, 200, 200), (x0,  py+5 + depth*15, px0-x0, 2))
+                    pygame.draw.rect(screen, (200, 200, 200), (px1, py+5 + depth*15, x1-px1, 2))
+                    pygame.draw.rect(screen, (200, 200, 200), (x0,  py+5 + depth*15, 1, 4))
+                    pygame.draw.rect(screen, (200, 200, 200), (x1-1,py+5 + depth*15, 1, 4))
+            return deepest
 
-            if tot == 2 and rat == 1:
-                continue
-            for i in range(ix0,ix1+1):
-                depths[i] += 1
-            text = f"{tot}" if rat == 1 else f"{tot}:{rat}"
-            text = font.render(text, True, (200,200,200))
-            px0 = (x0+x1 - text.get_width()) / 2
-            px1 = px0 + text.get_width()
-            screen.blit(text, (px0, py + d0*15))
-            pygame.draw.rect(screen, (200, 200, 200), (x0,  py+5 + d0*15, px0-x0, 2))
-            pygame.draw.rect(screen, (200, 200, 200), (px1, py+5 + d0*15, x1-px1, 2))
-            pygame.draw.rect(screen, (200, 200, 200), (x0,  py+5 + d0*15, 1, 4))
-            pygame.draw.rect(screen, (200, 200, 200), (x1-1,py+5 + d0*15, 1, 4))
-        py += max(depths)*15
-
-        stem = 16
-        px = x
+        py += 15*draw_tuplets(dtree)
         py += stem
-        for x0, x1, k in flaglines:
-            pygame.draw.rect(screen, (200, 200, 200), (x0, py-stem + k*3, x1-x0, 2))
 
         for ix in ties:
             x0 = points[ix]
@@ -495,22 +512,25 @@ class TrackEditorView:
                 (x1, py + 8)
             ])
 
-        for i, (duration, span) in enumerate(zip(values, spans)):
-            cx, cy = (px + float(span)*w*0.5, py)
-            if duration <= 0:
-                pygame.draw.rect(screen, (200, 200, 200), (cx-4, cy-4, 8, 8), 0 if abs(duration)*2 < 1 else 1)
+        px = 0
+        for cx, shape, value, beam in zip(points, shapes, values, beams):
+            hollow = measure.head_is_hollow(value)*1
+            if shape == 'rest':
+                pygame.draw.rect(screen, (200, 200, 200), (cx-4, py-4, 8, 8), hollow)
             else:
-                pygame.draw.circle(screen, (200, 200, 200), (cx, cy), 4, 0 if abs(duration)*2 < 1 else 1)
-            if abs(duration) < 1:
-                pygame.draw.rect(screen, (200, 200, 200), (cx+2, cy-stem, 2, stem), 0)
-            duration = abs(duration)
-            k = 0
-            while duration*4 < 1:
-                if flags[i] < k:
-                    pygame.draw.rect(screen, (200, 200, 200), (cx+2, cy-stem + k*3, 5, 2), 0)
-                duration *= 2
-                k += 1
-            px += abs(span)*w
+                pygame.draw.circle(screen, (200, 200, 200), (cx, py), 4, hollow)
+            if measure.get_magnitude(value) < 1:
+                pygame.draw.rect(screen, (200, 200, 200), (cx+2, py-stem, 2, stem), 0)
+            for i in range(measure.get_beams(value)):
+                if beam > i:
+                    pygame.draw.rect(screen, (200, 200, 200), (px+2, py-stem + i*3, cx-px, 2))
+                elif beam > 0:
+                    pygame.draw.rect(screen, (200, 200, 200), (cx+2-5, py-stem + i*3, 5, 2))
+                else:
+                    pygame.draw.rect(screen, (200, 200, 200), (cx+2, py-stem + i*3, 5, 2))
+            for i in range(measure.get_dots(value)):
+                pygame.draw.circle(screen, (200, 200, 200), (cx+6+i*4, py + 2), 2)
+            px = cx
 
         # TODO: Instead of drawing a tree, draw notes.
         extra = {}

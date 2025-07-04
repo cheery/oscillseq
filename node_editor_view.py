@@ -26,8 +26,9 @@ class NodeEditorView:
     def __init__(self, editor):
         self.editor = editor
         self.tool = NodeEditorTool(self)
-        self.s1 = editor.make_spectroscope(bus=0)
-        self.s2 = editor.make_spectroscope(bus=1)
+        out = editor.server.audio_output_bus_group
+        self.s1 = editor.make_spectroscope(bus=out[0])
+        self.s2 = editor.make_spectroscope(bus=out[1])
         self.layout = layout_gui(self.editor.doc.cells, self.editor.doc.connections, self.editor.definitions)
         self.scroll = np.array([editor.SCREEN_WIDTH,editor.SCREEN_HEIGHT]) / 2
         
