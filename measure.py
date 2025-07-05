@@ -250,29 +250,6 @@ class Tree:
             self = self.children[i]
         return self
 
-    def make_display_tree(self):
-        self = self.copy()
-        if len(self) > 0:
-            self.label = 1
-        for tree in self.subtrees:
-            if len(tree) > 0:
-                tree.label = 1
-        for tree in self.subtrees:
-            while len(tree) > 0:
-                cousin = tree.prev_cousin()
-                if cousin is not None and cousin.label == "o":
-                    cousin.label = 1
-                    tree.prune_cousin()
-                else:
-                    break
-        def convert(tree):
-            if all(isinstance(x.label, int) for x in tree):
-                divisor = math.gcd(*(x.label for x in tree))
-                for x in tree:
-                    x.label //= divisor
-            return DTree(tree.label, list(map(convert, tree.children)))
-        return convert(self)
-
     def prune_cousin(self):
         siblings = self.parent.children
         idx = siblings.index(self)
@@ -503,40 +480,3 @@ def from_string(s):
         return StepRhyhm(bits)
 
     return Tree.from_string(s)
-
-
-class DTree:
-    def __init__(self, label, children):
-        self.label = label
-        self.children = children
-
-    @property
-    def span(self):
-        return sum(x.label if isinstance(x.label, int) else 1 for x in self.children)
-
-    def __repr__(self):
-        if len(self.children) == 0:
-            return str(self.label)
-        return f"{self.label}({''.join(map(repr, self.children))})"
-
-def highest_bit(n):
-    return n.bit_length() - 1
-
-def highest_bit_mask(n):
-    return 1 << n.bit_length() - 1
-
-def get_dots(n):
-    if n.numerator == 3:
-        return 1
-    if n.numerator == 7:
-        return 2
-    return 0
-
-def get_magnitude(n):
-    return Fraction(highest_bit_mask(n.numerator), n.denominator)
-
-def head_is_hollow(n):
-    return get_magnitude(n)*2 >= 1
-
-def get_beams(n):
-    return max(0, highest_bit(get_magnitude(n).denominator) - 2)
