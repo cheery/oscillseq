@@ -21,6 +21,7 @@ import spectroscope
 from brush_editor_view import BrushEditorView, modify
 from node_editor_view import NodeEditorView
 from view_editor_view import ViewEditorView
+from rewrite_view import RewriteView
 
 class DummyView:
     def __init__(self, editor):
@@ -183,7 +184,7 @@ class Editor:
         self.lane_tag = None
         self.layout = TrackLayout(self.doc, offset = 30)
 
-        self.view = NodeEditorView(self)
+        self.view = RewriteView(self)
 
     def refresh_layout(self):
         if self.transport_status != 3:

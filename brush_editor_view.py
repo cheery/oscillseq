@@ -408,11 +408,11 @@ class TrackEditorView:
         w = (SCREEN_WIDTH - editor.MARGIN) / editor.BARS_VISIBLE
         x = editor.MARGIN
 
-        euc = measure.EuclideanRhythm(5, 18, 0)
-        dtree = DTree.from_seq(euc.to_step_sequence().table)
-        notes = NoteLayout(dtree, tracker.duration, 
-            (x, 200), tracker.duration*w, "linear")
-        notes.draw(screen, font)
+        #euc = measure.EuclideanRhythm(5, 18, 0)
+        #dtree = DTree.from_seq(euc.to_step_sequence().table)
+        #notes = NoteLayout(dtree, tracker.duration, 
+        #    (x, 200), tracker.duration*w, "linear")
+        #notes.draw(screen, font)
 
         dtree = DTree.from_tree(tracker.rhythm)
         notes = NoteLayout(dtree, tracker.duration, 

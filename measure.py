@@ -5,6 +5,7 @@ from fractions import Fraction
 import itertools
 import re
 import math
+import bisect
 
 primes = [2,3,5,7,11]
 
@@ -96,6 +97,18 @@ class Tree:
         visit(self)
         return output
 
+    # checks whether shifting this element up/down will shear it.
+    def shear(self):
+        a = any(x.is_chained() for x in self.down(0))
+        b = any(x.is_chain() for x in self.down(-1))
+        return a and b
+
+    def down(self, side=0):
+        yield self
+        while len(self) > 0:
+            self = self.children[side]
+            yield self
+
     @property
     def first_leaf(self):
         while len(self) > 0:
@@ -108,9 +121,12 @@ class Tree:
             self = self.children[-1]
         return self
 
+    def is_chain(self):
+        return len(self) == 0 and self.label == 'o'
+
     def is_chained(self):
         cousin = self.prev_cousin()
-        return cousin is not None and len(cousin) == 0 and cousin.label == "o"
+        return cousin is not None and cousin.is_chain()
 
     def prev_cousin(self):
         if self.parent is None:
@@ -124,14 +140,16 @@ class Tree:
             return None
         return p_cousin.children[-1]
 
-    def next_cousin(self):
+    def next_cousin(self, check=False):
         if self.parent is None:
+            return None
+        if check and self.parent.is_chained():
             return None
         siblings = self.parent.children
         idx = siblings.index(self)
         if idx + 1 < len(siblings):
             return siblings[idx+1]
-        p_cousin = self.parent.next_cousin()
+        p_cousin = self.parent.next_cousin(check)
         if p_cousin is None or len(p_cousin) == 0:
             return None
         return p_cousin.children[0]
@@ -211,7 +229,7 @@ class Tree:
         for tree in self.subtrees:
             sdur = tree.sdur()
             if len(tree) == 0 and tree.label == "o":
-                cousin = tree.next_cousin()
+                cousin = tree.next_cousin(check=True)
                 if cousin is None:
                     return False
                 assert cousin.prev_cousin() == tree
@@ -262,25 +280,41 @@ class Tree:
         for x in a.children:
             x.parent = self
 
+    @property
+    def penalty(self):
+        if self.label == "s":
+            return 1
+        if self.label == "o":
+            return 0.01
+        if self.label == "r":
+            return 0.1
+        if self.label == "n":
+            return 0.1
+        c = primes.index(len(self)) * 0.1 + 0.1
+        return c + sum(x.penalty for x in self)
+
+def just_expansions(tree):
+    for i, stree in enumerate(tree.branches):
+        for p in primes:
+            if not any(x.shear() for x in stree):
+                deriv = tree.copy()
+                expansion(deriv.branches[i], p)
+                yield deriv
+
 def expansions(tree):
     for i, stree in enumerate(tree.branches):
         for p in primes:
-            if len(stree) != p and stree.last_leaf.label != "o":
-                c = stree.children[0].prev_cousin()
-                if c is not None and c.last_leaf.label == "o":
-                    continue
+            if not any(x.shear() for x in stree):
                 deriv = tree.copy()
                 expansion(deriv.branches[i], p)
-                if deriv.is_valid():
-                    #print('OLD', repr(tree))
-                    #print('OLDK', repr(tree.branches[i]))
-                    #print('NEW', repr(deriv))
-                    #print('NEWK', repr(deriv.branches[i]))
-                    #neu = deriv.sequence(Fraction(1))
-                    #print('orig', tree.sequence(Fraction(1)))
-                    #assert orig == neu, neu
-                    deriv = normalization(deriv)
-                    yield deriv
+                yield deriv
+        if (deriv := leaf_rewrite(tree, i, stree,
+                ("rs", "rr"), ("or", "rr"), ("os", "ss"), ("on", "ns"))) is not None:
+            yield deriv
+        if (deriv := branch_fold(tree, i, stree)) is not None:
+            yield deriv
+        if (deriv := rechain(tree, i, stree)) is not None:
+            yield deriv
 
 def expansion(tree, p):
     a = len(tree)
@@ -295,85 +329,83 @@ def expansion(tree, p):
         tree.children.append(child)
         child.parent = tree
 
-def normalization(tree):
-    neu = tree.copy()
-    while normalization_step(neu):
-        assert neu.is_valid()
-        tree = neu
-        #neu = tree.sequence(Fraction(1))
-        #assert orig == neu, neu
-        neu = tree.copy()
-    return tree
+def leaf_rewrite(tree, i, stree, *orgnew):
+    if len(stree) == 0:
+        cousin = stree.next_cousin()
+        if cousin is not None and len(cousin) == 0:
+            pat = stree.label + cousin.label
+            for org, new in orgnew:
+                if pat == org:
+                    deriv = tree.copy()
+                    deriv.branches[i].label = new[0]
+                    deriv.branches[i].next_cousin().label = new[1]
+                    return deriv
 
-def normalization_step(tree):
-    if len(tree) == 0:
-        if tree.label == "r":
-            cousin = tree.next_cousin()
-            if cousin is not None and len(cousin) == 0 and cousin.label == "s":
-                cousin.label = "r"
-                return True
-        if tree.label == "o":
-            cousin = tree.next_cousin()
-            if cousin is not None and len(cousin) == 0 and cousin.label == "r":
-                tree.label = "r"
-                return True
-            if cousin is not None and len(cousin) == 0 and cousin.label == "s":
-                tree.label = "s"
-                return True
-            if cousin is not None and len(cousin) == 0 and cousin.label == "n":
-                tree.label = "n"
-                cousin.label = "s"
-                return True
-    else:
-        first = tree.children[0]
-        if not first.is_chained():
-            if all(len(stree) == 0 and stree.label == "r" for stree in tree):
-                tree.children = []
-                tree.label = "r"
-                return True
-            if all(len(stree) == 0 and stree.label == "s" for stree in tree):
-                tree.children = []
-                tree.label = "s"
-                return True
-            if all(len(stree) == 0 and stree.label == "s" for stree in tree.children[1:]) and len(first) == 0 and first.label == "n":
-                tree.children = []
-                tree.label = "n"
-                return True
-        chain = [tree]
-        cousin = tree.prev_cousin()
+def branch_fold(tree, i, stree):
+    if not stree.shear() and len(stree) > 0:
+        fold_to = None
+        if all(len(s) == 0 and s.label == "r" for s in stree):
+            fold_to = "r"
+        if all(len(s) == 0 and s.label == "s" for s in stree):
+            fold_to = "s"
+        if all(len(s) == 0 and s.label == "s" for s in stree.children[1:]) and len(stree.children[0]) == 0 and stree.children[0].label == "n":
+            fold_to = "n"
+        if fold_to is not None:
+            deriv = tree.copy()
+            deriv.branches[i].label = fold_to
+            deriv.branches[i].chilren = []
+            return deriv
+
+def rechain(tree, i, stree):
+    if len(stree) == 0:
+        return
+    def get_chain(stree):
+        chain = [stree]
+        cousin = stree.prev_cousin()
         while cousin is not None and len(cousin) == 0 and cousin.label == "o":
             chain.insert(0, cousin)
             cousin = cousin.prev_cousin()
-        total = len(chain)
-        if total % len(tree) == 0:
-            k = total // len(tree)
-            for i, subtree in enumerate(tree, 1):
-                this = chain[k*i - 1]
-                this.label = subtree.label
-                this.children = subtree.children
-                for child in subtree.children:
-                    child.parent = this
-            return True
-    return any(normalization_step(stree) for stree in tree)
+        return chain
+    chain = get_chain(stree)
+    total = len(chain)
+    if total % len(stree) == 0:
+        deriv = tree.copy()
+        stree = deriv.branches[i]
+        chain = get_chain(stree)
+        k = total // len(stree)
+        for i, subtree in enumerate(stree, 1):
+            this = chain[k*i - 1]
+            this.label = subtree.label
+            this.children = subtree.children
+            for child in subtree.children:
+                child.parent = this
+        return deriv
 
 def simplify(tree):
-    tree = tree.copy()
-    orig = tree.sequence(Fraction(1))
-    #print("input:", tree)
-    tree = normalization(tree)
-    #print("normalized:", tree)
-    progress = True
-    while progress:
-        progress = False
-        for exp in expansions(tree):
-            if len(str(tree)) > len(str(exp)):
-                #print("better expansion:", exp)
-                tree = exp
-                progress = True
-    neu = tree.sequence(Fraction(1))
-    if orig != neu:
-        return None
-    return tree
+    best = tree.penalty
+    result = tree
+    queue = [(best, tree)]
+    visited = {str(tree)}
+
+    orig = result.sequence(Fraction(1))
+    while queue:
+        pen, this = queue.pop(0)
+        if pen < best:
+            result = this
+            best = pen
+        for exp in expansions(this):
+            pen = exp.penalty
+            if pen - best > 0.5:
+                continue
+            s_exp = str(exp)
+            if s_exp in visited:
+                continue
+            visited.add(s_exp)
+            bisect.insort(queue, ((pen, exp)), key=lambda x: x[0])
+    
+    neu = result.sequence(Fraction(1))
+    assert orig == neu
+    return result
 
 def trees_offsets(durations, trees, start = 0.0):
     starts = []

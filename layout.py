@@ -11,24 +11,31 @@ class DTree:
     @classmethod
     def from_tree(cls, this):
         this = this.copy()
+        assert this.is_valid()
         if len(this) > 0:
             this.label = 1
         for tree in this.subtrees:
             if len(tree) > 0:
                 tree.label = 1
         for tree in this.subtrees:
-            while len(tree) > 0:
+            if tree.is_chain():
+                continue
+            cousin = tree.prev_cousin()
+            if cousin is not None and len(tree) == 0:
+                tree.children.append(measure.Tree(tree.label))
+                tree.children[0].parent = tree
+                tree.label = 1
+            while cousin is not None and cousin.is_chain():
+                cousin.label = 1
+                tree.prune_cousin()
                 cousin = tree.prev_cousin()
-                if cousin is not None and cousin.label == "o":
-                    cousin.label = 1
-                    tree.prune_cousin()
-                else:
-                    break
         def convert(tree):
             if all(isinstance(x.label, int) for x in tree):
                 divisor = math.gcd(*(x.label for x in tree))
                 for x in tree:
                     x.label //= divisor
+            if len(tree.children) == 1 and tree.label == 1:
+                return convert(tree.children[0])
             return DTree(tree.label, list(map(convert, tree.children)))
         return convert(this)
 
