@@ -143,12 +143,12 @@ class Tree:
     def next_cousin(self, check=False):
         if self.parent is None:
             return None
-        if check and self.parent.is_chained():
-            return None
         siblings = self.parent.children
         idx = siblings.index(self)
         if idx + 1 < len(siblings):
             return siblings[idx+1]
+        if check and self.parent.is_chained():
+            return None
         p_cousin = self.parent.next_cousin(check)
         if p_cousin is None or len(p_cousin) == 0:
             return None
@@ -293,21 +293,14 @@ class Tree:
         c = primes.index(len(self)) * 0.1 + 0.1
         return c + sum(x.penalty for x in self)
 
-def just_expansions(tree):
-    for i, stree in enumerate(tree.branches):
-        for p in primes:
-            if not any(x.shear() for x in stree):
-                deriv = tree.copy()
-                expansion(deriv.branches[i], p)
-                yield deriv
-
 def expansions(tree):
     for i, stree in enumerate(tree.branches):
         for p in primes:
             if not any(x.shear() for x in stree):
                 deriv = tree.copy()
                 expansion(deriv.branches[i], p)
-                yield deriv
+                if deriv.is_valid():
+                    yield deriv
         if (deriv := leaf_rewrite(tree, i, stree,
                 ("rs", "rr"), ("or", "rr"), ("os", "ss"), ("on", "ns"))) is not None:
             yield deriv
@@ -381,31 +374,51 @@ def rechain(tree, i, stree):
                 child.parent = this
         return deriv
 
-def simplify(tree):
-    best = tree.penalty
-    result = tree
-    queue = [(best, tree)]
-    visited = {str(tree)}
+import random
 
-    orig = result.sequence(Fraction(1))
-    while queue:
-        pen, this = queue.pop(0)
-        if pen < best:
-            result = this
-            best = pen
-        for exp in expansions(this):
-            pen = exp.penalty
-            if pen - best > 0.5:
-                continue
-            s_exp = str(exp)
-            if s_exp in visited:
-                continue
-            visited.add(s_exp)
-            bisect.insort(queue, ((pen, exp)), key=lambda x: x[0])
-    
-    neu = result.sequence(Fraction(1))
-    assert orig == neu
-    return result
+def random_step(tree):
+    weights = [1 / tree.penalty]
+    choices = [tree]
+    for exp in expansions(tree):
+        weights.append(1 / exp.penalty)
+        choices.append(exp)
+    return random.choices(choices, weights=weights, k=1)[0]
+
+def walk_down(tree, pen):
+    for exp in expansions(tree):
+        p = exp.penalty
+        if p < pen:
+            return walk_down(exp, p)
+    return tree
+
+def simplify(tree):
+    print(tree)
+    orig = tree.penalty
+    for i in range(10):
+        tree = random_step(tree)
+        tree = walk_down(tree, tree.penalty)
+        assert tree.is_valid(), str(tree)
+    print("SCORE", orig - tree.penalty, tree)
+    return tree
+    #orig = tree.penalty
+    #best = tree.penalty
+    #result = tree
+    #queue = [(best, tree)]
+    #visited = {str(tree)}
+    #while queue:
+    #    pen, this = queue.pop(0)
+    #    if pen < best:
+    #        result = this
+    #        best = pen
+    #    for exp in expansions(this):
+    #        pen = exp.penalty
+    #        s_exp = str(exp)
+    #        if s_exp in visited:
+    #            continue
+    #        visited.add(s_exp)
+    #        #bisect.insort(queue, ((pen, exp)), key=lambda x: x[0])
+    #print("improvement:", orig - best)
+    #return result
 
 def trees_offsets(durations, trees, start = 0.0):
     starts = []
@@ -512,3 +525,5 @@ def from_string(s):
         return StepRhyhm(bits)
 
     return Tree.from_string(s)
+
+assert from_string("3no3son") is not None
