@@ -26,6 +26,14 @@ class Tree:
     def copy(self):
         return Tree(self.label, [c.copy() for c in self])
 
+    def pinpoint(self, path):
+        if path:
+            ix = path[0]
+            head = '0123456789ab'[len(self)] + "".join(map(repr, self.children[:ix]))
+            tail = "".join(map(repr, self.children[ix+1:]))
+            return head + "{" + self.children[ix].pinpoint(path[1:]) + "}" + tail
+        return repr(self)
+
     def __str__(self):
         if len(self) == 0:
             return f"{self.label}"
@@ -101,7 +109,7 @@ class Tree:
     def shear(self):
         a = any(x.is_chained() for x in self.down(0))
         b = any(x.is_chain() for x in self.down(-1))
-        return a and b
+        return a or b
 
     def down(self, side=0):
         yield self
@@ -122,10 +130,12 @@ class Tree:
         return self
 
     def is_chain(self):
+        #print("is chain:", self.root.pinpoint(self.get_path()), len(self) == 0 and self.label == 'o')
         return len(self) == 0 and self.label == 'o'
 
     def is_chained(self):
         cousin = self.prev_cousin()
+        #print("is chained:", self.root.pinpoint(self.get_path()), cousin is not None and cousin.is_chain())
         return cousin is not None and cousin.is_chain()
 
     def prev_cousin(self):
@@ -225,23 +235,28 @@ class Tree:
         if len(self) == 0 and (self.label == "n" or self.label == "r"):
             return True
         if len(self) not in primes:
+            print("prime violation")
             return False
         for tree in self.subtrees:
             sdur = tree.sdur()
             if len(tree) == 0 and tree.label == "o":
                 cousin = tree.next_cousin(check=True)
                 if cousin is None:
+                    print("no cousin on 'o'", tree.root.pinpoint(tree.get_path()))
                     return False
                 assert cousin.prev_cousin() == tree
                 c_sdur = cousin.sdur()
                 if sdur != c_sdur:
+                    print("inconsistent sdur on 'o'")
                     return False
             if len(tree) > 0 and len(tree) not in primes:
+                print("prime violation")
                 return False
         for leaf in self.leaves:
             if leaf.label == "o":
                 continue
             elif leaf.label == "s":
+                print("starts with a slur")
                 return False
             else:
                 return True
@@ -280,33 +295,28 @@ class Tree:
         for x in a.children:
             x.parent = self
 
-    @property
-    def penalty(self):
-        if self.label == "s":
-            return 1
-        if self.label == "o":
-            return 0.01
-        if self.label == "r":
-            return 0.1
-        if self.label == "n":
-            return 0.1
-        c = primes.index(len(self)) * 0.1 + 0.1
-        return c + sum(x.penalty for x in self)
+    def score(self, costmap):
+        if len(self) == 0:
+            return costmap[self.label]
+        else:
+            return costmap[len(self)] + sum(x.score(costmap) for x in self)
 
-def expansions(tree):
-    for i, stree in enumerate(tree.branches):
-        for p in primes:
-            if not any(x.shear() for x in stree):
-                deriv = tree.copy()
-                expansion(deriv.branches[i], p)
-                if deriv.is_valid():
+def equivalences(tree):
+    for subtree in [tree] + tree.subtrees:
+        if len(subtree) > 0 and not any(x.shear() for x in subtree):
+            for p in primes:
+                if len(subtree) != p:
+                    a = subtree.get_path()
+                    deriv = tree.copy()
+                    expansion(deriv.access(a), p)
+                    #assert deriv.is_valid(), (deriv, tree)
                     yield deriv
-        if (deriv := leaf_rewrite(tree, i, stree,
+        if (deriv := leaf_rewrite(tree, subtree,
                 ("rs", "rr"), ("or", "rr"), ("os", "ss"), ("on", "ns"))) is not None:
             yield deriv
-        if (deriv := branch_fold(tree, i, stree)) is not None:
+        if (deriv := branch_fold(tree, subtree)) is not None:
             yield deriv
-        if (deriv := rechain(tree, i, stree)) is not None:
+        if (deriv := rechain(tree, subtree)) is not None:
             yield deriv
 
 def expansion(tree, p):
@@ -322,19 +332,21 @@ def expansion(tree, p):
         tree.children.append(child)
         child.parent = tree
 
-def leaf_rewrite(tree, i, stree, *orgnew):
+def leaf_rewrite(tree, stree, *orgnew):
     if len(stree) == 0:
         cousin = stree.next_cousin()
         if cousin is not None and len(cousin) == 0:
             pat = stree.label + cousin.label
             for org, new in orgnew:
                 if pat == org:
+                    a = stree.get_path()
                     deriv = tree.copy()
-                    deriv.branches[i].label = new[0]
-                    deriv.branches[i].next_cousin().label = new[1]
+                    stree = deriv.access(a)
+                    stree.label = new[0]
+                    stree.next_cousin().label = new[1]
                     return deriv
 
-def branch_fold(tree, i, stree):
+def branch_fold(tree, stree):
     if not stree.shear() and len(stree) > 0:
         fold_to = None
         if all(len(s) == 0 and s.label == "r" for s in stree):
@@ -344,12 +356,14 @@ def branch_fold(tree, i, stree):
         if all(len(s) == 0 and s.label == "s" for s in stree.children[1:]) and len(stree.children[0]) == 0 and stree.children[0].label == "n":
             fold_to = "n"
         if fold_to is not None:
+            a = stree.get_path()
             deriv = tree.copy()
-            deriv.branches[i].label = fold_to
-            deriv.branches[i].chilren = []
+            stree = deriv.access(a)
+            stree.label = fold_to
+            stree.children = []
             return deriv
 
-def rechain(tree, i, stree):
+def rechain(tree, stree):
     if len(stree) == 0:
         return
     def get_chain(stree):
@@ -362,8 +376,9 @@ def rechain(tree, i, stree):
     chain = get_chain(stree)
     total = len(chain)
     if total % len(stree) == 0:
+        a = stree.get_path()
         deriv = tree.copy()
-        stree = deriv.branches[i]
+        stree = deriv.access(a)
         chain = get_chain(stree)
         k = total // len(stree)
         for i, subtree in enumerate(stree, 1):
@@ -379,46 +394,42 @@ import random
 def random_step(tree):
     weights = [1 / tree.penalty]
     choices = [tree]
-    for exp in expansions(tree):
+    for exp in equivalences(tree):
         weights.append(1 / exp.penalty)
         choices.append(exp)
     return random.choices(choices, weights=weights, k=1)[0]
 
 def walk_down(tree, pen):
-    for exp in expansions(tree):
+    for exp in equivalences(tree):
         p = exp.penalty
         if p < pen:
             return walk_down(exp, p)
     return tree
 
-def simplify(tree):
-    print(tree)
-    orig = tree.penalty
-    for i in range(10):
-        tree = random_step(tree)
-        tree = walk_down(tree, tree.penalty)
-        assert tree.is_valid(), str(tree)
-    print("SCORE", orig - tree.penalty, tree)
+collapse = { "o": 1.0, "n": 0.1, "r": 0.1, "s": 0.2, 2: 0, 3: 0.1, 5: 0.5, 7: 0.8, 11: 1.0 }
+expand = { "o": 0.1, "n": 0.1, "r": 0.1, "s": 0.2, 2: 0, 3: 0.1, 5: 0.5, 7: 0.8, 11: 1.0 }
+
+def normalize(tree, costmap, score=None):
+    orig = tree.score(costmap) if score is None else score
+    for exp in equivalences(tree):
+        s = exp.score(costmap)
+        if s < orig:
+            return normalize(exp, costmap, s)
     return tree
-    #orig = tree.penalty
-    #best = tree.penalty
-    #result = tree
-    #queue = [(best, tree)]
-    #visited = {str(tree)}
-    #while queue:
-    #    pen, this = queue.pop(0)
-    #    if pen < best:
-    #        result = this
-    #        best = pen
-    #    for exp in expansions(this):
-    #        pen = exp.penalty
-    #        s_exp = str(exp)
-    #        if s_exp in visited:
-    #            continue
-    #        visited.add(s_exp)
-    #        #bisect.insort(queue, ((pen, exp)), key=lambda x: x[0])
-    #print("improvement:", orig - best)
-    #return result
+
+def bump(tree):
+    def fn(tree):
+        tree = normalize(tree, collapse)
+        yield tree.score(expand), tree
+        for exp in equivalences(tree):
+            exp = normalize(exp, collapse)
+            yield exp.score(expand), exp
+    return min(fn(tree), key=lambda k: k[0])[1]
+
+def simplify(tree):
+    tree = bump(tree)
+    tree = normalize(tree, expand)
+    return tree
 
 def trees_offsets(durations, trees, start = 0.0):
     starts = []
@@ -527,3 +538,7 @@ def from_string(s):
     return Tree.from_string(s)
 
 assert from_string("3no3son") is not None
+assert any(x.shear() for x in from_string("23ono3son"))
+print(simplify(from_string("3n2sns")))
+#for tree in equivalences(from_string("3n23snssn")):
+#    print("EQV", tree)
