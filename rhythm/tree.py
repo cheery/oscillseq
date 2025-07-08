@@ -1,3 +1,12 @@
+# We may some day use bouillud's rhythm trees again,
+# but for now they seem to be very troublesome to work with
+# because the quantization into these trees is difficult.
+# I switched to OpenMusic-style trees that can be found
+# in the dtree -module.
+#
+# For now this code remains here because I spent lot of time into it
+# and it may become useful later.
+#
 # https://www.pdonatbouillud.com/project/rythm-quantization/
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Callable, Tuple, Any
@@ -448,97 +457,8 @@ def trees_offsets(durations, trees, start = 0.0):
 #for tree in [tree1, tree2, tree3]:
 #    print(str(tree), Tree.from_string(str(tree)))
 #    print("S:", simplify(tree))
-
-def bjorklund(pulses: int, steps: int) -> list[int]:
-    """
-    Generate a Euclidean rhythm pattern using the Bjorklund algorithm.
-    Returns a list of 1s (onsets) and 0s (rests).
-    """
-    if pulses <= 0:
-        return [0] * steps
-    if pulses >= steps:
-        return [1] * steps
-    # Initialize
-    pattern = [[1] for _ in range(pulses)] + [[0] for _ in range(steps - pulses)]
-    # Repeatedly distribute
-    while True:
-        # Stop when grouping is no longer possible
-        if len(pattern) <= 1:
-            break
-        # Partition into two parts: first group, rest
-        first, rest = pattern[:pulses], pattern[pulses:]
-        if not rest:
-            break
-        # Append each element of rest into first, one by one
-        for i in range(min(len(rest), len(first))):
-            first[i] += rest[i]
-        # Rebuild pattern
-        pattern = first + rest[min(len(first), len(rest)):]
-    # Flatten
-    return list(itertools.chain.from_iterable(pattern))
-
-def rotate(l, n):
-    return l[n:] + l[:n]
-
-class EuclideanRhythm:
-    def __init__(self, pulses, steps, rotation):
-        self.pulses = pulses
-        self.steps = steps
-        self.rotation = rotation
-
-    def to_step_sequence(self):
-        table = rotate(bjorklund(self.pulses, self.steps), self.rotation)
-        return StepRhythm(table)
-
-    def to_events(self, start, duration):
-        return self.to_step_sequence().to_events(start, duration)
-
-    def __str__(self):
-        return f"E({self.pulses}, {self.steps}, {self.rotation})"
-
-class StepRhythm:
-    def __init__(self, table):
-        self.table = table
-
-    def to_events(self, start, duration):
-        events = []
-        duration /= len(self.table)
-        for i, on in enumerate(self.table):
-            if on:
-                events.append((start + i*duration, duration))
-        return events
-
-    def __str__(self):
-        return "".join(map(str, self.table))
-
-_EUC_RE = re.compile(
-    r'^\s*E'
-    r'\(\s*'
-      r'(-?\d+)\s*,\s*'          # pulses
-      r'(-?\d+)\s*,\s*'          # steps
-      r'(-?\d+)\s*'              # rotation (can be negative)
-    r'\)\s*$'
-)
-
-_RAW_RE = re.compile(r'^\s*([01]+)\s*$')
-
-def from_string(s):
-    m = _EUC_RE.match(s)
-    if m:
-        pulses = int(m.group(1))
-        steps  = int(m.group(2))
-        rot    = int(m.group(3))
-        return EuclideanRhythm(pulses, steps, rot)
-
-    m = _RAW_RE.match(s)
-    if m:
-        bits = [int(ch) for ch in m.group(1)]
-        return StepRhyhm(bits)
-
-    return Tree.from_string(s)
-
-assert from_string("3no3son") is not None
-assert any(x.shear() for x in from_string("23ono3son"))
-print(simplify(from_string("3n2sns")))
+#assert from_string("3no3son") is not None
+#assert any(x.shear() for x in from_string("23ono3son"))
+#print(simplify(from_string("3n2sns")))
 #for tree in equivalences(from_string("3n23snssn")):
 #    print("EQV", tree)

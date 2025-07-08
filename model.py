@@ -1,8 +1,8 @@
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Callable, Tuple, Any, Set, Union
 import itertools
-import measure
 import music
+import rhythm
 import json
 import random
 import string
@@ -245,12 +245,12 @@ class Tracker:
     @classmethod
     def from_json(cls, label, obj):
         if 'tree' in obj:
-            rhythm = measure.Tree.from_string(obj["tree"])
+            _rhythm = rhythm.from_string(obj["tree"])
         else:
-            rhythm = measure.from_string(obj["rhythm"])
+            _rhythm = rhythm.from_string(obj["rhythm"])
         return cls(label,
             duration = obj["duration"],
-            rhythm = rhythm,
+            rhythm = _rhythm,
             generators = list(legacy_to_notegens(obj["generators"])),
             view = obj.get("view", None),
         )

@@ -11,7 +11,7 @@ import bisect
 import collections
 import heapq
 import math
-import measure
+import rhythm
 import music
 import os
 import pygame
@@ -641,7 +641,7 @@ class TrackLayout:
                 return
             if isinstance(brush, Clip):
                 process_clip(brush)
-            elif isinstance(brush, Tracker) and isinstance(brush.rhythm, measure.Tree):
+            elif isinstance(brush, Tracker) and isinstance(brush.rhythm, rhythm.Tree):
                 self.brush_heights[brush] = 15 + 3 * (brush.rhythm.depth) + 20
             else:
                 self.brush_heights[brush] = 15
@@ -719,7 +719,7 @@ class TrackLayout:
                 screen.blit(text, (start*w + 10 + editor.MARGIN, y))
                 if isinstance(e.brush, Clip):
                     draw_clip_contents(e.brush, shift + e.shift, y + 15, seli + [e])
-                if isinstance(e.brush, Tracker) and isinstance(e.brush.rhythm, measure.Tree):
+                if isinstance(e.brush, Tracker) and isinstance(e.brush.rhythm, rhythm.Tree):
                     leafs = []
                     extra = {}
                     def draw_tree(x, y, span, tree):
@@ -1186,7 +1186,7 @@ class SequencerEditor:
                         "7nnnnnnn",
                         "222nn2nn22nn2nn",
                     ][n]
-                    n_tree = measure.Tree.from_string(pattern)
+                    n_tree = rhythm.Tree.from_string(pattern)
                     tree.label = n_tree.label
                     tree.children = n_tree.children
                     for child in n_tree.children:
@@ -1205,7 +1205,7 @@ class SequencerEditor:
                     tree.label = "s"
                 k = sum(1 for leaf in tree.leaves if leaf.label == "n")
                 if ev.key == pygame.K_t:
-                    base = measure.simplify(base)
+                    base = rhythm.simplify(base)
                     self.p_selection[1:] = []
                 if base.is_valid():
                     sel.tree = base
@@ -1414,7 +1414,7 @@ class SequencerEditor:
             if setup is None:
                 return
             brush, df, graph = setup
-            tree = measure.simplify(brush.tree.copy())
+            tree = rhythm.simplify(brush.tree.copy())
             if tree and tree.is_valid():
                 brush.tree = tree
 

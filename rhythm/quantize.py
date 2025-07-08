@@ -1,11 +1,13 @@
+from .dtree import DTree, decompose
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Callable, Tuple, Any
 from fractions import Fraction
 import bisect
 import itertools
-import measure
+import rhythm as measure
 import math
+import numpy as np
 
 costs = {2 : 0.2, 4 : 0.3, 3 : 0.4, 6 : 0.5, 8 : 0.6, 5 : 0.7, 7 : 0.8}
 #costs = {2 : 0, 4 : 0.5, 3 : 1, 6 : 2, 8 : 3, 5 : 4, 7 : 5}
@@ -109,6 +111,18 @@ def snap(rt, points):
         offsets.extend([pt]*k)
     return offsets
 
+# indicates which indices were removed, can be used to remap attributes into the new tree.
+def remapper(rt, points):
+    g = grid(rt)
+    ix = []
+    for pt in snap(rt,points):
+        ix.append(bisect.bisect_left(g, pt))
+    rmp = []
+    for i in range(len(ix)-1):
+        if ix[i] < ix[i+1]:
+            rmp.append(i)
+    return rmp
+
 def val(rt, points, m=1):
     fractions = [Fraction(1, iv.denom) for iv in intervals(rt)]
     g = grid(rt)
@@ -121,8 +135,7 @@ def val(rt, points, m=1):
             val.append(m*sum(fractions[ix[i]:ix[i+1]]))
     return val
 
-def dtree(rt, points):
-    from layout import DTree
+def debug_dtree(rt, points):
     s = snaps(rt, points)
     def visit(rt, ix):
         if isinstance(rt, Quant):
@@ -135,19 +148,7 @@ def dtree(rt, points):
             return DTree(1, "n", []) if s[ix] > 0 else DTree(1, "s", []), ix+1
     return visit(rt, 0)[0]
 
-def tree(rt, points):
-    s = snaps(rt, points)
-    def visit(rt, ix):
-        if isinstance(rt, Quant):
-            trees = []
-            for x in rt:
-                tree, ix = visit(x, ix)
-                trees.append(tree)
-            return measure.Tree("", trees), ix
-        else:
-            return measure.Tree("n", []) if s[ix] > 0 else measure.Tree("s", []), ix+1
-    return visit(rt, 0)[0]
-
+# "A Supervised Approach for Rhythm Transcription Based on Tree Series Enumeration"
 class Exhausted(Exception):
     pass
 
@@ -203,97 +204,21 @@ def k_best(k, interval, points, alpha=0.5, beta=0.2, costs=costs):
         except Exhausted:
             break
 
-def quantize_to_val(points, duration, alpha=0.5, beta=0.2):
-    for w, rt in k_best(1, Interval(points[0], points[-1]), points, alpha):
-        return val(rt, points, Fraction(duration))
-
-def quantize_to_dtree(points, alpha=0.5, beta=0.2):
-    for w, rt in k_best(1, Interval(points[0], points[-1]), points, alpha, beta):
-        return dtree(rt, points)
-
-def quantize_to_tree(points, alpha=0.5, beta=0.2):
-    costs = {2 : 0.2, 3 : 0.4, 5 : 0.7, 7 : 0.8, 11 : 0.9}
-    for w, rt in k_best(1, Interval(points[0], points[-1]), points, alpha, beta, costs=costs):
-        return tree(rt, points)
-
-def quantize_to_tree2(points, alpha=0.5, beta=0.2):
-    return measure.simplify(quantize_to_tree(points, alpha, beta))
-
-#def partition(t, arity):
-#    target = sum(v for v,_ in t) / arity
-#    current = 0
-#    part = []
-#    parts = []
-#    penalty = 0
-#    for d, tree in t:
-#        current += d
-#        part.append([d, tree])
-#        while current > target:
-#            penalty += 1
-#            p = current - target
-#            part[-1][0] -= p
-#            parts.append(tuple(map(tuple, part)))
-#            current = p
-#            part = [[p, measure.Tree("s")]]
-#        if current == target:
-#            parts.append(tuple(map(tuple, part)))
-#            current = 0
-#            part = []
-#    return costs[arity]*penalty, parts
+#def quantize_to_val(points, duration, alpha=0.5, beta=0.2):
+#    for w, rt in k_best(1, Interval(points[0], points[-1]), points, alpha):
+#        return val(rt, points, Fraction(duration))
 #
-#def val_to_tree(val, notes=None):
-#    tasks = {}
-#    if notes is None:
-#        notes = [True] * len(val)
-#    val = tuple((v, measure.Tree("n" if w else "r")) for v,w in zip(val, notes))
-#    def fetch(val):
-#        if val in tasks:
-#            return tasks[val]
-#        work = [partition(val, p) + ([],) for p in measure.primes]
-#        work.sort(key=lambda x: x[0])
-#        tasks[val] = task = work
-#        return task
-#    def explore(val, depth=4):
-#        if len(val) == 1:
-#            return 0, val[0][1]
-#        work = fetch(val)
-#        if not isinstance(work, list):
-#            return work
-#        if depth == 0 or not work:
-#            raise Exhausted
-#        penalty, remain, ready = work.pop(0)
-#        while remain:
-#            try:
-#                pen, tree = explore(remain.pop(0), depth-1)
-#            except Exhausted:
-#                if len(work) == 0:
-#                    raise Exhausted
-#                penalty, remain, ready = work.pop(0)
-#                continue
-#            penalty += pen
-#            ready.append(tree)
-#            if work and work[0][0] < penalty:
-#                work.append((penalty, remain, ready))
-#                penalty, remain, ready = work.pop(0)
-#                work.sort(key=lambda x: x[0])
-#        tasks[val] = pt = (penalty, measure.Tree("", ready))
-#        return pt
-#    return explore(val)[1]
-
-#for w, v in quantize_to_val(10, points, 4):
-#    t = val_to_tree(v)
-#    print("TREE", t)
-
-def metric2(iv, quant, points):
-    points = iv.narrow(points, inclusive=True)
-    if len(points) < 2:
-        return 0
-    vs = []
-    for i, v in enumerate(val(quant, points)):
-        factors = factorize(v.denominator)
-        k = math.prod(factors)
-        vs.append(len(decompose(v*k)))
-    return sum(vs)
+#def quantize_to_dtree(points, alpha=0.5, beta=0.2):
+#    for w, rt in k_best(1, Interval(points[0], points[-1]), points, alpha, beta):
+#        return dtree(rt, points)
+#
+#def quantize_to_tree(points, alpha=0.5, beta=0.2):
+#    costs = {2 : 0.2, 3 : 0.4, 5 : 0.7, 7 : 0.8, 11 : 0.9}
+#    for w, rt in k_best(1, Interval(points[0], points[-1]), points, alpha, beta, costs=costs):
+#        return tree(rt, points)
+#
+#def quantize_to_tree2(points, alpha=0.5, beta=0.2):
+#    return measure.simplify(quantize_to_tree(points, alpha, beta))
 
 @dataclass(frozen=True)
 class Boundary:
@@ -517,13 +442,11 @@ def check_path(DTree, quant, points, duration=1):
 
     return DTree(1, "n", [])
 
-import numpy as np
-
-def check_path(DTree, quant, points, duration=1, alpha=0.8):
-    vs = val(quant, points, duration)
+def quant_to_dtree(quant, points, notes, alpha=0.8):
+    vs = val(quant, points)
     N = len(vs)
     if N == 1:
-        return DTree(1, "n", [])
+        return DTree(1, notes[0], [])
     total = sum(vs)
     tuplet_penalty = {2: 0.05, 4: 0.05, 3: 0.13, 5: 0.15, 7: 0.17, 11: 0.2}
     def penalty(xs):
@@ -554,7 +477,7 @@ def check_path(DTree, quant, points, duration=1, alpha=0.8):
     sizes = [vs] + [[0]*(N-k) for k in range(1, N)]
     for i in range(N):
         for n in range(1, 12):
-            estim[n][0][i] = np.array([0, len(decompose(n))])
+            estim[n][0][i] = np.array([0, len(decompose(n))**2])
     for k in range(1, N):
         for i in range(N-k):
             sizes[k][i] = sizes[k-1][i] + sizes[0][i+k]
@@ -563,7 +486,7 @@ def check_path(DTree, quant, points, duration=1, alpha=0.8):
             estim[1][k][i] = min(basis(k,i), key=penalty0)[0]
     def make_tree(k, i, w):
         if k == 0:
-            return DTree(w, "n", [])
+            return DTree(w, notes[i], [])
         pen, n = min(basis(k,i), key=penalty0)
         return DTree(w, None, make_seq(k, i, n))
     def make_seq(k, i, n):
@@ -574,38 +497,7 @@ def check_path(DTree, quant, points, duration=1, alpha=0.8):
             return make_seq(k-1-s, i, jx) + make_seq(s, k+i-s, jy)
     return make_tree(N-1, 0, 1)
 
-def factorize(q):
-    while q & 1 == 0:
-        q >>= 1
-    factors = []
-    for p in (3,5,7,11):
-        cnt = 0
-        while q % p == 0:
-            q //= p
-            cnt += 1
-        factors.extend(p for _ in range(cnt))
-    if q == 1:
-        return factors
-
-def highest_bit_mask(n):
-    return 1 << n.bit_length() - 1
-
-def decompose(n):
-    if n.denominator != highest_bit_mask(n.denominator):
-        return None
-    prefix = []
-    while n > 0:
-        p = Fraction(highest_bit_mask(n.numerator), n.denominator)
-        for p, n in decompose_with(n, p):
-            prefix.append(p)
-            break
-    return prefix
-
-def decompose_with(n, p):
-    p32 = p*3/2
-    p74 = p*7*4
-    for q in [p74,p32,p]:
-        if n >= q:
-            yield q, n - q
-
-assert Boundary(arity=2, count=1, granularity=Fraction(1, 2)).step(Fraction(3, 128)) is None
+def dtree(points, notes, alpha=0.5, beta=0.2, delta=0.8):
+    for w, rt in k_best(1, Interval(points[0], points[-1]), points, alpha, beta):
+        rms = remapper(rt, points)
+        return quant_to_dtree(rt, points, [notes[i] for i in rms]), rms

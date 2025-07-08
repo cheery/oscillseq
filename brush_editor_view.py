@@ -2,9 +2,10 @@ from model import Entity, ControlPoint, Key, Clip, NoteGen, Tracker, Cell, Piano
 from view_editor_view import layout_lanes, draw_editparams
 from components import ContextMenu
 from fractions import Fraction
-from layout import DTree, NoteLayout
+from layout import NoteLayout
+from rhythm import DTree
 import collections
-import measure
+import rhythm
 import pygame
 import bisect
 import music
@@ -147,7 +148,7 @@ class BrushEditorView:
             else:
                 self.selection = brushlist[0] if brushlist else []
         elif ev.key == pygame.K_a:
-            self.insert_brush(1, lambda duration: (Tracker("", duration, measure.Tree.from_string("n"), [], None)))
+            self.insert_brush(1, lambda duration: (Tracker("", duration, rhythm.Tree.from_string("n"), [], None)))
         elif ev.key == pygame.K_s:
             self.insert_brush(1, lambda duration: (Clip("", duration, [])))
         elif ev.key == pygame.K_c and self.editor.lane_tag is not None:
@@ -408,7 +409,7 @@ class TrackEditorView:
         w = (SCREEN_WIDTH - editor.MARGIN) / editor.BARS_VISIBLE
         x = editor.MARGIN
 
-        #euc = measure.EuclideanRhythm(5, 18, 0)
+        #euc = rhythm.EuclideanRhythm(5, 18, 0)
         #dtree = DTree.from_seq(euc.to_step_sequence().table)
         #notes = NoteLayout(dtree, tracker.duration, 
         #    (x, 200), tracker.duration*w, "linear")
@@ -800,9 +801,9 @@ class NoteEditorTool:
                     return lst
                 exponents = [collections.Counter(collect(leaf)) for leaf in block]
 
-                t_exponent = {p: max(counter.get(p, 0) for counter in exponents) for p in measure.primes}
+                t_exponent = {p: max(counter.get(p, 0) for counter in exponents) for p in rhythm.primes}
                 for counter, leaf in zip(exponents, block):
-                    add_counts = {p: t_exponent[p] - counter.get(p, 0) for p in measure.primes}
+                    add_counts = {p: t_exponent[p] - counter.get(p, 0) for p in rhythm.primes}
                     to_add = []
                     for p, count in add_counts.items():
                         to_add.extend([p] * count)
@@ -811,7 +812,7 @@ class NoteEditorTool:
                             leaf.label = ""
                             leaf.children = []
                             for _ in range(to_add[0]):
-                                subleaf = measure.Tree("o")
+                                subleaf = rhythm.Tree("o")
                                 leaf.children.append(subleaf)
                                 subleaf.parent = leaf
                                 explode(subleaf, to_add[1:])
@@ -819,7 +820,7 @@ class NoteEditorTool:
                             leaf.label = "o"
                     explode(leaf, to_add)
                 leaf.last_leaf.label = "n"
-                n_tree = measure.Tree.from_string(self.pattern)
+                n_tree = rhythm.Tree.from_string(self.pattern)
                 ll = leaf.last_leaf
                 ll.label = n_tree.label
                 ll.children = n_tree.children
@@ -838,7 +839,7 @@ class NoteEditorTool:
                 if all(a is None for a in gen.track):
                     tracker.generators.remove(gen)
 
-            tree = measure.simplify(tracker.rhythm.copy())
+            tree = rhythm.simplify(tracker.rhythm.copy())
             if tree and tree.is_valid():
                 tracker.rhythm = tree
         self.view.editor.refresh_layout()

@@ -1,119 +1,12 @@
 from fractions import Fraction
-import measure
+from rhythm import highest_bit_mask, decompose
+import rhythm
 import math
 import pygame
-import rt
 
-primem = [2, 3, 5, 7, 11, 15, 21, 25, 33, 35, 49, 55, 77, 121]
-tuplem = [[], [3], [5], [7], [11], [3, 5], [3, 7], [5, 5], [3, 11],
-          [5, 7], [7, 7], [5, 11], [7, 11], [11, 11]]
-
-#def slurp2(n, prefix):
-#    if len(prefix) > 3:
-#        return []
-#    results = []
-#    for m, (hold, remain) in slurp(n):
-#        if remain == 0:
-#            results.append(prefix + [(m, hold)])
-#        elif xs := slurp2(remain, prefix + [(m, hold)]):
-#            results.extend(xs)
-#    return results
-#
-#def slurp(n):
-#    k = Fraction(highest_bit_mask(n.numerator), highest_bit_mask(n.denominator))
-#    window = [k/i for i in primem]
-#    while any(k < n for k in window):
-#        for i in range(len(window)):
-#            if window[i] < n:
-#                window[i] *= 2
-#    while any(k > n for k in window):
-#        for i in range(len(window)):
-#            if window[i] > n:
-#                window[i] /= 2
-#    return [(i, d) for i, k in zip(tuplem, window) for d in decompose_with(n, k)]
-
-class DTree:
-    @classmethod
-    def from_seq(cls, seq):
-        return DTree(1, [DTree("rn"[n], []) for n in seq])
-
-    @classmethod
-    def from_rt(cls, this):
-        if isinstance(this, rt.Tree):
-            children = [DTree.from_rt(x) for x in this]
-            return DTree(1, None, children)
-        if this is rt.s:
-            return DTree(1, "s", [])
-        return DTree(1, "n", [])
-
-    @classmethod
-    def from_tree(cls, this):
-        this = this.copy()
-        assert this.is_valid(), str(this)
-        if len(this) > 0:
-            this.label = 1
-        for tree in this.subtrees:
-            if len(tree) > 0:
-                tree.label = 1
-        for tree in this.subtrees:
-            if tree.is_chain():
-                continue
-            cousin = tree.prev_cousin()
-            if cousin is not None and len(tree) == 0:
-                tree.children.append(measure.Tree(tree.label))
-                tree.children[0].parent = tree
-                tree.label = 1
-            while cousin is not None and cousin.is_chain():
-                cousin.label = 1
-                tree.prune_cousin()
-                cousin = tree.prev_cousin()
-        def convert(tree, weight=1):
-            if all(isinstance(x.label, int) for x in tree):
-                divisor = math.gcd(*(x.label for x in tree))
-                for x in tree:
-                    x.label //= divisor
-            if len(tree.children) == 1:
-                return convert(tree.children[0], weight*tree.label)
-            if isinstance(tree.label, str):
-                return DTree(weight, tree.label, [])
-            return DTree(weight*tree.label, None, list(map(convert, tree.children)))
-        return convert(this, 1)
-
-    def __init__(self, weight, label, children):
-        self.weight = weight
-        self.label = label
-        self.children = children
-
-    @property
-    def span(self):
-        return sum(x.weight for x in self.children)
-
-    def __repr__(self):
-        if len(self.children) == 0:
-            return str(self.weight) + ":" + str(self.label)
-        return f"{self.weight}({''.join(map(repr, self.children))})"
-
-    def copy(self):
-        return DTree(self.weight, self.label, [x.copy() for x in self.children])
-
-    def leaves_with_durations(self, decorator=lambda x: x, duration=Fraction(1)):
-        output = []
-        def visit(this, duration):
-            if len(this.children) == 0:
-                output.append((this, duration))
-            else:
-                duration *= this.weight
-                duration /= decorator(this.span)
-                for child in this.children:
-                    visit(child, duration)
-        visit(self, duration)
-        return output
-
+# TODO: consider where this code should reside.
 def highest_bit(n):
     return n.bit_length() - 1
-
-def highest_bit_mask(n):
-    return 1 << n.bit_length() - 1
 
 def get_dots(n):
     if n.numerator == 3:
@@ -130,25 +23,6 @@ def head_is_hollow(n):
 
 def get_beams(n):
     return max(0, highest_bit(get_magnitude(n).denominator) - 2)
-
-# TODO: remove it from here.
-def decompose(n):
-    if n.denominator != highest_bit_mask(n.denominator):
-        return None
-    prefix = []
-    while n > 0:
-        p = Fraction(highest_bit_mask(n.numerator), n.denominator)
-        for p, n in decompose_with(n, p):
-            prefix.append(p)
-            break
-    return prefix
-
-def decompose_with(n, p):
-    p32 = p*3/2
-    p74 = p*7*4
-    for q in [p74,p32,p]:
-        if n >= q:
-            yield q, n - q
 
 class NoteLayout:
     stem = 16
@@ -174,7 +48,8 @@ class NoteLayout:
                     self.distances.append(distance * (float(d) / float(duration)))
                     self.values.append(d)
                     if dtree.label == "s" or k > 0:
-                        self.ties.append(ix1-1)
+                        if self.shapes[-1] == 'note':
+                            self.ties.append(ix1-1)
                         self.shapes.append(self.shapes[-1])
                     elif dtree.label == "r":
                         self.shapes.append('rest')

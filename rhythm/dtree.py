@@ -1,0 +1,124 @@
+from fractions import Fraction
+from .tree import Tree
+import math
+
+__all__ = [
+    'DTree',
+    'highest_bit_mask',
+    'decompose',
+]
+
+class DTree:
+    @classmethod
+    def from_seq(cls, seq):
+        return DTree(1, [DTree("rn"[n], []) for n in seq])
+
+    @classmethod
+    def from_tree(cls, this):
+        this = this.copy()
+        assert this.is_valid(), str(this)
+        if len(this) > 0:
+            this.label = 1
+        for tree in this.subtrees:
+            if len(tree) > 0:
+                tree.label = 1
+        for tree in this.subtrees:
+            if tree.is_chain():
+                continue
+            cousin = tree.prev_cousin()
+            if cousin is not None and len(tree) == 0:
+                tree.children.append(Tree(tree.label))
+                tree.children[0].parent = tree
+                tree.label = 1
+            while cousin is not None and cousin.is_chain():
+                cousin.label = 1
+                tree.prune_cousin()
+                cousin = tree.prev_cousin()
+        def convert(tree, weight=1):
+            if all(isinstance(x.label, int) for x in tree):
+                divisor = math.gcd(*(x.label for x in tree))
+                for x in tree:
+                    x.label //= divisor
+            if len(tree.children) == 1:
+                return convert(tree.children[0], weight*tree.label)
+            if isinstance(tree.label, str):
+                return DTree(weight, tree.label, [])
+            return DTree(weight*tree.label, None, list(map(convert, tree.children)))
+        return convert(this, 1)
+
+    def __init__(self, weight, label, children):
+        self.weight = weight
+        self.label = label
+        self.children = children
+
+    @property
+    def span(self):
+        return sum(x.weight for x in self.children)
+
+    def copy(self):
+        return DTree(self.weight, self.label, [x.copy() for x in self.children])
+
+    def leaves_with_durations(self, decorator=lambda x: x, duration=Fraction(1)):
+        output = []
+        def visit(this, duration):
+            if len(this.children) == 0:
+                output.append((this, duration))
+            else:
+                duration *= this.weight
+                duration /= decorator(this.span)
+                for child in this.children:
+                    visit(child, duration)
+        visit(self, duration)
+        return output
+
+    def __str__(self):
+        base = ''
+        if self.weight != 1:
+            base += str(self.weight)
+        if self.label:
+            base += self.label
+        if self.children:
+            children_str = ' '.join(str(child) for child in self.children)
+            return f"{base}({children_str})"
+        return base or '1'
+
+    def to_events(self, offset, duration):
+        events = []
+        for dtree, dur in self.leaves_with_durations(duration=duration):
+            if dtree.label == "n":
+                events.append((offset, dur))
+            offset += dur
+        return events
+
+    def to_notes(self):
+        val = []
+        for dtree, dur in self.leaves_with_durations():
+            val.append(dtree.label)
+        return val
+
+    def to_val(self, duration=1):
+        val = []
+        for dtree, dur in self.leaves_with_durations(duration=duration):
+            val.append(dur)
+        return val
+
+def highest_bit_mask(n):
+    return 1 << n.bit_length() - 1
+
+def decompose(n):
+    if n.denominator != highest_bit_mask(n.denominator):
+        return None
+    prefix = []
+    while n > 0:
+        p = Fraction(highest_bit_mask(n.numerator), n.denominator)
+        for p, n in decompose_with(n, p):
+            prefix.append(p)
+            break
+    return prefix
+
+def decompose_with(n, p):
+    p32 = p*3/2
+    p74 = p*7*4
+    for q in [p74,p32,p]:
+        if n >= q:
+            yield q, n - q

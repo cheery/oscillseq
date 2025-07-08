@@ -1,8 +1,9 @@
 import pygame
 import bisect
-import quantize
-import measure
-from layout import DTree, NoteLayout
+from rhythm import quantize
+import rhythm
+from rhythm import DTree
+from layout import NoteLayout
 
 class RewriteView:
     def __init__(self, editor):
@@ -18,19 +19,21 @@ class RewriteView:
         #self.tree2 = quantize.quantize_to_tree2(self.lines, self.alpha, self.beta)
         #self.dtree = quantize.quantize_to_dtree(self.lines, self.alpha, self.beta)
         #self.vals = quantize.quantize_to_val(self.lines, 1, self.alpha, self.beta)
-        print(self.lines)
         points = self.lines
-        for w, v in quantize.k_best(50, quantize.Interval(points[0], points[-1]), points):
-            if (p := quantize.check_path(DTree, v, points)) is not None:
-                self.dtree2 = p
-                break
+        self.dtree2 = quantize.dtree(points, ['n']*(len(points)-1), alpha=self.beta)[0]
+
+        notes = NoteLayout(self.dtree2, 1,
+            (self.lines[0], 250), self.lines[-1]-self.lines[0], "linear")
+        self.lines = [self.lines[0]]
+        for d in notes.note_distances:
+            self.lines.append(self.lines[-1] + d)
     
         #import rt
         #grammar = rt.equivalent_rhythms(rt.q1, self.vals)
         #self.rt = None
         #for _, row in rt.k_best(1, grammar):
         #    self.rt = row
-        #tree = measure.simplify(self.tree)
+        #tree = rhythm.simplify(self.tree)
         self.color = (200,200,200)
         #if tree:
         #    self.tree = tree
@@ -76,12 +79,6 @@ class RewriteView:
             (self.lines[0], 250), self.lines[-1]-self.lines[0], "linear")
         notes.draw(screen, font)
 
-        offset = self.lines[0]
-        for d in notes.note_distances:
-            pygame.draw.line(screen, (255, 0, 0), (offset,0), (offset,SCREEN_HEIGHT))
-            offset += d
-        pygame.draw.line(screen, (255, 0, 0), (offset,0), (offset,SCREEN_HEIGHT))
-
         #if self.rt is not None:
         #    notes = NoteLayout(DTree.from_rt(self.rt), 1,
         #        (100, 350), 350, "exp")
@@ -92,7 +89,7 @@ class RewriteView:
         #        dist = float(v) * 350
         #        text = font.render(f"{v.numerator}/{v.denominator}", True, (200,200,200))
         #        screen.blit(text, (px + (dist-text.get_width())/2, 350))
-        #        prim = [p for p in measure.primes if v.denominator % p == 0]
+        #        prim = [p for p in rhythm.primes if v.denominator % p == 0]
         #        text = font.render(f"{prim}", True, (200,200,200))
         #        screen.blit(text, (px + (dist-text.get_width())/2, 400))
         #        px += dist
