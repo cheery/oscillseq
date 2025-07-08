@@ -161,12 +161,14 @@ class NoteLayout:
         self.dtree = dtree
         self.details = {}
         self.distances = []
+        self.note_distances = []
         self.values = []
         self.shapes = []
         self.ties   = []
         def layout_notes(ix1, dtree, duration, distance):
             ix0 = ix1
             duration *= dtree.weight
+            distance *= dtree.weight
             if len(dtree.children) == 0:
                 for k, d in enumerate(decompose(duration)):
                     self.distances.append(distance * (float(d) / float(duration)))
@@ -179,9 +181,10 @@ class NoteLayout:
                     elif dtree.label in "n":
                         self.shapes.append('note')
                     ix1 += 1
+                self.note_distances.append(distance)
             else:
                 span = dtree.span
-                distance *= dtree.weight / span
+                distance /= span
                 divider = highest_bit_mask(span)
                 for subtree in dtree.children:
                     ix1 = layout_notes(ix1, subtree, duration / divider, distance)

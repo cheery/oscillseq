@@ -517,6 +517,63 @@ def check_path(DTree, quant, points, duration=1):
 
     return DTree(1, "n", [])
 
+import numpy as np
+
+def check_path(DTree, quant, points, duration=1, alpha=0.8):
+    vs = val(quant, points, duration)
+    N = len(vs)
+    if N == 1:
+        return DTree(1, "n", [])
+    total = sum(vs)
+    tuplet_penalty = {2: 0.05, 4: 0.05, 3: 0.13, 5: 0.15, 7: 0.17, 11: 0.2}
+    def penalty(xs):
+        a, b = xs
+        return a*alpha + b*(1-alpha)
+    def penalty0(xs):
+        return penalty(xs[0])
+    def distortion(m, x):
+        return abs(m - x) / x
+    def estimate(k, i, n):
+        segment = float(sizes[k][i] / n)
+        for s in range(k):
+            x = sizes[k-1-s][i]
+            y = sizes[s][i+k-s]
+            jx = max(1, min(n-1, round(x / segment)))
+            jy = n - jx
+            pc1 = np.array([distortion(segment*jx, x), 0])
+            pc2 = np.array([distortion(segment*jy, y), 0])
+            pc = pc1 + pc2 / 2
+            three = np.array([3, 3])
+            yield (pc + estim[1][k-1-s][i] + estim[jy][s][k+i-s]) / three, s, -jx, jy
+            yield (pc + estim[jx][k-1-s][i] + estim[1][s][k+i-s]) / three, s, jx, -jy
+            yield (pc + estim[jx][k-1-s][i] + estim[jy][s][k+i-s]) / three, s, jx, jy
+    def basis(k,i):
+        for n in tuplet_penalty:
+            yield estim[n][k][i] + np.array([0, tuplet_penalty[n]]), n
+    estim = [[[np.array([0,0])]*(N-k) for k in range(0, N)] for _ in range(12)]
+    sizes = [vs] + [[0]*(N-k) for k in range(1, N)]
+    for i in range(N):
+        for n in range(1, 12):
+            estim[n][0][i] = np.array([0, len(decompose(n))])
+    for k in range(1, N):
+        for i in range(N-k):
+            sizes[k][i] = sizes[k-1][i] + sizes[0][i+k]
+            for n in range(2, 12):
+                estim[n][k][i] = min(estimate(k,i,n), key=penalty0)[0]
+            estim[1][k][i] = min(basis(k,i), key=penalty0)[0]
+    def make_tree(k, i, w):
+        if k == 0:
+            return DTree(w, "n", [])
+        pen, n = min(basis(k,i), key=penalty0)
+        return DTree(w, None, make_seq(k, i, n))
+    def make_seq(k, i, n):
+        if k == 0 or n <= 1:
+            return [make_tree(k, i, abs(n))]
+        else:
+            s, jx, jy = min(estimate(k, i, n), key=penalty0)[1:]
+            return make_seq(k-1-s, i, jx) + make_seq(s, k+i-s, jy)
+    return make_tree(N-1, 0, 1)
+
 def factorize(q):
     while q & 1 == 0:
         q >>= 1
