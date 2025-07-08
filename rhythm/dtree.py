@@ -61,10 +61,10 @@ class DTree:
     def leaves_with_durations(self, decorator=lambda x: x, duration=Fraction(1)):
         output = []
         def visit(this, duration):
+            duration *= this.weight
             if len(this.children) == 0:
                 output.append((this, duration))
             else:
-                duration *= this.weight
                 duration /= decorator(this.span)
                 for child in this.children:
                     visit(child, duration)
@@ -87,20 +87,34 @@ class DTree:
         for dtree, dur in self.leaves_with_durations(duration=duration):
             if dtree.label == "n":
                 events.append((offset, dur))
+            if dtree.label == "s":
+                events[-1] = events[-1][0], events[-1][1] + dur
             offset += dur
         return events
 
     def to_notes(self):
         val = []
         for dtree, dur in self.leaves_with_durations():
+            if dtree.label == "s":
+                continue
             val.append(dtree.label)
         return val
 
     def to_val(self, duration=1):
         val = []
         for dtree, dur in self.leaves_with_durations(duration=duration):
-            val.append(dur)
+            if dtree.label == "s":
+                val[-1] += dur
+            else:
+                val.append(dur)
         return val
+
+    def to_points(self, offset, duration):
+        output = [offset]
+        for dur in self.to_val(duration):
+            offset += dur
+            output.append(offset)
+        return output
 
 def highest_bit_mask(n):
     return 1 << n.bit_length() - 1

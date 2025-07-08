@@ -67,7 +67,7 @@ class Interval:
        return sum(abs(self.snap(pt)-pt) for pt in self.narrow(points))
 
    def cost(self, points, alpha):
-       return self.dist(points)*alpha
+       return self.dist(points)*10*alpha
 
    def __repr__(self):
        return f"{self.start}"
@@ -442,8 +442,7 @@ def check_path(DTree, quant, points, duration=1):
 
     return DTree(1, "n", [])
 
-def quant_to_dtree(quant, points, notes, alpha=0.8):
-    vs = val(quant, points)
+def val_to_dtree(vs, notes, alpha=0.8):
     N = len(vs)
     if N == 1:
         return DTree(1, notes[0], [])
@@ -477,7 +476,7 @@ def quant_to_dtree(quant, points, notes, alpha=0.8):
     sizes = [vs] + [[0]*(N-k) for k in range(1, N)]
     for i in range(N):
         for n in range(1, 12):
-            estim[n][0][i] = np.array([0, len(decompose(n))**2])
+            estim[n][0][i] = np.array([len(decompose(n))**3, len(decompose(n))**3])
     for k in range(1, N):
         for i in range(N-k):
             sizes[k][i] = sizes[k-1][i] + sizes[0][i+k]
@@ -497,7 +496,11 @@ def quant_to_dtree(quant, points, notes, alpha=0.8):
             return make_seq(k-1-s, i, jx) + make_seq(s, k+i-s, jy)
     return make_tree(N-1, 0, 1)
 
-def dtree(points, notes, alpha=0.5, beta=0.2, delta=0.8):
-    for w, rt in k_best(1, Interval(points[0], points[-1]), points, alpha, beta):
-        rms = remapper(rt, points)
-        return quant_to_dtree(rt, points, [notes[i] for i in rms]), rms
+def dtree(points, notes, alpha=0.5, beta=0.2, delta=0.75):
+    vs = []
+    rms = []
+    for i in range(len(points)-1):
+        if points[i] < points[i+1]:
+            vs.append(points[i+1] - points[i])
+            rms.append(i)
+    return val_to_dtree(vs, [notes[i] for i in rms], delta), rms

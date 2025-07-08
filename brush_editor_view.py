@@ -415,45 +415,20 @@ class TrackEditorView:
         #    (x, 200), tracker.duration*w, "linear")
         #notes.draw(screen, font)
 
-        dtree = DTree.from_tree(tracker.rhythm)
-        notes = NoteLayout(dtree, tracker.duration, 
-            (x, 50), tracker.duration*w, "linear")
+        notes = NoteLayout(tracker.rhythm, tracker.duration, 
+            (x, 15 + 3), tracker.duration*w, "linear")
         notes.draw(screen, font)
-        #text = repr(dtree)
-        #text = font.render(text, True, (200,200,200))
-        #screen.blit(text, (20, 80))
-
-        # TODO: Instead of drawing a tree, draw notes.
-        extra = {}
-        def draw_tree(x, y, span, tree):
-            color = (200, 200, 200)
-            count = 1
-            if tree in extra:
-                x, sp, count = extra[tree]
-                span += sp
-                count += 1
-            if len(tree) == 0 and tree.label == 'o' and (n := tree.next_cousin()) is not None:
-                extra[n] = x, span, count
-            elif len(tree) == 0:
-                text = font.render(tree.label, True, color)
-                w = span/2 - text.get_width() / 2
-                screen.blit(text, (x + w, y))
-            else:
-                w = span / len(tree) if count == 1 else span / count
-                rect = pygame.Rect(x + w/2, y, span - w, 1)
-                pygame.draw.rect(screen, color, rect)
-                w = span / len(tree)
-                for i, stree in enumerate(tree):
-                    rect = pygame.Rect(x + i*w + w/2 - 1, y, 2, 3)
-                    pygame.draw.rect(screen, color, rect)
-                    draw_tree(x + i*w, y+3, w, stree)
-        draw_tree(x, 15 + 3, tracker.duration*w, tracker.rhythm)
 
         rhythm = tracker.rhythm.to_events(0, tracker.duration)
+        #points = tracker.rhythm.to_points(0, tracker.duration)
 
         pointer = pygame.mouse.get_pos()
 
         loop_groups = set(gen.loop_group() for gen in tracker.generators)
+        #for point in points:
+        #    if 0 <= point < editor.BARS_VISIBLE:
+        #        pygame.draw.line(screen, (255, 70, 70), (x + point*w, 47), (x + point*w, SCREEN_HEIGHT), 3)
+
         for i, (point, span) in enumerate(rhythm, 1):
             if 0 <= point < editor.BARS_VISIBLE:
                 pygame.draw.line(screen, (70, 70, 70), (x + point*w, 47), (x + point*w, SCREEN_HEIGHT))
@@ -569,6 +544,7 @@ class NoteEditorTool:
         SCREEN_HEIGHT = editor.SCREEN_HEIGHT
         w = (SCREEN_WIDTH - self.view.editor.MARGIN) / self.view.editor.BARS_VISIBLE
 
+        points = tracker.rhythm.to_points(0, tracker.duration)
         rhythm = tracker.rhythm.to_events(0, tracker.duration)
         get_accidentals = self.view.key_signature_mapper()
         x = editor.MARGIN
@@ -624,13 +600,11 @@ class NoteEditorTool:
                 return ref == int(a)
 
         if self.flavor == "split":
-            for i, (s, span) in enumerate(rhythm):
-                if s <= (ev.pos[0] - x)/w <= s+span:
-                    self.note_tail = i
+            i = find_interval_index(points, (ev.pos[0] - x)/w)
+            self.note_tail = i
         if self.flavor == "loop":
-            for i, (s, span) in enumerate(rhythm):
-                if s <= (ev.pos[0] - x)/w <= s+span:
-                    self.view.loop = i + 1
+            i = find_interval_index(points, (ev.pos[0] - x)/w)
+            self.view.loop = i + 1 if i is not None else None
         if self.flavor == "draw":
             pitch = this_param = None
             for item in self.view.layout:
@@ -688,160 +662,62 @@ class NoteEditorTool:
         SCREEN_HEIGHT = editor.SCREEN_HEIGHT
         w = (SCREEN_WIDTH - self.view.editor.MARGIN) / self.view.editor.BARS_VISIBLE
 
-        rhythm = tracker.rhythm.to_events(0, tracker.duration)
+        orig_notes = notes  = tracker.rhythm.to_notes()
+        notes = notes.copy()
+        points = tracker.rhythm.to_points(0, tracker.duration)
+
+        def notes_only(rms):
+            nrms = []
+            i = 0
+            for n in orig_notes:
+                if n == "n":
+                    nrms.append(i)
+                    i += 1
+                else:
+                    nrms.append(None)
+            indices = []
+            for note, i in zip(notes, rms):
+                if note == "n":
+                    indices.append(nrms[i])
+            return indices
+
         get_accidentals = self.view.key_signature_mapper()
         x = editor.MARGIN
 
         if self.flavor == "split" and self.note_tail is not None:
             mx, my = ev.pos
-            note_head = self.note_tail
-            for i, (s, span) in enumerate(rhythm):
-                if s <= (ev.pos[0] - x)/w <= s+span:
-                    note_head = i
+            note_head = find_interval_index(points, (ev.pos[0] - x)/w)
+            if note_head is None:
+                return
+            n = self.pattern.count("n")
+            notehead = "n"
+            if n == 0:
+                notehead = "r"
+                n = 1
             first = min(note_head, self.note_tail)
             last  = max(note_head, self.note_tail)
-            def segments(tree):
-                segs = []
-                for leaf in tree.leaves:
-                    if leaf.label == "n" or leaf.label == "r":
-                        segs.append([leaf])
-                    elif leaf.label == "s":
-                        segs[-1].append(leaf)
-                return [seg for seg in segs if seg[0].label == "n"]
-            xs = segments(tracker.rhythm)
-            first_leaf = xs[first][0]
-            last_leaf = xs[last][-1]
-            def left_corner(leaf):
-                while True:
-                    cousin = leaf.prev_cousin()
-                    if cousin is not None and cousin.label == "o":
-                        leaf = cousin
-                        continue
-                    if leaf.parent and leaf.parent.children[0] is leaf:
-                        leaf = leaf.parent
-                        continue
-                    break
-                return leaf
-            first_leaf = left_corner(first_leaf)
-            def right_corner(leaf):
-                while leaf.parent and leaf.parent.children[-1] is leaf:
-                    leaf = leaf.parent
-                return leaf
-            last_leaf = right_corner(last_leaf)
+            indices = list(range(len(notes)))
+            indices = indices[:first] + [indices[self.note_tail]]*n + indices[last+1:]
+            prefix = points[:first+1]
+            suffix = points[last+1:]
+            middle = []
+            notes[self.note_tail] = notehead
+            for i in range(1, n):
+                t = i / n
+                notes.insert(first, "n")
+                middle.append(prefix[-1] + t*(suffix[0] - prefix[-1]))
+            points = prefix + middle + suffix
+            dtree, rms = rhythm.quantize.dtree(points, notes, delta=0.9)
+            rms = notes_only([indices[i] for i in rms])
 
-            def extrapolate(tree, path, side):
-                for ix in path:
-                    tree = tree.children[ix]
-                    yield tree
-                while tree.children:
-                    tree = tree.children[side]
-                    yield tree
-
-            lca = tracker.rhythm
-            ex1 = extrapolate(lca, first_leaf.get_path(), 0)
-            ex2 = extrapolate(lca, last_leaf.get_path(), -1)
-            for lca0, lca1 in zip(ex1, ex2):
-                if lca0 is lca1:
-                    lca = lca0
-                    if lca.parent is first_leaf:
-                        first_leaf = lca
-                    if lca.parent is last_leaf:
-                        last_leaf = lca
-                else:
-                    break
-            if lca is first_leaf and lca is last_leaf:
-                lca.label = "n"
-                lca.children = []
-                first_leaf = last_leaf = lca
-            else:
-                if lca is first_leaf:
-                    first_leaf = lca.children[0]
-                first_leaf.label = "n"
-                first_leaf.children = []
-                if lca is last_leaf:
-                    last_leaf = lca.children[-1]
-                last_leaf.label = "s"
-                last_leaf.children = []
-                branch0 = first_leaf
-                while branch0.parent is not lca:
-                    parent = branch0.parent
-                    for this in parent.children[parent.children.index(branch0)+1:]:
-                        this.label = "s"
-                        this.children = []
-                    branch0 = parent
-                branch1 = last_leaf
-                while branch1.parent is not lca:
-                    parent = branch1.parent
-                    for this in parent.children[:parent.children.index(branch1)]:
-                        this.label = "s"
-                        this.children = []
-                    branch1 = parent
-                i = lca.children.index(branch0)
-                j = lca.children.index(branch1)
-                for this in lca.children[i+1:j]:
-                    this.label = "s"
-                    this.children = []
-                assert first_leaf.label == "n"
-
-            leaves = tracker.rhythm.leaves
-            ix0 = leaves.index(first_leaf)
-            first1 = sum(1 for leaf in leaves[:ix0] if leaf.label == "n")
-            ix1 = leaves.index(last_leaf)
-            last1 = sum(1 for leaf in leaves[:ix1] if leaf.label == "n")
-            d0 = (last + 1 - first)
-            d1 = (last1 + 1 - first1)
-
-            if self.pattern != "n":
-                block = leaves[ix0:ix1+1]
-                def collect(tree):
-                    lst = []
-                    while tree.parent:
-                        tree = tree.parent
-                        lst.append(len(tree))
-                    return lst
-                exponents = [collections.Counter(collect(leaf)) for leaf in block]
-
-                t_exponent = {p: max(counter.get(p, 0) for counter in exponents) for p in rhythm.primes}
-                for counter, leaf in zip(exponents, block):
-                    add_counts = {p: t_exponent[p] - counter.get(p, 0) for p in rhythm.primes}
-                    to_add = []
-                    for p, count in add_counts.items():
-                        to_add.extend([p] * count)
-                    def explode(leaf, to_add):
-                        if to_add:
-                            leaf.label = ""
-                            leaf.children = []
-                            for _ in range(to_add[0]):
-                                subleaf = rhythm.Tree("o")
-                                leaf.children.append(subleaf)
-                                subleaf.parent = leaf
-                                explode(subleaf, to_add[1:])
-                        else:
-                            leaf.label = "o"
-                    explode(leaf, to_add)
-                leaf.last_leaf.label = "n"
-                n_tree = rhythm.Tree.from_string(self.pattern)
-                ll = leaf.last_leaf
-                ll.label = n_tree.label
-                ll.children = n_tree.children
-                for child in n_tree.children:
-                    child.parent = ll
-                d1 = sum(1 for leaf in ll.leaves if leaf.label == "n")
-
-            dup = lambda a: a if a is None else a.copy()
+            dup = lambda xs, a: None if a is None else (xs[a].copy() if xs[a] is not None else None)
             for gen in tracker.generators[:]:
                 if gen.loop:
                     continue
-                if d1 != d0 and d0 == 1:
-                    gen.track[first:last+1] = [dup(gen.track[first]) for _ in range(d1)]
-                elif d1 != d0:
-                    gen.track[first:last+1] = [None for _ in range(d1)]
+                gen.track = [dup(gen.track, i) for i in rms]
                 if all(a is None for a in gen.track):
                     tracker.generators.remove(gen)
-
-            tree = rhythm.simplify(tracker.rhythm.copy())
-            if tree and tree.is_valid():
-                tracker.rhythm = tree
+            tracker.rhythm = dtree
         self.view.editor.refresh_layout()
         self.view.refresh()
 
@@ -851,7 +727,7 @@ class NoteEditorTool:
     def remove_rests(self):
         tracker = self.view.tracker
         ix = 0
-        for leaf in tracker.rhythm.leaves:
+        for leaf, _ in tracker.rhythm.leaves_with_durations():
             if leaf.label == "n":
                 ix += 1
             if leaf.label == "r":
@@ -882,3 +758,10 @@ def modify(value, amt, ty):
     elif ty == "duration":
        return max(0, value + amt * 0.01)
     return value
+
+def find_interval_index(points, x):
+    i = bisect.bisect_right(points, x) - 1
+    if 0 <= i < len(points) - 1:
+        return i
+    else:
+        return None  # x is out of range
