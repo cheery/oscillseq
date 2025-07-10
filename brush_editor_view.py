@@ -707,7 +707,7 @@ class NoteEditorTool:
                 notes.insert(first, "n")
                 middle.append(prefix[-1] + t*(suffix[0] - prefix[-1]))
             points = prefix + middle + suffix
-            dtree, rms = rhythm.quantize.dtree(points, notes, delta=0.9)
+            dtree, rms = rhythm.quantize.dtree(rhythm.grammar, points, notes)
             rms = notes_only([indices[i] for i in rms])
 
             dup = lambda xs, a: None if a is None else (xs[a].copy() if xs[a] is not None else None)

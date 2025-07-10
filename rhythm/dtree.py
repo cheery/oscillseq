@@ -46,17 +46,29 @@ class DTree:
             return DTree(weight*tree.label, None, list(map(convert, tree.children)))
         return convert(this, 1)
 
-    def __init__(self, weight, label, children):
+    def __init__(self, weight, label, children, rule_id=None):
         self.weight = weight
         self.label = label
         self.children = children
+        self.rule_id = rule_id
 
     @property
     def span(self):
         return sum(x.weight for x in self.children)
 
     def copy(self):
-        return DTree(self.weight, self.label, [x.copy() for x in self.children])
+        return DTree(self.weight, self.label, [x.copy() for x in self.children], self.rule_id)
+
+    def leaves(self):
+        output = []
+        def visit(this):
+            if len(this.children) == 0:
+                output.append(this)
+            else:
+                for child in this.children:
+                    visit(child)
+        visit(self)
+        return output
 
     def leaves_with_durations(self, decorator=lambda x: x, duration=Fraction(1)):
         output = []
@@ -71,16 +83,42 @@ class DTree:
         visit(self, duration)
         return output
 
-    def __str__(self):
+    def rewrite(self, rewriter):
+        if (that := rewriter(self)) is not None:
+            return that
+        return DTree(self.weight, self.label, [that.rewrite(rewriter) for that in self.children], self.rule_id)
+
+    def instantiate(self, instances, cond):
+        i = -1
+        def visit(this):
+            nonlocal i
+            if cond(this):
+                i += 1
+                return instances[i]
+            return DTree(this.weight, this.label, [visit(that) for that in this.children], this.rule_id)
+        return visit(self)
+
+    def is_grace_note(self):
+        return self.weight == 0 and self.label == "n"
+
+    def remove_grace_notes(self):
+        return DTree(self.weight, self.label, [that for that in self.children if not that.is_grace_note()], self.rule_id)
+
+    def show(self, debug=True):
         base = ''
+        if self.rule_id and debug:
+            base += str(self.rule_id) + ":"
         if self.weight != 1:
             base += str(self.weight)
         if self.label:
-            base += self.label
+            base += str(self.label)
         if self.children:
-            children_str = ' '.join(str(child) for child in self.children)
+            children_str = ' '.join(child.show(debug) for child in self.children)
             return f"{base}({children_str})"
         return base or '1'
+
+    def __str__(self):
+        return self.show(False)
 
     def to_events(self, offset, duration):
         events = []

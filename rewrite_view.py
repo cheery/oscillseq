@@ -20,13 +20,13 @@ class RewriteView:
         #self.dtree = quantize.quantize_to_dtree(self.lines, self.alpha, self.beta)
         #self.vals = quantize.quantize_to_val(self.lines, 1, self.alpha, self.beta)
         points = self.lines
-        self.dtree2 = quantize.dtree(points, ['n']*(len(points)-1), alpha=self.beta)[0]
+        self.dtree2 = quantize.dtree(rhythm.grammar, points, ['n']*(len(points)-1))[0]
 
         notes = NoteLayout(self.dtree2, 1,
             (self.lines[0], 250), self.lines[-1]-self.lines[0], "linear")
-        self.lines = [self.lines[0]]
+        self.lines2 = [self.lines[0]]
         for d in notes.note_distances:
-            self.lines.append(self.lines[-1] + d)
+            self.lines2.append(self.lines2[-1] + d)
     
         #import rt
         #grammar = rt.equivalent_rhythms(rt.q1, self.vals)
@@ -53,6 +53,9 @@ class RewriteView:
         SCREEN_HEIGHT = screen.get_height()
         for x in self.lines:
             pygame.draw.line(screen, self.color, (x,0), (x,SCREEN_HEIGHT))
+
+        for x in self.lines2:
+            pygame.draw.line(screen, (255, 0, 0), (x,0), (x,SCREEN_HEIGHT))
 
         #for x in self.lines2:
         #    pygame.draw.line(screen, (0, 255, 0), (x,400), (x,SCREEN_HEIGHT))
@@ -117,10 +120,9 @@ class DummyTool:
             lines.sort()
             self.view.refresh()
         if ev.button == 3 and len(lines) > 2:
-            ix = bisect.bisect_right(lines, ev.pos[0])
-            if 1 < ix < len(lines):
-                iv = quantize.Interval(lines[ix-1], lines[ix])
-                lines.remove(iv.snap(ev.pos[0]))
+            ix = bisect.bisect_right(lines, ev.pos[0]) - 1
+            if 0 <= ix < len(lines) - 1:
+                del lines[ix]
             else:
                 del lines[max(ix,1)-1]
             self.view.refresh()

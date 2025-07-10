@@ -53,7 +53,7 @@ class NoteLayout:
                         self.shapes.append(self.shapes[-1])
                     elif dtree.label == "r":
                         self.shapes.append('rest')
-                    elif dtree.label in "n":
+                    elif dtree.label == "n":
                         self.shapes.append('note')
                     ix1 += 1
                 self.note_distances.append(distance)
