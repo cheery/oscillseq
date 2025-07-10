@@ -228,7 +228,7 @@ def knush_plass(pieces, slots):
 
             if total > slot_width:
                 needed = slot_width - prev_total
-                if prev_total != 0 and needed < slot_width*0.25:
+                if prev_total != 0 and needed < slot_width*0.5:
                     break
                 if needed <= 0:
                     break
@@ -261,7 +261,7 @@ def knush_plass(pieces, slots):
     result.append((slots[slot_idx], rem, offset))
     return result
 
-def equivalent(nt, ioi, notes, alpha=1.0):
+def equivalent(nt, ioi, notes, alpha=1.0, beta=1.0):
     @functools.cache
     def produce(ref, segment):
         nt = Nonterminal(ref.name, segment)
@@ -301,12 +301,13 @@ def equivalent(nt, ioi, notes, alpha=1.0):
                     out[0].rule_id = dtree.rule_id
                     yield weight + error, out[0]
                 else:
+                    error += (len(out) - 1) * beta
                     yield weight + error, DTree(dtree.weight, None, out, dtree.rule_id)
         else:
             raise ValueError(f"The dtree {dtree} invalid for rhythm equivalence algorithm.")
     return produce(nt, range_to_segment(0, len(ioi)))
 
-def dtree(nt, points, notes, alpha=1.0):
+def dtree(nt, points, notes, alpha=1.0, beta=1.0):
     ioi = []
     pre_rms = []
     for i in range(len(points)-1):
@@ -314,7 +315,10 @@ def dtree(nt, points, notes, alpha=1.0):
             ioi.append(points[i+1] - points[i])
             pre_rms.append(i)
     notes = [notes[i] for i in pre_rms]
-    for _, dtree in k_best(equivalent(nt, ioi, notes, alpha)):
+    g = equivalent(nt, ioi, notes, alpha, beta)
+    #print("DEBUG")
+    #g.debug()
+    for _, dtree in k_best(g):
         break
     rms = []
     i = 0
@@ -322,4 +326,5 @@ def dtree(nt, points, notes, alpha=1.0):
         if x.label != "s" and x.weight > 0:
             rms.append(pre_rms[i])
             i += 1
-    return dtree.remove_grace_notes(), rms
+    dtree = dtree.remove_grace_notes().reconnect_slurs()
+    return dtree, rms
