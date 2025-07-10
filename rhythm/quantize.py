@@ -118,6 +118,7 @@ class MultiSegment:
     last  : int
     leading  : Optional[float]
     trailing : Optional[float]
+    offset   : float = 0.0
 
     def count(self):
         return self.last - self.first + 1
@@ -148,6 +149,7 @@ class MultiSegment:
 class SingleSegment:
     index : int
     head  : bool
+    offset : float = 0.0
 
     def count(self):
         return 1
@@ -180,16 +182,16 @@ class Piece:
         b = Piece(self.index, self.width - x, "s", False)
         return a, b
 
-def pieces_to_segment(pieces):
+def pieces_to_segment(pieces, offset):
     assert len(pieces) > 0
     if len(pieces) == 1:
-        return SingleSegment(pieces[0].index, pieces[0].head)
+        return SingleSegment(pieces[0].index, pieces[0].head, offset)
     else:
         first = pieces[0]
         last  = pieces[-1]
         leading = None if first.head else first.width
         trailing = last.width
-        return MultiSegment(first.index, last.index, leading, trailing)
+        return MultiSegment(first.index, last.index, leading, trailing, offset)
 
 @dataclass(eq=True, frozen=True)
 class Slot:
@@ -243,6 +245,7 @@ def knush_plass(pieces, slots):
     _, brk = dp(0, rem)
     result = []
     slot_idx = 0
+    offset = 0
     while brk:
         count, needed, brk = brk
         if needed is None:
@@ -252,9 +255,10 @@ def knush_plass(pieces, slots):
             prefix, suffix = rem[count].split(needed)
             pieces = rem[:count] + (prefix,)
             rem    = (suffix,) + rem[count+1:]
-        result.append((slots[slot_idx], pieces))
+        result.append((slots[slot_idx], pieces, offset))
+        offset += sum(piece.width for piece in pieces) - slots[slot_idx].width
         slot_idx += 1
-    result.append((slots[slot_idx], rem))
+    result.append((slots[slot_idx], rem, offset))
     return result
 
 def equivalent(nt, ioi, notes, alpha=1.0):
@@ -275,7 +279,7 @@ def equivalent(nt, ioi, notes, alpha=1.0):
             slots = [Slot(x.label, d*width) for x, d in leaves]
             results = knush_plass(pieces, slots)
             error = 0
-            instances = [produce(slot.ref, pieces_to_segment(pcs)) for slot, pcs in results]
+            instances = [produce(slot.ref, pieces_to_segment(pcs, offset)) for slot, pcs, offset in results]
             new_leaves = [DTree(leaf.weight, nt, [], leaf.rule_id)
                           for (leaf,_), nt in zip(leaves, instances)]
             yield weight, dtree.instantiate(new_leaves, lambda x: isinstance(x.label, Nonterminal))
@@ -283,7 +287,7 @@ def equivalent(nt, ioi, notes, alpha=1.0):
             width = segment.width(ioi)
             out = []
             error = 0
-            offset = 0
+            offset = segment.offset
             for piece in segment.pieces(ioi, notes):
                 if piece.head:
                     error += abs(offset)
