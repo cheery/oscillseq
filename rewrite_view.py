@@ -20,7 +20,7 @@ class RewriteView:
         #self.dtree = quantize.quantize_to_dtree(self.lines, self.alpha, self.beta)
         #self.vals = quantize.quantize_to_val(self.lines, 1, self.alpha, self.beta)
         points = self.lines
-        self.dtree2 = quantize.dtree(rhythm.grammar, points, ['n']*(len(points)-1))[0]
+        self.dtree2 = quantize.dtree(rhythm.grammar, points, ['n']*(len(points)-1), alpha=self.beta)[0]
 
         notes = NoteLayout(self.dtree2, 1,
             (self.lines[0], 250), self.lines[-1]-self.lines[0], "linear")

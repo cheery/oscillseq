@@ -5,6 +5,7 @@ from typing import List, Dict, Optional, Callable, Tuple, Any
 from fractions import Fraction
 import functools
 import itertools
+import bisect
 
 class Nonterminal:
     def __init__(self, name, segment=None, prod=None):
@@ -105,224 +106,104 @@ def k_best(q):
         except Exhausted:
             break
 
-def range_to_segment(start, stop):
-    assert start < stop
-    if start == stop - 1:
-        return SingleSegment(start, True)
-    else:
-        return MultiSegment(start, stop-1, None, None)
-
 @dataclass(eq=True, frozen=True)
-class MultiSegment:
-    first : int
-    last  : int
-    leading  : Optional[float]
-    trailing : Optional[float]
-    offset   : float = 0.0
+class Interval:
+    start : float
+    stop  : float
 
-    def count(self):
-        return self.last - self.first + 1
+    def narrow(self, points, notes, inclusive=False):
+        i = bisect.bisect_left(points, self.start)
+        j = bisect.bisect_left(points, self.stop)
+        if inclusive and points[j] == self.stop:
+            j += 1
+        return list(range(i, j))
 
-    def width(self, ioi):
-        return sum(ioi[self.first+1:self.last]) + (self.leading or ioi[self.first]) + (self.trailing or ioi[self.last])
+    def index(self, point):
+        return round((point - self.start) / (self.stop - self.start))
 
-    def pieces(self, ioi, notes):
-        first = self.first
-        last = self.last
-        if self.leading is not None:
-            yield Piece(self.first, self.leading, (notes[self.first] if self.leading is None else "s"), False)
-        for i in range(first+1*(self.leading is not None), last+1*(self.trailing is None)):
-            yield Piece(i, ioi[i], notes[i], True)
-        if self.trailing is not None:
-            yield Piece(self.last, self.trailing, notes[self.last], True)
-
-    def __repr__(self):
-        prefix = "" if self.leading is None else "_"
-        postfix = "" if self.trailing is None else "_"
-        return f"{prefix}{self.first}:{self.last}{postfix}"
+    def __getitem__(self, index):
+        if index == 0:
+            return self.start
+        else:
+            return self.stop
 
     @property
     def cmp(self):
-        return self.first
-
-@dataclass(eq=True, frozen=True)
-class SingleSegment:
-    index : int
-    head  : bool
-    offset : float = 0.0
-
-    def count(self):
-        return 1
-
-    def width(self, ioi):
-        return ioi[self.index]
-
-    def pieces(self, ioi, notes):
-        yield Piece(self.index, ioi[self.index], (notes[self.index] if self.head else "s"), False)
+        return self.start
 
     def __repr__(self):
-        if self.head:
-            return f"{self.index}"
-        else:
-            return f"_{self.index}"
+        return str(self.start) + ":" + str(self.stop)
 
-    @property
-    def cmp(self):
-        return self.index
-
-@dataclass(eq=True, frozen=True)
-class Piece:
-    index : int
-    width  : float
-    note  : str
-    head  : bool
-
-    def split(self, x):
-        a = Piece(self.index, x, self.note, self.head)
-        b = Piece(self.index, self.width - x, "s", False)
-        return a, b
-
-def pieces_to_segment(pieces, offset):
-    assert len(pieces) > 0
-    if len(pieces) == 1:
-        return SingleSegment(pieces[0].index, pieces[0].head, offset)
-    else:
-        first = pieces[0]
-        last  = pieces[-1]
-        leading = None if first.head else first.width
-        trailing = last.width
-        return MultiSegment(first.index, last.index, leading, trailing, offset)
-
-@dataclass(eq=True, frozen=True)
-class Slot:
-    ref   : Nonterminal
-    width : float
-
-def knush_plass(pieces, slots):
-    n_slots = len(slots)
-
-    def calc_penalty(slot_idx, pieces_tuple):
-        return slack*slack
-        
-    @functools.cache
-    def dp(slot_idx, pieces_tuple):
-        if slot_idx == n_slots - 1:
-            width = sum(piece.width for piece in pieces_tuple)
-            slack = (slots[slot_idx].width - width)
-            return slack*slack, None
-        slot_width = slots[slot_idx].width
-        best_penalty = float('inf')
-        best_break   = None
-        total = 0
-        for k in range(len(pieces_tuple)):
-            piece = pieces_tuple[k]
-            prev_total = total
-            total += piece.width
-
-            slack = slot_width - total
-            next_pen, next_break = dp(slot_idx+1, pieces_tuple[k+1:])
-            penalty = slack*slack + next_pen
-            if penalty < best_penalty:
-                best_penalty = penalty
-                best_break = (k+1, None, next_break)
-
-            if total > slot_width:
-                needed = slot_width - prev_total
-                if prev_total != 0 and needed < slot_width*0.5:
-                    break
-                if needed <= 0:
-                    break
-                prefix, suffix = piece.split(needed)
-                next_pieces = (suffix,) + pieces_tuple[k+1:]
-                next_pen, next_break = dp(slot_idx+1, next_pieces)
-                if next_pen < best_penalty:
-                    best_penalty = next_pen
-                    best_break = (k, needed, next_break)
-                break
-        return best_penalty, best_break
-
-    rem = tuple(pieces)
-    _, brk = dp(0, rem)
-    result = []
-    slot_idx = 0
-    offset = 0
-    while brk:
-        count, needed, brk = brk
-        if needed is None:
-            pieces = rem[:count]
-            rem    = rem[count:]
-        else:
-            prefix, suffix = rem[count].split(needed)
-            pieces = rem[:count] + (prefix,)
-            rem    = (suffix,) + rem[count+1:]
-        result.append((slots[slot_idx], pieces, offset))
-        offset += sum(piece.width for piece in pieces) - slots[slot_idx].width
-        slot_idx += 1
-    result.append((slots[slot_idx], rem, offset))
-    return result
-
-def equivalent(nt, ioi, notes, alpha=1.0, beta=1.0):
+def equivalent(nt, pts, notes, alpha=1.0):
     @functools.cache
     def produce(ref, segment):
         nt = Nonterminal(ref.name, segment)
         for w, dtree in ref.prod:
-            for w, dtree in partition(w, dtree, segment):
-                nt.prod.append((w * alpha, dtree))
+            nt.prod.extend(derive(w * alpha, dtree, segment))
         return nt
-    def partition(weight, dtree, segment):
-        leaves = dtree.leaves_with_durations(duration=1)
-        if all(isinstance(x.label, Nonterminal) for x,_ in leaves):
-            if segment.count() == 1:
-                return
-            width = segment.width(ioi)
-            pieces = list(segment.pieces(ioi, notes))
-            slots = [Slot(x.label, d*width) for x, d in leaves]
-            results = knush_plass(pieces, slots)
-            error = 0
-            instances = [produce(slot.ref, pieces_to_segment(pcs, offset)) for slot, pcs, offset in results]
+    def derive(weight, dtree, segment):
+        indices = segment.narrow(pts, notes)
+        leaves = dtree.leaves_with_durations(duration=Fraction(1))
+        if len(leaves) > 1 and len(indices) > 0:
+            inst = [produce(leaf.label, seg) for leaf, seg in divide(segment, leaves)]
             new_leaves = [DTree(leaf.weight, nt, [], leaf.rule_id)
-                          for (leaf,_), nt in zip(leaves, instances)]
+                          for (leaf,_), nt in zip(leaves, inst)]
             yield weight, dtree.instantiate(new_leaves, lambda x: isinstance(x.label, Nonterminal))
         elif len(leaves) == 1:
-            width = segment.width(ioi)
-            out = []
-            error = 0
-            offset = segment.offset
-            for piece in segment.pieces(ioi, notes):
-                if piece.head:
-                    error += abs(offset)
-                out.append(DTree(0, piece.note, []))
-                offset += piece.width
-            if out[0].label == leaves[0][0].label:
-                out[-1].weight = 1
-                out = [t for t in out if t.weight > 0 or t.label not in ("r", "s")]
-                if len(out) == 1:
-                    out[0].weight = dtree.weight
-                    out[0].rule_id = dtree.rule_id
-                    yield weight + error, out[0]
-                else:
-                    error += (len(out) - 1) * beta
-                    yield weight + error, DTree(dtree.weight, None, out, dtree.rule_id)
-        else:
-            raise ValueError(f"The dtree {dtree} invalid for rhythm equivalence algorithm.")
-    return produce(nt, range_to_segment(0, len(ioi)))
+            if dtree.label == "s" and len(indices) == 0:
+                yield weight, dtree
+            elif dtree.label != "s" and len(indices) > 0:
+                penalty = 0
+                bins = [[], []]
+                for i in indices:
+                    k = segment.index(pts[i])
+                    penalty += abs(pts[i] - segment[k]) / (segment.stop - segment.start)
+                    bins[k].append(notes[i])
+                leading = bins[0].pop(-1) if bins[0] else bins[1].pop(0)
+                if leading == dtree.label:
+                    out = []
+                    for early in bins[0]:
+                        out.append(DTree(0, early, [], None))
+                    out.append(DTree(1, leading, [], None))
+                    for late in bins[1]:
+                        out.append(DTree(0, late, [], None))
+                    if len(out) > 1:
+                        yield weight + penalty, DTree(dtree.weight, dtree.label, out, dtree.rule_id)
+                    else:
+                        out[0].weight = dtree.weight
+                        out[0].rule_id = dtree.rule_id
+                        yield weight + penalty, out[0]
+        
+    def divide(segment, leaves):
+        width = segment.stop - segment.start
+        offset = segment.start
+        for leaf, dur in leaves:
+            yield leaf, Interval(offset, min(offset + dur*width, segment.stop))
+            offset += dur*width
 
-def dtree(nt, points, notes, alpha=1.0, beta=1.0):
-    ioi = []
+    return produce(nt, Interval(pts[0], pts[-1]))
+
+def dtree(nt, points, notes, alpha=0.001):
+    pts = []
     pre_rms = []
     for i in range(len(points)-1):
         if points[i] < points[i+1]:
-            ioi.append(points[i+1] - points[i])
+            pts.append(points[i])
             pre_rms.append(i)
+    pts.append(points[-1])
     notes = [notes[i] for i in pre_rms]
-    g = equivalent(nt, ioi, notes, alpha, beta)
-    #print("DEBUG")
-    #g.debug()
+    g = equivalent(nt, pts, notes, alpha)
     for _, dtree in k_best(g):
         break
     rms = []
+    leaves = dtree.leaves()
+    for i in range(len(leaves)-1):
+        a, b = leaves[i:i+2]
+        if a.weight == 0 and b.label == "s":
+            b.label = a.label
+            a.label = "s"
     i = 0
-    for x in dtree.leaves():
+    for x in leaves:
         if x.label != "s" and x.weight > 0:
             rms.append(pre_rms[i])
             i += 1

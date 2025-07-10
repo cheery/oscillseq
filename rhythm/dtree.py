@@ -99,11 +99,16 @@ class DTree:
         return visit(self)
 
     def is_grace_note(self):
-        return self.weight == 0 and self.label == "n"
+        return self.weight == 0
 
     def remove_grace_notes(self):
-        return DTree(self.weight, self.label, [that.remove_grace_notes()
-                                               for that in self.children if not that.is_grace_note()], self.rule_id)
+        children = [that.remove_grace_notes() for that in self.children if not that.is_grace_note()]
+        if len(children) == 1:
+            children[0].weight = self.weight
+            children[0].rule_id = self.rule_id
+            return children[0]
+        else:
+            return DTree(self.weight, self.label, children, self.rule_id)
 
     def reconnect_slurs(self):
         children = [child.reconnect_slurs() for child in self.children]
@@ -128,6 +133,9 @@ class DTree:
             children_str = ' '.join(child.show(debug) for child in self.children)
             return f"{base}({children_str})"
         return base or '1'
+
+    def __repr__(self):
+        return self.show(False)
 
     def __str__(self):
         return self.show(False)

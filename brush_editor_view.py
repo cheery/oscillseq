@@ -664,7 +664,7 @@ class NoteEditorTool:
 
         orig_notes = notes  = tracker.rhythm.to_notes()
         notes = notes.copy()
-        points = tracker.rhythm.to_points(0, tracker.duration)
+        points = tracker.rhythm.to_points(0, Fraction(tracker.duration))
 
         def notes_only(rms):
             nrms = []
@@ -703,7 +703,7 @@ class NoteEditorTool:
             middle = []
             notes[self.note_tail] = notehead
             for i in range(1, n):
-                t = i / n
+                t = Fraction(i, n)
                 notes.insert(first, "n")
                 middle.append(prefix[-1] + t*(suffix[0] - prefix[-1]))
             points = prefix + middle + suffix
