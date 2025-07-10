@@ -58,9 +58,12 @@ The later two are self-explanatory, the first one is a bit novel.
 
 ## Rhythm trees
 
-[Rhythm trees](https://www.pdonatbouillud.com/project/rythm-quantization/) are
-a relatively novel way to input rhythms.
-The editor comes with a mouse-based control that allows to divide the tree.
+The early version used a bit unusual [rhythm trees](https://www.pdonatbouillud.com/project/rythm-quantization/). Since then I've moved on to a more usual format.
+
+There's a quantizer that imitates [qparse's](https://qparse.gitlabpages.inria.fr/) algorithm.
+In the current model it's used to edit rhythms: The rhythm is rendered into fractional representation,
+the user does their thing on the fractional representation of rhythm in a mouse controller editor,
+and it is quantized back into a rhythm tree.
 
 ## Musical pitch class
 
