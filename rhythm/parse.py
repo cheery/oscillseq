@@ -75,7 +75,7 @@ def from_string(s):
     return parse_dtree(s)
     
 def tokenize(tree_str):
-    token_pattern = re.compile(r"\d+|[A-Za-z]+\d*|\(|\)")
+    token_pattern = re.compile(r"\d+|[A-Za-z]+\d*|\(|\)| +")
     tokens = token_pattern.findall(tree_str)
     return tokens
 
@@ -98,9 +98,11 @@ def parse_dtree(tree_str):
         children: List[DTree] = []
         if i < len(tokens) and tokens[i] == '(':
             i += 1
+            skip_space()
             while i < len(tokens) and tokens[i] != ')':
                 node = parse_node()
                 children.append(node)
+                skip_space()
             if i >= len(tokens) or tokens[i] != ')':
                 raise ValueError(f"Expected ')' at token {i}, got {tokens[i] if i < len(tokens) else None}")
             i += 1
@@ -108,7 +110,14 @@ def parse_dtree(tree_str):
             raise ValueError(f"Expected DTree at token {i}, got {tokens[i] if i < len(tokens) else None}")
         return DTree(weight, label, children)
 
+    def skip_space():
+        nonlocal i
+        if i < len(tokens) and tokens[i] == " ":
+            i += 1
+
+    skip_space()
     root = parse_node()
+    skip_space()
     if i != len(tokens):
         raise ValueError(f"Unexpected extra tokens from index {i}: {tokens[i:]}")
     return root
