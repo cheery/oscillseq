@@ -142,11 +142,14 @@ class DTree:
 
     def to_events(self, offset, duration):
         events = []
+        last = None
         for dtree, dur in self.leaves_with_durations(duration=duration):
             if dtree.label == "n":
                 events.append((offset, dur))
-            if dtree.label == "s":
+            if dtree.label == "s" and last == "n":
                 events[-1] = events[-1][0], events[-1][1] + dur
+            else:
+                last = dtree.label
             offset += dur
         return events
 
@@ -167,7 +170,7 @@ class DTree:
                 val.append(dur)
         return val
 
-    def to_points(self, offset, duration):
+    def to_points(self, offset=0, duration=1):
         output = [offset]
         for dur in self.to_val(duration):
             offset += dur

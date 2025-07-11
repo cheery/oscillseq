@@ -2,7 +2,7 @@ from model import Entity, ControlPoint, Key, Clip, NoteGen, Tracker, Cell, Piano
 from view_editor_view import layout_lanes, draw_editparams
 from components import ContextMenu
 from fractions import Fraction
-from layout import NoteLayout
+from layout import NoteLayout, LinSpacing, ExpSpacing
 from rhythm import DTree
 import collections
 import rhythm
@@ -148,7 +148,7 @@ class BrushEditorView:
             else:
                 self.selection = brushlist[0] if brushlist else []
         elif ev.key == pygame.K_a:
-            self.insert_brush(1, lambda duration: (Tracker("", duration, rhythm.Tree.from_string("n"), [], None)))
+            self.insert_brush(1, lambda duration: (Tracker("", duration, rhythm.from_string("n"), [], None)))
         elif ev.key == pygame.K_s:
             self.insert_brush(1, lambda duration: (Clip("", duration, [])))
         elif ev.key == pygame.K_c and self.editor.lane_tag is not None:
@@ -384,6 +384,10 @@ class TrackEditorView:
         self.loop = None
         self.refresh()
 
+    def get_spacing(self, width):
+        return LinSpacing(width)
+        #return ExpSpacing()
+
     def refresh(self):
         if self.tracker.view is not None:
             self.layout = layout_lanes(self.editor, self.tracker.view.lanes, 47, self.tracker.generators)
@@ -415,12 +419,14 @@ class TrackEditorView:
         #    (x, 200), tracker.duration*w, "linear")
         #notes.draw(screen, font)
 
-        notes = NoteLayout(tracker.rhythm, tracker.duration, 
-            (x, 15 + 3), tracker.duration*w, "linear")
-        notes.draw(screen, font)
+        spacing = self.get_spacing(tracker.duration*w)
+        notes = NoteLayout(tracker.rhythm, tracker.duration, spacing)
+        notes.draw(screen, font, (x, 15+3))
 
         rhythm = tracker.rhythm.to_events(0, tracker.duration)
-        #points = tracker.rhythm.to_points(0, tracker.duration)
+        rhythmd = notes.rhythmd
+        #points = spacing(0, tracker.rhythm.to_points())
+        #rhythmd = rhythm_display(points, tracker.rhythm.to_notes())
 
         pointer = pygame.mouse.get_pos()
 
@@ -429,22 +435,22 @@ class TrackEditorView:
         #    if 0 <= point < editor.BARS_VISIBLE:
         #        pygame.draw.line(screen, (255, 70, 70), (x + point*w, 47), (x + point*w, SCREEN_HEIGHT), 3)
 
-        for i, (point, span) in enumerate(rhythm, 1):
-            if 0 <= point < editor.BARS_VISIBLE:
-                pygame.draw.line(screen, (70, 70, 70), (x + point*w, 47), (x + point*w, SCREEN_HEIGHT))
+        for i, (point, span) in enumerate(rhythmd, 1):
+            if 0 <= point < editor.BARS_VISIBLE*w:
+                pygame.draw.line(screen, (70, 70, 70), (x + point, 47), (x + point, SCREEN_HEIGHT))
             point += span
-            if 0 <= point < editor.BARS_VISIBLE:
+            if 0 <= point < editor.BARS_VISIBLE*w:
                 if i == self.loop:
-                    pygame.draw.line(screen, (70, 255, 70), (x + point*w, 47), (x + point*w, SCREEN_HEIGHT), 4)
+                    pygame.draw.line(screen, (70, 255, 70), (x + point, 47), (x + point, SCREEN_HEIGHT), 4)
                 elif i in loop_groups:
-                    pygame.draw.line(screen, (70, 70, 255), (x + point*w, 47), (x + point*w, SCREEN_HEIGHT), 4)
+                    pygame.draw.line(screen, (70, 70, 255), (x + point, 47), (x + point, SCREEN_HEIGHT), 4)
                 else:
-                    pygame.draw.line(screen, (70, 70, 70), (x + point*w, 47), (x + point*w, SCREEN_HEIGHT))
+                    pygame.draw.line(screen, (70, 70, 70), (x + point, 47), (x + point, SCREEN_HEIGHT))
 
         get_accidentals = self.key_signature_mapper()
 
         for item in self.layout:
-            item.draw_tracks(screen, font, editor, rhythm, tracker.generators, get_accidentals, pointer, w, self.accidental)
+            item.draw_tracks(screen, font, editor, rhythmd, tracker.generators, get_accidentals, pointer, w, self.accidental)
 
         band1 = ["bb", "b", "n", "s", "ss"]
         band2 = ["draw", "r", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11"]
@@ -503,8 +509,9 @@ class TrackEditorView:
         graph_key = [(0, 0)]
         self.editor.doc.annotate(graph_key, 0)
         graph_key.sort(key=lambda x: x[0])
-        def get_accidentals(bar):
-            ix = bisect.bisect_right(graph_key, bar + self.location, key=lambda z: z[0])
+        rhythm = self.tracker.rhythm.to_events(self.location, self.tracker.duration)
+        def get_accidentals(i):
+            ix = bisect.bisect_right(graph_key, rhythm[i][0], key=lambda z: z[0])
             return music.accidentals(graph_key[ix-1][1])
         return get_accidentals
 
@@ -545,7 +552,12 @@ class NoteEditorTool:
         w = (SCREEN_WIDTH - self.view.editor.MARGIN) / self.view.editor.BARS_VISIBLE
 
         points = tracker.rhythm.to_points(0, tracker.duration)
-        rhythm = tracker.rhythm.to_events(0, tracker.duration)
+
+        spacing = self.view.get_spacing(tracker.duration*w)
+        notel = NoteLayout(tracker.rhythm, tracker.duration, spacing)
+        rhythmd = notel.rhythmd
+        display_points = [x for x in notel.display_points]
+
         get_accidentals = self.view.key_signature_mapper()
         x = editor.MARGIN
 
@@ -600,10 +612,10 @@ class NoteEditorTool:
                 return ref == int(a)
 
         if self.flavor == "split":
-            i = find_interval_index(points, (ev.pos[0] - x)/w)
+            i = find_interval_index(display_points, (ev.pos[0] - x))
             self.note_tail = i
         if self.flavor == "loop":
-            i = find_interval_index(points, (ev.pos[0] - x)/w)
+            i = find_interval_index(display_points, (ev.pos[0] - x))
             self.view.loop = i + 1 if i is not None else None
         if self.flavor == "draw":
             pitch = this_param = None
@@ -611,14 +623,14 @@ class NoteEditorTool:
                 if len(item.lane.edit) == 0:
                     continue
                 this_param = self.view.editparam if self.view.editparam in item.lane.edit else item.lane.edit[0]
-                pitch = item.query_pitch(editor, ev.pos, rhythm, get_accidentals, self.view.accidental, this_param, w)
+                pitch = item.query_pitch(editor, ev.pos, rhythmd, get_accidentals, self.view.accidental, this_param, w)
                 if pitch is not None:
                     self.view.editparam = this_param
                     break
             if pitch is not None:
                 tag,param = this_param
-                for i, (s, span) in enumerate(rhythm):
-                    if s <= (ev.pos[0] - x)/w <= s+span:
+                for i, (s, span) in enumerate(rhythmd):
+                    if s <= (ev.pos[0] - x) <= s+span:
                         gens0 = [gen for gen in tracker.generators if gen.tag == tag and gen.loop_group() == self.view.loop]
                         gens = [gen for gen in tracker.generators if gen.tag == tag]
                         if ev.button == 1:
@@ -634,7 +646,7 @@ class NoteEditorTool:
                                     blank_row = gen
                             else:
                                 if blank_row is None:
-                                    blank_row = NoteGen(tag, [None]*(self.view.loop or len(rhythm)), loop=self.view.loop is not None)
+                                    blank_row = NoteGen(tag, [None]*(self.view.loop or len(rhythmd)), loop=self.view.loop is not None)
                                     tracker.generators.append(blank_row)
                                 j = i % len(blank_row.track)
                                 blank_row.track[j] = {param: pitch}
@@ -666,6 +678,10 @@ class NoteEditorTool:
         notes = notes.copy()
         points = tracker.rhythm.to_points(0, Fraction(tracker.duration))
 
+        spacing = self.view.get_spacing(tracker.duration*w)
+        notel = NoteLayout(tracker.rhythm, tracker.duration, spacing)
+        display_points = [x for x in notel.display_points]
+
         def notes_only(rms):
             nrms = []
             i = 0
@@ -686,7 +702,7 @@ class NoteEditorTool:
 
         if self.flavor == "split" and self.note_tail is not None:
             mx, my = ev.pos
-            note_head = find_interval_index(points, (ev.pos[0] - x)/w)
+            note_head = find_interval_index(display_points, (ev.pos[0] - x))
             if note_head is None:
                 return
             n = self.pattern.count("n")
@@ -698,13 +714,12 @@ class NoteEditorTool:
             last  = max(note_head, self.note_tail)
             indices = list(range(len(notes)))
             indices = indices[:first] + [indices[self.note_tail]]*n + indices[last+1:]
+            notes   = notes[:first] + [notehead]*n + notes[last+1:]
             prefix = points[:first+1]
             suffix = points[last+1:]
             middle = []
-            notes[self.note_tail] = notehead
             for i in range(1, n):
                 t = Fraction(i, n)
-                notes.insert(first, "n")
                 middle.append(prefix[-1] + t*(suffix[0] - prefix[-1]))
             points = prefix + middle + suffix
             dtree, rms = rhythm.quantize.dtree(rhythm.grammar, points, notes)

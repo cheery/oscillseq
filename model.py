@@ -408,7 +408,7 @@ class Document:
             visit(e.brush)
         for cell in self.cells:
             visit(cell)
-        for view in self.views:
+        for view in self.views.values():
             visit(view)
         self.labels = labels
 

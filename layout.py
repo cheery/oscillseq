@@ -3,6 +3,34 @@ from rhythm import highest_bit_mask, decompose
 import rhythm
 import math
 import pygame
+import itertools
+
+class LinSpacing:
+    def __init__(self, width):
+        self.width = width
+
+    def __call__(self, x, offsets):
+        output = []
+        for offset in offsets:
+            output.append(offset * self.width + x)
+        return output
+
+class ExpSpacing:
+    def __init__(self, p = 20, q = 50):
+        self.p = p # width of 1/128th beat note
+        self.q = q # width of 1/1 beat note
+        self.a = math.log(p / q) / math.log(1 / 128)
+
+    def __call__(self, x, offsets):
+        output = []
+        last_offset = 0
+        offsets = list(offsets)
+        for offset in offsets:
+            delta = self.q * (offset - last_offset) ** self.a
+            output.append(x + delta)
+            last_offset = offset
+            x += delta
+        return output
 
 # TODO: consider where this code should reside.
 def highest_bit(n):
@@ -26,19 +54,16 @@ def get_beams(n):
 
 class NoteLayout:
     stem = 16
-    # Spacing configuration for note heads
-    p = 20 # width of 1/128th beat note
-    q = 50 # width of 1/1 beat note
-    a = math.log(p / q) / math.log(1 / 128)
 
-    def __init__(self, dtree, duration, pos, distance, spacing_mode="linear"):
+    def __init__(self, dtree, duration, spacing):
         self.dtree = dtree
         self.details = {}
         self.distances = []
-        self.note_distances = []
         self.values = []
         self.shapes = []
         self.ties   = []
+        ixs0 = []
+        ixs1 = []
         def layout_notes(ix1, dtree, duration, distance):
             ix0 = ix1
             duration *= dtree.weight
@@ -51,12 +76,16 @@ class NoteLayout:
                         if self.shapes[-1] == 'note':
                             self.ties.append(ix1-1)
                         self.shapes.append(self.shapes[-1])
+                        ixs1[-1] = ix1+1
                     elif dtree.label == "r":
                         self.shapes.append('rest')
+                        ixs0.append(ix1)
+                        ixs1.append(ix1+1)
                     elif dtree.label == "n":
                         self.shapes.append('note')
+                        ixs0.append(ix1)
+                        ixs1.append(ix1+1)
                     ix1 += 1
-                self.note_distances.append(distance)
             else:
                 span = dtree.span
                 distance /= span
@@ -65,25 +94,25 @@ class NoteLayout:
                     ix1 = layout_notes(ix1, subtree, duration / divider, distance)
                 self.details[dtree] = ix0, ix1-1, duration, divider, span
             return ix1
-        layout_notes(0, dtree, Fraction(duration), distance)
+        layout_notes(0, dtree, Fraction(duration), 1.0)
 
-        px, py = self.pos = pos
-
+        raw_points = [0] + spacing(0, itertools.accumulate(self.distances))
         self.points = []
-        if spacing_mode == "linear":
-            for distance in self.distances:
-                cx = px + distance*0.5
-                self.points.append(cx - 2)
-                px += distance
-        elif spacing_mode == "exp":
-            for value in self.values:
-                d = self.q * value ** self.a
-                cx = px + d*0.5
-                self.points.append(cx - 2)
-                px += d
+        px = 0
+        for x in raw_points[1:]:
+            self.points.append(px + (x - px)*0.5)
+            px = x
 
-    def draw(self, screen, font):
-        px, py = self.pos
+        self.display_points = [raw_points[ix] for ix in ixs0] + [raw_points[-1]]
+        self.rhythmd = []
+        for ix0, ix1 in zip(ixs0, ixs1):
+            px0 = raw_points[ix0]
+            px1 = raw_points[ix1]
+            if self.shapes[ix0] == "note":
+                self.rhythmd.append((px0, px1 - px0))
+
+    def draw(self, screen, font, pos):
+        py = pos[1]
         beams  = [0] * len(self.points)
         def draw_tuplets(dtree, depth=0):
             deepest = depth
@@ -98,8 +127,8 @@ class NoteLayout:
                 bm = get_beams(duration / divider)
                 for ix in range(ix0+1, ix1+1):
                     beams[ix] = max(beams[ix], bm)
-                x0 = self.points[ix0] + 3
-                x1 = self.points[ix1] + 3
+                x0 = self.points[ix0] + 3 + pos[0]
+                x1 = self.points[ix1] + 3 + pos[0]
                 if draw_tuplet:
                     text = f"{span}:{divider}"
                     text = font.render(text, True, (200,200,200))
@@ -116,8 +145,8 @@ class NoteLayout:
         py += self.stem
 
         for ix in self.ties:
-            x0 = self.points[ix]
-            x1 = self.points[ix+1]
+            x0 = self.points[ix] + pos[0]
+            x1 = self.points[ix+1] + pos[0]
             pygame.draw.lines(screen, (200, 200, 200), False, [
                 (x0, py + 8),
                 ((x0+x1)/2, py + 12),
@@ -126,6 +155,7 @@ class NoteLayout:
 
         px = 0
         for cx, shape, value, beam in zip(self.points, self.shapes, self.values, beams):
+            cx += pos[0]
             hollow = head_is_hollow(value)*1
             if shape == 'rest':
                 pygame.draw.rect(screen, (200, 200, 200), (cx-4, py-1, 8, 2), hollow)

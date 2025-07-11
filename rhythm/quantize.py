@@ -183,7 +183,7 @@ def equivalent(nt, pts, notes, alpha=1.0):
 
     return produce(nt, Interval(pts[0], pts[-1]))
 
-def dtree(nt, points, notes, alpha=0.001):
+def dtree(nt, points, notes, alpha=0.01):
     pts = []
     pre_rms = []
     for i in range(len(points)-1):

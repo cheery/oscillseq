@@ -272,21 +272,20 @@ class StavesLayout:
                 pygame.draw.line(screen, (70, 70, 70), (x, y+p*k/12), (x+w, y+p*k/12))
             y += k
 
-    def query_pitch(self, editor, pointer, rhythm, get_accidentals, accidental, editparam, w):
+    def query_pitch(self, editor, pointer, rhythmd, get_accidentals, accidental, editparam, w):
         k = self.rect.height / (self.staves.count + self.staves.above + self.staves.below)
         x = self.rect.left + editor.MARGIN
         y = self.rect.top + self.staves.above*k
-        for i, (b, span) in enumerate(rhythm):
-            span *= w
-            if 0 <= pointer[0] - x - b*w <= span:
+        for i, (b, span) in enumerate(rhythmd):
+            if 0 <= pointer[0] - x - b <= span:
                 y1 = (pointer[1] - y) // (k/12) * (k/12) + y
                 if self.rect.top < y1 < self.rect.bottom:
                     position = 40 - int((pointer[1] - y) // (k/12))
-                    acci = get_accidentals(b)
+                    acci = get_accidentals(i)
                     acc = accidental or acci[position%7]
                     return music.Pitch(position, acc)
 
-    def draw_tracks(self, screen, font, editor, rhythm, generators, get_accidentals, pointer, w, accidental):
+    def draw_tracks(self, screen, font, editor, rhythmd, generators, get_accidentals, pointer, w, accidental):
         k = self.rect.height / (self.staves.count + self.staves.above + self.staves.below)
         x = self.rect.left + editor.MARGIN
         y = self.rect.top + self.staves.above*k
@@ -295,8 +294,8 @@ class StavesLayout:
             for gen in generators:
                 if gen.tag != tag:
                     continue
-                for i, (b, span) in enumerate(rhythm):
-                    acci = get_accidentals(b)
+                for i, (b, span) in enumerate(rhythmd):
+                    acci = get_accidentals(i)
                     args = gen.track[i % len(gen.track)]
                     if args is None:
                         continue
@@ -307,15 +306,13 @@ class StavesLayout:
                     if pitch.accidental == acci[pitch.position % 7]:
                         color = (255,255,255)
                     y1 = y + (40 - pitch.position) * k / 12
-                    span *= w
-                    pygame.draw.line(screen, color, (x + b*w + span*0.05, y1), (x + b*w + span*0.95, y1), int(k/9))
+                    pygame.draw.line(screen, color, (x + b + span*0.05, y1), (x + b + span*0.95, y1), int(k/9))
 
-        for i, (b, span) in enumerate(rhythm):
-            span *= w
-            if 0 <= pointer[0] - x - b*w <= span:
+        for i, (b, span) in enumerate(rhythmd):
+            if 0 <= pointer[0] - x - b <= span:
                 y1 = (pointer[1] - y) // (k/12) * (k/12) + y
                 if self.rect.top < y1 < self.rect.bottom:
-                    rect = pygame.Rect(x + b*w + span*0.05, y1 - k / 24, span*0.9, k / 12)
+                    rect = pygame.Rect(x + b + span*0.05, y1 - k / 24, span*0.9, k / 12)
                     if accidental is None:
                         color = (255,255,255)
                     else:
@@ -349,20 +346,19 @@ class PianoRollLayout:
             else:
                 pygame.draw.line(screen, (50, 50, 50), (x, py), (self.rect.right, py))
 
-    def query_pitch(self, editor, pointer, rhythm, get_accidentals, accidental, editparam, w):
+    def query_pitch(self, editor, pointer, rhythmd, get_accidentals, accidental, editparam, w):
         if editparam not in self.lane.edit:
             return
         k = self.rect.height / (self.pianoroll.top - self.pianoroll.bot + 1)
         x = self.rect.left + editor.MARGIN
         y = self.rect.bottom
-        for i, (b, span) in enumerate(rhythm):
-            span *= w
-            if 0 <= pointer[0] - x - b*w <= span:
+        for i, (b, span) in enumerate(rhythmd):
+            if 0 <= pointer[0] - x - b <= span:
                 y1 = (pointer[1] - y) // k * k + y
                 if self.rect.top <= y1 < self.rect.bottom:
                     return self.pianoroll.bot - int((pointer[1] - y) // k) - 1
 
-    def draw_tracks(self, screen, font, editor, rhythm, generators, get_accidentals, pointer, w, accidental):
+    def draw_tracks(self, screen, font, editor, rhythmd, generators, get_accidentals, pointer, w, accidental):
         k = self.rect.height / (self.pianoroll.top - self.pianoroll.bot + 1)
         x = self.rect.left + editor.MARGIN
         y = self.rect.bottom
@@ -370,8 +366,7 @@ class PianoRollLayout:
             for gen in generators:
                 if gen.tag != tag:
                     continue
-                for i, (b, span) in enumerate(rhythm):
-                    span *= w
+                for i, (b, span) in enumerate(rhythmd):
                     args = gen.track[i % len(gen.track)]
                     if args is None:
                         continue
@@ -379,14 +374,13 @@ class PianoRollLayout:
                     color = (255,255,255)
                     if self.pianoroll.bot <= pitch <= self.pianoroll.top:
                         y1 = y - (pitch - self.pianoroll.bot + 1)*k
-                        pygame.draw.rect(screen, color, (x + b*w + span*0.05, y1 + k * 0.05, span*0.90, k * 0.9))
+                        pygame.draw.rect(screen, color, (x + b + span*0.05, y1 + k * 0.05, span*0.90, k * 0.9))
 
-        for i, (b, span) in enumerate(rhythm):
-            span *= w
-            if 0 <= pointer[0] - x - b*w <= span:
+        for i, (b, span) in enumerate(rhythmd):
+            if 0 <= pointer[0] - x - b <= span:
                 y1 = (pointer[1] - y) // k * k + y
                 if self.rect.top <= y1 < self.rect.bottom:
-                    rect = pygame.Rect(x + b*w + span*0.05, y1, span*0.9, k)
+                    rect = pygame.Rect(x + b + span*0.05, y1, span*0.9, k)
                     if accidental is None:
                         color = (255,255,255)
                     else:
@@ -403,10 +397,10 @@ class GridLayout:
     def draw(self, screen, font, editor):
         pygame.draw.line(screen, (70, 70, 70), self.rect.topleft, self.rect.topright)
 
-    def query_pitch(self, editor, pointer, rhythm, get_accidentals, accidental, editparam, w):
+    def query_pitch(self, editor, pointer, rhythmd, get_accidentals, accidental, editparam, w):
         return None
 
-    def draw_tracks(self, screen, font, editor, rhythm, generators, get_accidentals, pointer, w, accidental):
+    def draw_tracks(self, screen, font, editor, rhythmd, generators, get_accidentals, pointer, w, accidental):
         y = self.rect.top
         x = self.rect.left + editor.MARGIN
         for tag,param in self.lane.edit:
@@ -415,17 +409,16 @@ class GridLayout:
                     continue
                 text = font.render(editparam_text(tag, param, editor), True, (200,200,200))
                 screen.blit(text, (x - text.get_width() - 10, y + 2))
-                for i, (b, span) in enumerate(rhythm):
-                    span *= w
+                for i, (b, span) in enumerate(rhythmd):
                     args = gen.track[i % len(gen.track)]
                     if args is None:
                         text = " "
                     else:
                         text = str(args.get(param, "_"))
                     text = font.render(text, True, (200,200,200))
-                    screen.blit(text, (x + b*w, y + 2))
-                    if 0 <= pointer[0] - x - b*w <= span and y <= pointer[1] <= y + 15:
-                        rect = pygame.Rect(x + b*w + span*0.05, y, span*0.9, 15)
+                    screen.blit(text, (x + b, y + 2))
+                    if 0 <= pointer[0] - x - b <= span and y <= pointer[1] <= y + 15:
+                        rect = pygame.Rect(x + b + span*0.05, y, span*0.9, 15)
                         pygame.draw.rect(screen, (200,200,200), rect, 1)
                 y += 15
 

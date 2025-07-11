@@ -6,8 +6,21 @@ from .parse import *
 from . import quantize
 
 grammar = grammar_from_string('''
+p1: q0 -> 0.1 n
+p1: q0 -> 0.1 r
+p2: q0 -> 0.35 (q1 q1)
+p4: q0 -> 0.35 (q1 q1 q1 q1)
+p3: q0 -> 0.45 (q3 q3 q3)
+p6: q0 -> 0.5  (q3 q3 q3 q3 q3 q3)
+p8: q0 -> 0.6  (q1 q1 q1 q1 q1 q1 q1 q1)
+p5: q0 -> 0.7  (q3 q3 q3 q3 q3)
+p7: q0 -> 0.8  (q3 q3 q3 q3 q3 q3 q3)
+p9: q0 -> 0.9  (q3 q3 q3 q3 q3 q3 q3 q3 q3)
+p11: q0 -> 1.1  (q3 q3 q3 q3 q3 q3 q3 q3 q3 q3 q3)
+
 t1: q1 -> 0.1 n
 t1: q1 -> 0.1 r
+t1: q1 -> 0.1 s
 t2: q1 -> 0.35 (q2 q2)
 t4: q1 -> 0.35 (q2 q2 q2 q2)
 t3: q1 -> 0.45 (q3 q3 q3)

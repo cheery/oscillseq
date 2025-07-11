@@ -3,7 +3,7 @@ import bisect
 from rhythm import quantize
 import rhythm
 from rhythm import DTree
-from layout import NoteLayout
+from layout import NoteLayout, LinSpacing, ExpSpacing
 
 class RewriteView:
     def __init__(self, editor):
@@ -20,13 +20,9 @@ class RewriteView:
         #self.dtree = quantize.quantize_to_dtree(self.lines, self.alpha, self.beta)
         #self.vals = quantize.quantize_to_val(self.lines, 1, self.alpha, self.beta)
         points = self.lines
-        self.dtree2 = quantize.dtree(rhythm.grammar, points, ['n']*(len(points)-1), alpha=self.beta)[0]
+        self.dtree2 = quantize.dtree(rhythm.grammar, points, ['n']*(len(points)-1), alpha=self.beta * 0.01)[0]
 
-        notes = NoteLayout(self.dtree2, 1,
-            (self.lines[0], 250), self.lines[-1]-self.lines[0], "linear")
-        self.lines2 = [self.lines[0]]
-        for d in notes.note_distances:
-            self.lines2.append(self.lines2[-1] + d)
+        self.lines2 = self.dtree2.to_points(self.lines[0], self.lines[-1]-self.lines[0])
     
         #import rt
         #grammar = rt.equivalent_rhythms(rt.q1, self.vals)
@@ -78,9 +74,8 @@ class RewriteView:
         #    (100, 250), 350, "linear")
         #notes.draw(screen, font)
 
-        notes = NoteLayout(self.dtree2, 1,
-            (self.lines[0], 250), self.lines[-1]-self.lines[0], "linear")
-        notes.draw(screen, font)
+        notes = NoteLayout(self.dtree2, 1, LinSpacing(self.lines[-1]-self.lines[0]))
+        notes.draw(screen, font, (self.lines[0], 250))
 
         #if self.rt is not None:
         #    notes = NoteLayout(DTree.from_rt(self.rt), 1,
