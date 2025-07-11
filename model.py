@@ -27,6 +27,9 @@ class Entity:
             shift = obj["shift"],
             brush = brushes[obj["brush"]])
 
+    def copy(self):
+        return Entity(self.shift, self.brush)
+
 def value_to_json(value):
     if isinstance(value, music.Pitch):
         return [value.position, value.accidental]
@@ -85,6 +88,9 @@ class ControlPoint:
             value = json_to_value(obj["value"])
         )
 
+    def copy(self):
+        return ControlPoint("", self.tag, self.transition, self.value)
+
 @dataclass(eq=False)
 class Key:
     label : str
@@ -115,6 +121,9 @@ class Key:
             index = obj["index"],
         )
 
+    def copy(self):
+        return Key("", self.lanes, self.index)
+
 @dataclass(eq=False)
 class Clip:
     label : str
@@ -144,6 +153,9 @@ class Clip:
             brushes = obj['brushes']
         )
 
+    def copy(self):
+        return Clip("", self.duration, [e.copy() for e in self.brushes])
+
 def json_to_gen(obj):
     return {
         "note": NoteGen,
@@ -158,6 +170,10 @@ def args_to_json(args):
 def json_to_args(obj):
     if obj is not None:
         return {name: json_to_value(o) for name, o in obj.items()}
+
+def copy_args(args):
+    if args is not None:
+        return args.copy()
 
 @dataclass(eq=False)
 class NoteGen:
@@ -195,6 +211,9 @@ class NoteGen:
             loop = obj["loop"],
             flavor = obj["type"]
         )
+
+    def copy(self):
+        return NoteGen(self.tag, [copy_args(a) for a in self.track], self.loop, self.flavor)
 
 def legacy_to_notegens(generators):
     if isinstance(generators, list):
@@ -255,6 +274,13 @@ class Tracker:
             view = obj.get("view", None),
         )
 
+    def copy(self):
+        return Tracker("",
+            self.duration,
+            rhythm.from_string(str(self.rhythm)),
+            [g.copy() for g in self.generators],
+            self.view)
+
 @dataclass(eq=False)
 class Cell:
     label : str
@@ -283,6 +309,9 @@ class Cell:
             pos = tuple(obj['pos']),
             params = {name: json_to_value(o) for name, o in obj['params'].items()},
             type_param = obj.get('type_param', None))
+
+    def copy(self):
+        return Cell("", self.multi, self.synth, tuple(self.pos), self.params.copy(), self.type_param)
 
 def json_to_view_lane(obj):
     return {

@@ -18,6 +18,7 @@ import pygame
 import supriya
 import sys
 import spectroscope
+from layout import NoteLayout, LinSpacing, calc_height
 from brush_editor_view import BrushEditorView, modify
 from node_editor_view import NodeEditorView
 from view_editor_view import ViewEditorView
@@ -331,7 +332,7 @@ class Editor:
             if self.transport_status == 3:
                 self.set_fabric()
             sequence = self.sequence
-            self.set_playing(Sequencer(sequence, point=sequence.t(self.timeline_head), **self.playback_params(sequence)))
+            self.set_playing(Sequencer(sequence, point=sequence.t(min(self.timeline_head, self.timeline_tail)), **self.playback_params(sequence)))
         else:
             self.set_fabric()
             for synth in self.clavier.values():
@@ -641,8 +642,8 @@ class TrackLayout:
                 return
             if isinstance(brush, Clip):
                 process_clip(brush)
-            elif isinstance(brush, Tracker) and isinstance(brush.rhythm, rhythm.Tree):
-                self.brush_heights[brush] = 15 + 3 * (brush.rhythm.depth) + 20
+            elif isinstance(brush, Tracker) and isinstance(brush.rhythm, rhythm.DTree):
+                self.brush_heights[brush] = 15 + calc_height(brush.rhythm)
             else:
                 self.brush_heights[brush] = 15
         def process_clip(clip):
@@ -719,35 +720,37 @@ class TrackLayout:
                 screen.blit(text, (start*w + 10 + editor.MARGIN, y))
                 if isinstance(e.brush, Clip):
                     draw_clip_contents(e.brush, shift + e.shift, y + 15, seli + [e])
-                if isinstance(e.brush, Tracker) and isinstance(e.brush.rhythm, rhythm.Tree):
-                    leafs = []
-                    extra = {}
-                    def draw_tree(x, y, span, tree):
-                        color = (200, 200, 200) #[(200, 200, 200), (255, 0, 255)][tree == s_tree]
-                        count = 1
-                        if tree in extra:
-                            x, sp, count = extra[tree]
-                            span += sp
-                            count += 1
-                        if len(tree) == 0 and tree.label == 'o' and (n := tree.next_cousin()) is not None:
-                            extra[n] = x, span, count
-                        elif len(tree) == 0:
-                            if tree.label == "n":
-                                leafs.append((x, span))
-                            text = font.render(tree.label, True, color)
-                            w = span/2 - text.get_width() / 2
-                            screen.blit(text, (x + w, y))
-                        else:
-                            w = span / len(tree) if count == 1 else span / count
-                            rect = pygame.Rect(x + w/2, y, span - w, 1)
-                            pygame.draw.rect(screen, color, rect)
-                            w = span / len(tree)
-                            for i, stree in enumerate(tree):
-                                rect = pygame.Rect(x + i*w + w/2 - 1, y, 2, 3)
-                                pygame.draw.rect(screen, color, rect)
-                                draw_tree(x + i*w, y+3, w, stree)
-                    span = duration*w
-                    draw_tree(start*w+editor.MARGIN, y + 15, span, e.brush.rhythm)
+                if isinstance(e.brush, Tracker) and isinstance(e.brush.rhythm, rhythm.DTree):
+                    notel = NoteLayout(e.brush.rhythm, e.brush.duration, LinSpacing(w*e.brush.duration))
+                    notel.draw(screen, font, (start*w + editor.MARGIN, y + 15))
+                    #leafs = []
+                    #extra = {}
+                    #def draw_tree(x, y, span, tree):
+                    #    color = (200, 200, 200) #[(200, 200, 200), (255, 0, 255)][tree == s_tree]
+                    #    count = 1
+                    #    if tree in extra:
+                    #        x, sp, count = extra[tree]
+                    #        span += sp
+                    #        count += 1
+                    #    if len(tree) == 0 and tree.label == 'o' and (n := tree.next_cousin()) is not None:
+                    #        extra[n] = x, span, count
+                    #    elif len(tree) == 0:
+                    #        if tree.label == "n":
+                    #            leafs.append((x, span))
+                    #        text = font.render(tree.label, True, color)
+                    #        w = span/2 - text.get_width() / 2
+                    #        screen.blit(text, (x + w, y))
+                    #    else:
+                    #        w = span / len(tree) if count == 1 else span / count
+                    #        rect = pygame.Rect(x + w/2, y, span - w, 1)
+                    #        pygame.draw.rect(screen, color, rect)
+                    #        w = span / len(tree)
+                    #        for i, stree in enumerate(tree):
+                    #            rect = pygame.Rect(x + i*w + w/2 - 1, y, 2, 3)
+                    #            pygame.draw.rect(screen, color, rect)
+                    #            draw_tree(x + i*w, y+3, w, stree)
+                    #span = duration*w
+                    #draw_tree(start*w+editor.MARGIN, y + 15, span, e.brush.rhythm)
         draw_clip_contents(editor.doc, 0, bs, [])
 
         #screen.set_clip(pygame.Rect(0, 15 + 15, self.SCREEN_WIDTH, self.SCREEN_HEIGHT - 15 + 15))

@@ -14,7 +14,7 @@ import math
 class BrushEditorView:
     def __init__(self, editor):
         self.editor = editor
-        self.tool = NoTool(self)
+        self.tool = SelectionTool(self)
         self.selection = []
         self.reference = None
 
@@ -77,7 +77,7 @@ class BrushEditorView:
         elif ev.key == pygame.K_e:
             if self.selection:
                 brush = self.selection[-1].brush
-                brush = self.editor.doc.intro(json_to_brush("", brush.to_json()))
+                brush = self.editor.doc.intro(brush.copy())
                 self.selection[-1].brush = brush
         elif ev.key == pygame.K_o:
             sel = self.selection
@@ -311,6 +311,53 @@ class NoTool:
 
     def handle_mousemotion(self, ev):
         pass
+
+class SelectionTool:
+    def __init__(self, view):
+        self.view = view
+
+    def draw(self, screen):
+        pass
+
+    def handle_mousebuttondown(self, ev):
+        mods = pygame.key.get_mods()
+        shift_held = mods & pygame.KMOD_SHIFT
+        editor = self.view.editor
+        w = (editor.SCREEN_WIDTH - editor.MARGIN) / editor.BARS_VISIBLE
+        i = max(0, round((ev.pos[0] - self.view.editor.MARGIN) / w)) + editor.timeline_scroll
+        j = max(0, math.floor((ev.pos[0] - self.view.editor.MARGIN) / w)) + editor.timeline_scroll
+        if ev.button == 1:
+            editor.timeline_head = i
+            if not shift_held:
+                editor.timeline_tail = i
+            self.view.tool = DragTimelineHead(self.view, self)
+        pass
+
+    def handle_mousebuttonup(self, ev):
+        pass
+
+    def handle_mousemotion(self, ev):
+        pass
+
+class DragTimelineHead:
+    def __init__(self, view, tool):
+        self.view = view
+        self.tool = tool
+
+    def draw(self, screen):
+        pass
+
+    def handle_mousebuttondown(self, ev):
+        pass
+
+    def handle_mousebuttonup(self, ev):
+        self.view.tool = self.tool
+
+    def handle_mousemotion(self, ev):
+        editor = self.view.editor
+        w = (editor.SCREEN_WIDTH - editor.MARGIN) / editor.BARS_VISIBLE
+        i = max(0, round((ev.pos[0] - self.view.editor.MARGIN) / w)) + editor.timeline_scroll
+        editor.timeline_head = i
 
 def dfs_list(brushes):
     output = []

@@ -52,6 +52,20 @@ def head_is_hollow(n):
 def get_beams(n):
     return max(0, highest_bit(get_magnitude(n).denominator) - 2)
 
+def calc_height(dtree):
+    def estim_tuplets(dtree, depth=0):
+        deepest = depth
+        if len(dtree.children) > 0:
+            span = dtree.span
+            divider = highest_bit_mask(span)
+            draw_tuplet = (span != divider)
+            for subtree in dtree.children:
+                deep = estim_tuplets(subtree, depth+1*draw_tuplet)
+                deepest = max(deep, deepest)
+        return deepest
+    depth = estim_tuplets(dtree)
+    return 15*depth + NoteLayout.stem + 15
+
 class NoteLayout:
     stem = 16
 
