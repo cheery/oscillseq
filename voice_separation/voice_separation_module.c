@@ -3,10 +3,6 @@
 #include <numpy/arrayobject.h>
 #include "voice_separation.h"
 
-// Wrapper: voice_separation(onset, duration, offset, pitch,
-//                           max_voices, pitch_penalty, gap_penalty,
-//                           chord_penalty, overlap_penalty, cross_penalty,
-//                           pitch_lookback[, lcg])
 static PyObject*
 py_voice_separation(PyObject* self, PyObject* args, PyObject* kwargs)
 {
@@ -64,7 +60,7 @@ py_voice_separation(PyObject* self, PyObject* args, PyObject* kwargs)
     int n_pitch    = (int)PyArray_DIM(pitch_arr, 0);
     if (max_notes != n_offset || max_notes != n_pitch) {
         PyErr_SetString(PyExc_ValueError,
-            "Arrays 'onset', 'duration', 'offset' and 'pitch' must all have the same length");
+            "Arrays 'onset', 'offset' and 'pitch' must all have the same length");
         Py_DECREF(onset_arr);
         Py_DECREF(offset_arr);
         Py_DECREF(pitch_arr);
@@ -137,7 +133,6 @@ cleanup:
     return voices_list;
 }
 
-// Module method table
 static PyMethodDef VoiceMethods[] = {
     {
         "voice_separation",
@@ -145,7 +140,7 @@ static PyMethodDef VoiceMethods[] = {
         METH_VARARGS | METH_KEYWORDS,
         "Separate notes into voices.\n\n"
         "Required:\n"
-        "  onset, duration, offset, pitch (arrays)\n"
+        "  onset, offset, pitch (arrays)\n"
         "Optional:\n"
         "  max_voices (int)  # defaults to 6\n"
         "  pitch_penalty, gap_penalty, chord_penalty, # defaults to 1\n"
@@ -167,7 +162,7 @@ static struct PyModuleDef voice_module = {
 PyMODINIT_FUNC
 PyInit_voice_separation(void)
 {
-    import_array();  // Initialize NumPy C‑API
+    import_array();
     return PyModule_Create(&voice_module);
 }
 
