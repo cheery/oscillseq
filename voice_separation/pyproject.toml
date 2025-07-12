@@ -1,0 +1,10 @@
+[build-system]
+requires = ["setuptools>=65.0", "wheel", "numpy"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "voice_separation"
+version = "0.0"
+dependencies = [
+  "numpy"
+]
