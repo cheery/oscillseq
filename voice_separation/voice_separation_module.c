@@ -111,11 +111,7 @@ py_voice_separation(PyObject* self, PyObject* args, PyObject* kwargs)
         if (!lst) { Py_DECREF(voices_list); voices_list = NULL; goto cleanup; }
         for (int i = 0; i < max_notes; ++i) {
             if (voice[i] == v) {
-                PyObject *note = Py_BuildValue("(d,d,i)",
-                    desc.onset[i],
-                    desc.offset[i],
-                    desc.position[i]
-                );
+                PyObject *note = Py_BuildValue("i", i);
                 PyList_Append(lst, note);
                 Py_DECREF(note);
             }
