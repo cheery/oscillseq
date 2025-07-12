@@ -58,9 +58,9 @@ py_voice_separation(PyObject* self, PyObject* args, PyObject* kwargs)
     int max_notes = (int)PyArray_DIM(onset_arr, 0);
     int n_offset   = (int)PyArray_DIM(offset_arr, 0);
     int n_pitch    = (int)PyArray_DIM(pitch_arr, 0);
-    if (max_notes != n_offset || max_notes != n_pitch) {
+    if (max_notes == 0 || max_notes != n_offset || max_notes != n_pitch) {
         PyErr_SetString(PyExc_ValueError,
-            "Arrays 'onset', 'offset' and 'pitch' must all have the same length");
+            "Arrays 'onset', 'offset' and 'pitch' must all have the same nonzero length");
         Py_DECREF(onset_arr);
         Py_DECREF(offset_arr);
         Py_DECREF(pitch_arr);
@@ -68,6 +68,7 @@ py_voice_separation(PyObject* self, PyObject* args, PyObject* kwargs)
     }
 
     double *duration = calloc(max_notes, sizeof(double));
+    double *chord = calloc(max_notes, sizeof(int));
     int *voice = calloc(max_notes, sizeof(int));
     int *link  = calloc(max_notes, sizeof(int));
     if (!duration || !voice || !link) {
@@ -76,6 +77,7 @@ py_voice_separation(PyObject* self, PyObject* args, PyObject* kwargs)
         Py_DECREF(offset_arr);
         Py_DECREF(pitch_arr);
         free(duration);
+        free(chord);
         free(voice);
         free(link);
         return NULL;
@@ -87,6 +89,7 @@ py_voice_separation(PyObject* self, PyObject* args, PyObject* kwargs)
     desc.duration        = duration;
     desc.offset          = (double*)PyArray_DATA(offset_arr);
     desc.position        = (int*)   PyArray_DATA(pitch_arr);
+    desc.chord           = chord;
     desc.voice           = voice;
     desc.link            = link;
     desc.max_voices      = max_voices;
@@ -121,6 +124,7 @@ py_voice_separation(PyObject* self, PyObject* args, PyObject* kwargs)
 
 cleanup:
     free(duration);
+    free(chord);
     free(voice);
     free(link);
     Py_DECREF(onset_arr);

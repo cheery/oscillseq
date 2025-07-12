@@ -6,6 +6,7 @@ typedef struct {
   double *duration;
   double *offset;
   int    *position;
+  int    *chord;
   int    *voice;
   int    *link;
   int max_voices;
