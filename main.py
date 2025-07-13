@@ -643,7 +643,7 @@ class TrackLayout:
             if isinstance(brush, Clip):
                 process_clip(brush)
             elif isinstance(brush, Tracker) and isinstance(brush.rhythm, rhythm.DTree):
-                self.brush_heights[brush] = 15 + calc_height(brush.rhythm)
+                self.brush_heights[brush] = 15 + calc_height(brush.rhythm, brush.duration)
             else:
                 self.brush_heights[brush] = 15
         def process_clip(clip):

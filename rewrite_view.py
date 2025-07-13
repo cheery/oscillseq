@@ -129,7 +129,8 @@ class RewriteView:
         y = 0
         for dtree in self.dtrees:
             color = [c * 255 for c in golden_ratio_color_varying(y)]
-            notel = NoteLayout(dtree, 1, LinSpacing(self.grid.stop*w - self.grid.start*w))
+            duration = int(self.grid.stop - self.grid.start)
+            notel = NoteLayout(dtree, duration, LinSpacing(duration*w))
             notel.draw(screen, font, (self.grid.start*w, 50 + y))
             for x in notel.display_points:
                 x += self.grid.start*w

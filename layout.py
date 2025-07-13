@@ -52,7 +52,7 @@ def head_is_hollow(n):
 def get_beams(n):
     return max(0, highest_bit(get_magnitude(n).denominator) - 2)
 
-def calc_height(dtree):
+def calc_height(dtree, duration):
     def estim_tuplets(dtree, depth=0, deep=True):
         deepest = depth
         if len(dtree.children) > 0:
@@ -63,7 +63,7 @@ def calc_height(dtree):
                 deep = estim_tuplets(subtree, depth+1*draw_tuplet)
                 deepest = max(deep, deepest)
         return deepest
-    depth = estim_tuplets(dtree, deep=False)
+    depth = estim_tuplets(dtree, deep=(duration==1))
     return 15*depth + NoteLayout.stem + 15
 
 class NoteLayout:
@@ -71,6 +71,7 @@ class NoteLayout:
 
     def __init__(self, dtree, duration, spacing):
         self.dtree = dtree
+        self.duration = duration
         self.details = {}
         self.distances = []
         self.values = []
@@ -81,8 +82,7 @@ class NoteLayout:
         def layout_notes(ix1, dtree, duration, distance, deep=True):
             ix0 = ix1
             duration *= dtree.weight
-            if deep:
-                distance *= dtree.weight
+            distance *= dtree.weight
             if len(dtree.children) == 0:
                 for k, d in enumerate(decompose(duration)):
                     self.distances.append(distance * (float(d) / float(duration)))
@@ -104,12 +104,12 @@ class NoteLayout:
             else:
                 span = dtree.span
                 distance /= span
-                divider = highest_bit_mask(span)
+                divider = highest_bit_mask(span) if deep else span
                 for subtree in dtree.children:
                     ix1 = layout_notes(ix1, subtree, duration / divider, distance)
                 self.details[dtree] = ix0, ix1-1, duration, divider, span
             return ix1
-        layout_notes(0, dtree, Fraction(duration), 1.0, deep=False)
+        layout_notes(0, dtree, Fraction(duration), 1.0, deep=(duration==1))
 
         raw_points = [0] + spacing(0, itertools.accumulate(self.distances))
         self.points = []
@@ -156,7 +156,7 @@ class NoteLayout:
                     pygame.draw.rect(screen, (200, 200, 200), (x1-1,py+5 + depth*15, 1, 4))
             return deepest
 
-        py += 15*draw_tuplets(self.dtree, deep=False)
+        py += 15*draw_tuplets(self.dtree, deep=(self.duration == 1))
         py += self.stem
 
         for ix in self.ties:

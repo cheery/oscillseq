@@ -135,8 +135,10 @@ class Interval:
         return str(self.start) + ":" + str(self.stop)
 
 def bars(grammar, count):
+    if count == 1:
+        return grammar
     nt = Nonterminal(f"BARS_{count}")
-    nt.prod.append((0, DTree(count, None, [DTree(1, grammar, [])]*count))) 
+    nt.prod.append((0, DTree(1, None, [DTree(1, grammar, [])]*count))) 
     return nt
 
 def equivalent(nt, pts, notes, alpha=1.0):
