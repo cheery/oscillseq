@@ -49,21 +49,36 @@ The rhythm generated (onset,duration) -events that are fed to the generators.
 The generators decorate the events with details,
 eg. pitch, volume, anything described in the synthetizer.
 
-The view may be adjusted to work like a traditional tracker, but it also
-has a musical staff representation.
-
 There are three rhythm models at the time of writing:
 Rhythm trees, euclidean rhythms and step sequencer.
 The later two are self-explanatory, the first one is a bit novel.
+
+## Views with selectable piano roll, tracker, staff display
+
+The view may be adjusted to work like a traditional tracker, but it also
+has a musical staff representation and a piano roll available.
 
 ## Rhythm trees
 
 The early version used a bit unusual [rhythm trees](https://www.pdonatbouillud.com/project/rythm-quantization/). Since then I've moved on to a more usual format.
 
+## Rhythm quantizer
+
 There's a quantizer that imitates [qparse's](https://qparse.gitlabpages.inria.fr/) algorithm.
 In the current model it's used to edit rhythms: The rhythm is rendered into fractional representation,
 the user does their thing on the fractional representation of rhythm in a mouse controller editor,
 and it is quantized back into a rhythm tree.
+
+## Voice separation
+
+I've included my C language implementation of
+["Voice Separation - A Local Optimisation Approach"](https://ismir2002.ismir.net/proceedings/02-FP01-6.pdf).
+I used this to render a staff notation display in a previous project and needed a fast version of this algorithm.
+My Python-version of this algorithm was way too slow so I rewrote it in C. Benchmarking revealed that it was effective.
+
+However the correct implementation of this algorithm is very hard, it likely still needs some work before it's perfected.
+
+When combined with rhythm quantizer, this algorithm enables transcription of MIDI into Tracker's format.
 
 ## Musical pitch class
 
@@ -127,5 +142,3 @@ The quadratic control is described in [SuperCollider forum](https://scsynth.org/
 
 - semi-automatic MIDI connection to nodes
 - MIDI recording
-- Tracker views
-- Piano roll view 

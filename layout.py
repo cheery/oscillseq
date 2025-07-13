@@ -53,17 +53,17 @@ def get_beams(n):
     return max(0, highest_bit(get_magnitude(n).denominator) - 2)
 
 def calc_height(dtree):
-    def estim_tuplets(dtree, depth=0):
+    def estim_tuplets(dtree, depth=0, deep=True):
         deepest = depth
         if len(dtree.children) > 0:
             span = dtree.span
             divider = highest_bit_mask(span)
-            draw_tuplet = (span != divider)
+            draw_tuplet = (span != divider) and deep
             for subtree in dtree.children:
                 deep = estim_tuplets(subtree, depth+1*draw_tuplet)
                 deepest = max(deep, deepest)
         return deepest
-    depth = estim_tuplets(dtree)
+    depth = estim_tuplets(dtree, deep=False)
     return 15*depth + NoteLayout.stem + 15
 
 class NoteLayout:
@@ -78,10 +78,11 @@ class NoteLayout:
         self.ties   = []
         ixs0 = []
         ixs1 = []
-        def layout_notes(ix1, dtree, duration, distance):
+        def layout_notes(ix1, dtree, duration, distance, deep=True):
             ix0 = ix1
             duration *= dtree.weight
-            distance *= dtree.weight
+            if deep:
+                distance *= dtree.weight
             if len(dtree.children) == 0:
                 for k, d in enumerate(decompose(duration)):
                     self.distances.append(distance * (float(d) / float(duration)))
@@ -108,7 +109,7 @@ class NoteLayout:
                     ix1 = layout_notes(ix1, subtree, duration / divider, distance)
                 self.details[dtree] = ix0, ix1-1, duration, divider, span
             return ix1
-        layout_notes(0, dtree, Fraction(duration), 1.0)
+        layout_notes(0, dtree, Fraction(duration), 1.0, deep=False)
 
         raw_points = [0] + spacing(0, itertools.accumulate(self.distances))
         self.points = []
@@ -128,11 +129,11 @@ class NoteLayout:
     def draw(self, screen, font, pos):
         py = pos[1]
         beams  = [0] * len(self.points)
-        def draw_tuplets(dtree, depth=0):
+        def draw_tuplets(dtree, depth=0, deep=True):
             deepest = depth
             if len(dtree.children) > 0:
                 ix0, ix1, duration, divider, span = self.details[dtree]
-                draw_tuplet = True
+                draw_tuplet = deep
                 if span == divider:
                     draw_tuplet = False
                 for subtree in dtree.children:
@@ -155,7 +156,7 @@ class NoteLayout:
                     pygame.draw.rect(screen, (200, 200, 200), (x1-1,py+5 + depth*15, 1, 4))
             return deepest
 
-        py += 15*draw_tuplets(self.dtree)
+        py += 15*draw_tuplets(self.dtree, deep=False)
         py += self.stem
 
         for ix in self.ties:

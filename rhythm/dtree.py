@@ -110,15 +110,16 @@ class DTree:
         else:
             return DTree(self.weight, self.label, children, self.rule_id)
 
-    def reconnect_slurs(self):
-        children = [child.reconnect_slurs() for child in self.children]
-        i = 1
-        while i < len(children):
-            if children[i-1].label in ("n", "s") and children[i].label == "s":
-                children[i-1].weight += children[i].weight
-                del children[i]
-            else:
-                i += 1
+    def reconnect_slurs(self, deep=False):
+        children = [child.reconnect_slurs(True) for child in self.children]
+        if self.weight == 1 or deep:
+            i = 1
+            while i < len(children):
+                if children[i-1].label in ("n", "s") and children[i].label == "s":
+                    children[i-1].weight += children[i].weight
+                    del children[i]
+                else:
+                    i += 1
         return DTree(self.weight, self.label, children, self.rule_id)
 
     def show(self, debug=True):

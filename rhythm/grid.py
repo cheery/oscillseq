@@ -113,7 +113,7 @@ class Viterbi:
         Alpha parameter weakens cost of distance error
         Beta parameter weakens cost of structure
     """
-    costs = {2 : 0.9, 4 : 0.8, 3 : 0.6, 6 : 0.5, 8 : 0.4, 5 : 0.3, 7 : 0.2}
+    costs = {2 : 0.9, 4 : 0.85, 3 : 0.8, 6 : 0.75, 8 : 0.7, 5 : 0.65, 7 : 0.55}
     best = 1
 
     def __init__(self, alpha = 0.0, beta = 0.75):
@@ -141,14 +141,16 @@ class Tropical:
     costs = {2 : 0.2, 4 : 0.3, 3 : 0.4, 6 : 0.5, 8 : 0.6, 5 : 0.7, 7 : 0.8}
     best = 0
 
-    def __init__(self, alpha = 0.8):
+    def __init__(self, alpha = 0.8, grace = 0.1):
         self.alpha = alpha
+        self.grace = grace
 
     def cost(self, interval, points):
         total = 0
         for point in points:
             total += float(abs(interval.snap(point) - point))
         total /= float(interval.stop - interval.start) * 0.5
+        total += max(0, len(points) - 1) * self.grace
         return total * self.alpha
 
     def ordering(self, item):
@@ -163,7 +165,7 @@ class Tropical:
 class Exhausted(Exception):
     pass
 
-def k_best(points, ring=Viterbi()):
+def k_best(points, ring=Tropical()):
     @functools.cache
     def task(interval, points):
         solv = []

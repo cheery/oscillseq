@@ -14,8 +14,8 @@ class RewriteView:
     def __init__(self, editor):
         self.editor = editor
         self.tool = DummyTool(self)
-        self.onset = [1, 2]
-        self.offset = [1.5, 3]
+        self.onset = [1, 3]
+        self.offset = [1.5, 4]
         self.pitch = [69, 70]
 
         #self.lines = [500, 800]

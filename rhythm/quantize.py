@@ -136,7 +136,7 @@ class Interval:
 
 def bars(grammar, count):
     nt = Nonterminal(f"BARS_{count}")
-    nt.prod.append((0, DTree(1, None, [DTree(1, grammar, [])]*count))) 
+    nt.prod.append((0, DTree(count, None, [DTree(1, grammar, [])]*count))) 
     return nt
 
 def equivalent(nt, pts, notes, alpha=1.0):
@@ -148,7 +148,7 @@ def equivalent(nt, pts, notes, alpha=1.0):
         return nt
     def derive(weight, dtree, segment):
         indices = segment.narrow(pts, notes)
-        leaves = dtree.leaves_with_durations(duration=Fraction(1))
+        leaves = dtree.leaves_with_durations(duration=Fraction(1, dtree.weight))
         if len(leaves) > 1 and len(indices) > 0:
             inst = [produce(leaf.label, seg) for leaf, seg in divide(segment, leaves)]
             new_leaves = [DTree(leaf.weight, nt, [], leaf.rule_id)
