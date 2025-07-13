@@ -3,11 +3,12 @@ from .tree import *
 from .step import *
 from .euclidean import *
 from .parse import *
-from . import quantize
+from . import quantize, grid
 
 grammar = grammar_from_string('''
 p1: q0 -> 0.1 n
 p1: q0 -> 0.1 r
+p1: q0 -> 0.1 s
 p2: q0 -> 0.35 (q1 q1)
 p4: q0 -> 0.35 (q1 q1 q1 q1)
 p3: q0 -> 0.45 (q3 q3 q3)

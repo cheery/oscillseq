@@ -31,6 +31,7 @@ double random_double(Descriptor* m) {
 }
 
 int random_range(Descriptor* m, int min, int max) {
+    if (min == max) return min;
     return (lcg_random(m) % (max - min)) + min;
 }
 
@@ -181,7 +182,7 @@ double calculate_pitch_penalty(Descriptor* m, int start, int stop, int* links) {
 }
 
 double calculate_gap_penalty(Descriptor* m, Slice* s) {
-    double gD = 0.0, mD;
+    double gD = 0.0, onset, offset;
     int cNotes = 0;
     int i;
     for (int v = 0; v < m->max_voices; v++) {
@@ -189,12 +190,12 @@ double calculate_gap_penalty(Descriptor* m, Slice* s) {
         if (i < s->start) continue;
         while (s->start <= m->link[i]) { i = m->link[i]; }
 
-        mD = 0.0;
+        offset = onset = m->onset[i];
         for (int w = 0; w < m->max_voices; w++) {
-            mD = fmax(mD, m->onset[i] - s->offsets[w]);
+            offset = fmin(offset, s->offsets[w]);
         }
-        if (mD > 0.0) {
-            gD += fmax(0.0, (m->onset[i] - s->offsets[v]) / mD);
+        if (s->offsets[v] < onset) {
+            gD += fmax(0.0, fmin(1.0, (onset - s->offsets[v]) / (onset - offset)));
         }
         cNotes += 1;
     }
@@ -232,18 +233,18 @@ double calculate_chord_penalty(Descriptor* m, int start, int stop, int* links) {
 
 double calculate_overlap_penalty(Descriptor* m, Slice* s) {
     double oD = 0.0, ovD, oDist;
-    int i, j;
+    int prev, next;
     for (int v = 0; v < m->max_voices; v++) {
         ovD = 0.0;
-        i = s->links[v];
-        for (j = s->start; j < s->stop; j++) {
-            if (m->voice[j] != v) continue;
-            if (i < 0) { i = j; continue; }
-            if (overlaps(m, i, j)) {
-                oDist = 1.0 - (m->onset[j] - m->onset[i]) / m->duration[i];
-                ovD = ovD + (1.0 - ovD) * oDist;
+        prev = s->links[v];
+        for (next = s->start; next < s->stop; next++) {
+            if (m->voice[next] != v) continue;
+            if (prev < 0) { prev = next; continue; }
+            if (overlaps(m, prev, next)) {
+                oDist = 1.0 - (m->onset[next] - m->onset[prev]) / m->duration[prev];
+                ovD = ovD + (1.0 - ovD) * fmax(0.0, fmin(1.0, oDist));
             }
-            if (m->chord[i] != m->chord[j]) { i = j; }
+            if (m->chord[prev] != m->chord[next]) { prev = next; }
         }
         oD = oD + (1.0 - oD) * ovD;
     }
@@ -262,74 +263,66 @@ void swap_double(double* a, double* b) {
     *b = temp;
 }
 
-int partition(int voice[], int present[], double position0[], double position1[], int low, int high) {
-    double pivot = position0[high];
+int partition(int voice[], double position[], int low, int high) {
+    double pivot = position[high];
     int i = low - 1;
     for (int j = low; j < high; j++) {
-        if (position0[j] < pivot) {
+        if (position[j] < pivot) {
             i++;
-            swap_double(&position0[i], &position0[j]);
-            swap_double(&position1[i], &position1[j]);
+            swap_double(&position[i], &position[j]);
             swap(&voice[i], &voice[j]);
-            swap(&present[i], &present[j]);
         }
     }
-    swap_double(&position0[i + 1], &position0[high]);
-    swap_double(&position1[i + 1], &position1[high]);
+    swap_double(&position[i + 1], &position[high]);
     swap(&voice[i + 1], &voice[high]);
-    swap(&present[i + 1], &present[high]);
     return i + 1;
 }
 
-void quicksort(int voice[], int present[], double position0[], double position1[], int low, int high) {
+void quicksort(int voice[], double position[], int low, int high) {
     if (low < high) {
-        int pi = partition(voice, present, position0, position1, low, high);
-        quicksort(voice, present, position0, position1, low, pi - 1);
-        quicksort(voice, present, position0, position1, pi + 1, high);
+        int pi = partition(voice, position, low, high);
+        quicksort(voice, position, low, pi - 1);
+        quicksort(voice, position, pi + 1, high);
     }
 }
 
-double calculate_cross_penalty(Descriptor* m, int start, int stop, int* links) {
-    int i, count;
-    int voice[m->max_voices];
-    int present[m->max_voices];
+double calculate_cross_penalty(Descriptor* m, Slice* s) {
+    int count;
+    int voice0[m->max_voices];
     double position0[m->max_voices];
+    int voice1[m->max_voices];
     double position1[m->max_voices];
-    double p;
     int k;
+    int voices_present = 0;
     for (int v = 0; v < m->max_voices; v++) {
-        voice[v] = v;
-        position0[v] = 0.0;
-        position1[v] = 0.0;
-        count = 0;
-        i = links[v];
-        if (i < 0) {
-            present[v] = 0;
-            continue;
-        }
-        do {
-            position0[v] = average_position(m, i, &count);
-            i = previous_chord(m, i);
-        } while (start <= i);
-        if (i >= 0) {
-            position0[v] /= count;
+        if (0 <= s->links[v]) { voices_present++; };
+    }
+    k = 0;
+    for (int v = 0; v < m->max_voices; v++) {
+        if (0 <= s->links[v]) {
             count = 0;
-            position1[v] = average_position(m, i, &count);
-            position1[v] /= count;
-            present[v] = 1;
-        } else {
-            present[v] = 0;
+            voice0[k++] = v;
+            position0[v] = average_position(m, s->links[v], &count);
+            position0[v] /= count;
         }
     }
-    quicksort(voice, present, position0, position1, 0, m->max_voices-1);
-    p = 0.0;
-    k = 1;
-    for (int i = 0; i < m->max_voices; i++) {
-        if (present[i]) {
-            if (k) { p = position1[i]; k = 0; }
-            if (p > position1[i]) return 1.0;
-            p = position1[i];
+    k = 0;
+    for (int v = 0; v < m->max_voices; v++) {
+        if (0 <= s->cands[v] && 0 <= s->links[v]) {
+            count = 0;
+            voice1[k++] = v;
+            position1[v] = average_position(m, s->cands[v], &count);
+            position1[v] /= count;
         }
+    }
+    
+    if (voices_present == 0) {
+        return 0.0;
+    }
+    quicksort(voice0, position0, 0, voices_present-1);
+    quicksort(voice1, position1, 0, voices_present-1);
+    for (int i = 0; i < voices_present; i++) {
+        if (voice0[i] != voice1[i]) return 1.0;
     }
     return 0.0;
 }
@@ -347,20 +340,23 @@ double calculate_total_cost(Descriptor* m, Slice* s, int print) {
     total_cost += gp = m->gap_penalty * calculate_gap_penalty(m, s);
     total_cost += cp = m->chord_penalty * calculate_chord_penalty(m, s->start, s->stop, s->cands);
     total_cost += op = m->overlap_penalty * calculate_overlap_penalty(m, s);
-    total_cost += rp = m->cross_penalty * calculate_cross_penalty(m, s->start, s->stop, s->cands);
+    total_cost += rp = m->cross_penalty * calculate_cross_penalty(m, s);
     if (print) {
+        printf("range %d:%d\n", s->start, s->stop);
         for (int k = 0; k < m->max_voices; k++) {
-            printf("voice %d\n", k);
+            if (s->start <= s->cands[k]) {
+                printf("  voice %d\n", k);
+            }
             for (int i = s->start; i < s->stop; i++) {
-                if (m->voice[i] == k) printf("  note: %f:%f p=%d\n", m->onset[i], m->offset[i], m->position[i]);
+                if (m->voice[i] == k) printf("    note: %f:%f p=%d\n", m->onset[i], m->offset[i], m->position[i]);
             }
         }
-        printf("total pen: %f\n", total_cost);
-        printf("  pitch pen: %f\n", pp);
-        printf("  gap pen: %f\n", gp);
-        printf("  chord pen: %f\n", cp);
-        printf("  overlap pen: %f\n", op);
-        printf("  cross pen: %f\n", rp);
+        printf("  total pen: %f\n", total_cost);
+        printf("    pitch pen: %f\n", pp);
+        printf("    gap pen: %f\n", gp);
+        printf("    chord pen: %f\n", cp);
+        printf("    overlap pen: %f\n", op);
+        printf("    cross pen: %f\n", rp);
     }
     return total_cost;
 }
@@ -414,7 +410,7 @@ void stochastic_local_search(Descriptor* m, Slice* s) {
         } else {
             random_neighbour(m, s->start, s->stop);
         }
-        new_cost = calculate_total_cost(m, s, 0);
+        new_cost = calculate_total_cost(m, s, m->debug_print >= 2);
         if (new_cost < best_cost) {
             for (int i = 0; i < s->stop - s->start; i++) {
                 best[i] = m->voice[i+s->start];
@@ -425,11 +421,22 @@ void stochastic_local_search(Descriptor* m, Slice* s) {
             no_improvement_counter += 1;
         }
     }
+
+    if (m->debug_print) {
+        for (int i = 0; i < s->stop - s->start; i++) {
+            m->voice[i+s->start] = best[i];
+        }
+        calculate_total_cost(m, s, 1);
+    }
+
     for (int i = 0; i < s->stop - s->start; i++) {
         m->voice[i+s->start] = best[i];
         m->link[i+s->start] = s->links[best[i]];
         s->links[best[i]] = i+s->start;
-        s->offsets[best[i]] = fmax(s->offsets[best[i]], m->offset[i+s->start]);
+    }
+
+    for (int i = s->start; i < s->stop; i++) {
+        s->offsets[m->voice[i]] = fmax(s->offsets[m->voice[i]], m->offset[i]);
     }
 }
 
@@ -443,10 +450,10 @@ void voice_separation(Descriptor* m) {
     }
     Slice slice = { 0, 0, offsets, links, cands };
     int    chord = 0;
-    double onset = m->onset[0];
     while (next_slice(m, &slice.start, &slice.stop)) {
+        double onset = m->onset[slice.start];
         for (int i = slice.start; i < slice.stop; i++) {
-            if (m->onset[i] - onset > 0.1) {
+            if (m->onset[i] - onset > m->chord_spread) {
                 chord++;
                 onset = m->onset[i];
             }

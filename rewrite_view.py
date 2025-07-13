@@ -14,13 +14,13 @@ class RewriteView:
     def __init__(self, editor):
         self.editor = editor
         self.tool = DummyTool(self)
-        self.onset = [500, 600]
-        self.offset = [540, 640]
+        self.onset = [1, 2]
+        self.offset = [1.5, 3]
         self.pitch = [69, 70]
 
         #self.lines = [500, 800]
         #self.alpha = 0.1
-        #self.beta = 0.1
+        self.beta = 0.1
         self.refresh()
 
     def refresh(self):
@@ -30,15 +30,44 @@ class RewriteView:
         self.offset = [self.offset[i] for i in indices]
         self.pitch = [self.pitch[i] for i in indices]
 
-        self.chord = [0]
-        cluster_id = 0
-        for i in range(1, len(self.onset)):
-            if self.onset[i] - self.onset[i-1] > 0.01 * 800:
-                cluster_id += 1
-            self.chord.append(cluster_id)
+        points = self.onset + self.offset
+        points.sort()
+        for _, grid in rhythm.grid.k_best(points):
+            break
+        self.grid = grid
+        self.points = set(rhythm.grid.snap(grid, points))
+        onset = rhythm.grid.snap(grid, self.onset)
+        offset = rhythm.grid.snap(grid, self.offset)
+        assert len(onset) == len(offset) == len(self.pitch), (onset, offset, self.pitch)
 
-        self.voices = voice_separation(np.array(self.onset) / 800.0, np.array(self.offset) / 800, self.pitch,
-            gap_penalty=0.1)
+        self.voices = voice_separation(np.array(onset, np.double), np.array(offset, np.double), self.pitch)
+
+        onset = rhythm.grid.snap(grid, self.onset)
+        offset = rhythm.grid.snap(grid, self.offset)
+        self.dtrees = []
+        for voice in self.voices:
+            if len(voice) == 0: continue
+            chord = 0
+            points = []
+            notes  = []
+            on     = None
+            off    = grid.start
+            for i, _ in voice:
+                if on is None or on < onset[i]:
+                    if off < onset[i]:
+                        points.append(off)
+                        notes.append("r")
+                    points.append(onset[i])
+                    notes.append("n")
+                    on = onset[i]
+                off = max(off, offset[i])
+            points.append(off)
+            if off < grid.stop:
+                points.append(grid.stop)
+                notes.append("r")
+            g = quantize.bars(rhythm.grammar, int(self.grid.stop - self.grid.start))
+            dtree = quantize.dtree(g, points, notes)[0]
+            self.dtrees.append(dtree)
         
         #self.tree = quantize.quantize_to_tree(self.lines, self.alpha, self.beta)
         #self.tree2 = quantize.quantize_to_tree2(self.lines, self.alpha, self.beta)
@@ -71,18 +100,22 @@ class RewriteView:
 
     def draw(self, screen):
         font = self.editor.font
+        SCREEN_WIDTH = screen.get_width()
         SCREEN_HEIGHT = screen.get_height()
-        #for x in self.lines:
-        #    pygame.draw.line(screen, self.color, (x,0), (x,SCREEN_HEIGHT))
+
+        w = SCREEN_WIDTH / 4
+
+        for x in self.points:
+            pygame.draw.line(screen, (100,100,100), (x*w,0), (x*w,SCREEN_HEIGHT))
 
         #for x in self.lines2:
         #    pygame.draw.line(screen, (255, 0, 0), (x,0), (x,SCREEN_HEIGHT))
 
         for k, voice in enumerate(self.voices):
             color = [c * 255 for c in golden_ratio_color_varying(k)]
-            for i in voice:
-                x0 = self.onset[i]
-                x1 = self.offset[i]
+            for i, chord in voice:
+                x0 = self.onset[i]*w
+                x1 = self.offset[i]*w
                 p  = self.pitch[i]
                 y  = (69 - p) * 25 + SCREEN_HEIGHT/2
                 pygame.draw.line(screen, color, (x0,y), (x1,y))
@@ -93,6 +126,15 @@ class RewriteView:
         #for x,d in self.tree.to_events(self.lines[0], self.lines[-1] - self.lines[0]):
         #    pygame.draw.line(screen, (255, 0, 0), (x,0), (x,SCREEN_HEIGHT))
         
+        y = 0
+        for dtree in self.dtrees:
+            color = [c * 255 for c in golden_ratio_color_varying(y)]
+            notel = NoteLayout(dtree, 1, LinSpacing(self.grid.stop*w - self.grid.start*w))
+            notel.draw(screen, font, (self.grid.start*w, 50 + y))
+            for x in notel.display_points:
+                x += self.grid.start*w
+                pygame.draw.line(screen, color, (x,0), (x,SCREEN_HEIGHT))
+            y += 50
 
         #dtree = DTree.from_tree(self.tree)
         #notes = NoteLayout(dtree, 1,
@@ -138,14 +180,16 @@ class DummyTool:
 
     def draw(self, screen):
         pos = pygame.mouse.get_pos()
-        #self.view.beta = pos[1] / screen.get_height()
-        #text = self.view.editor.font.render(f"{self.view.beta}", True, (200,200,200))
-        #screen.blit(text, pos)
+        self.view.beta = pos[1] / screen.get_height()
+        text = self.view.editor.font.render(f"{self.view.beta}", True, (200,200,200))
+        screen.blit(text, pos)
 
     def handle_mousebuttondown(self, ev):
         if ev.button == 1:
             p = 69 - round((ev.pos[1] - self.view.editor.SCREEN_HEIGHT/2) / 25)
             self.view.tool = DrawTool(self.view, self, ev.pos[0], p)
+        if ev.button == 3:
+            self.view.refresh()
         #lines = self.view.lines
         #if ev.button == 1:
         #    lines.append(ev.pos[0])
@@ -157,7 +201,6 @@ class DummyTool:
         #        del lines[ix]
         #    else:
         #        del lines[max(ix,1)-1]
-        #    self.view.refresh()
 
     def handle_mousebuttonup(self, ev):
         pass
@@ -196,8 +239,9 @@ class DrawTool:
         pass
 
     def handle_mousebuttonup(self, ev):
-        x0 = min(self.x, ev.pos[0])
-        x1 = max(self.x, ev.pos[0])
+        w = self.view.editor.SCREEN_WIDTH / 4
+        x0 = min(self.x, ev.pos[0]) / w
+        x1 = max(self.x, ev.pos[0]) / w
         for i in range(len(self.view.onset)):
             if self.p == self.view.pitch[i] and max(x0, self.view.onset[i]) <= min(x1, self.view.offset[i]):
                 break

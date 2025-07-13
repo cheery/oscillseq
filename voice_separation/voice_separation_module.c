@@ -10,33 +10,37 @@ py_voice_separation(PyObject* self, PyObject* args, PyObject* kwargs)
              *offset_obj = NULL, *pitch_obj = NULL;
     int    max_voices    = 6;
     double pitch_penalty = 1,
-           gap_penalty   = 1,
+           gap_penalty   = 0.5,
            chord_penalty = 1,
            overlap_penalty = 1,
-           cross_penalty = 1;
+           cross_penalty = 1,
+           chord_spread = 0.0;
     int    pitch_lookback = 2;
     unsigned int lcg       = 0;
+    int    debug_print = 0;
 
     static char *kwlist[] = {
         "onset", "offset", "pitch",
         "max_voices",
         "pitch_penalty", "gap_penalty", "chord_penalty",
-        "overlap_penalty", "cross_penalty",
+        "overlap_penalty", "cross_penalty", "chord_spread",
         "pitch_lookback",
         "seed",
+        "debug_print",
         NULL
     };
 
     if (!PyArg_ParseTupleAndKeywords(
             args, kwargs,
-            "OOO|idddddiI",   // 4 PyObjects, 1 int, 5 doubles, 1 int, then optional unsigned int
+            "OOO|iddddddiIi",   // 4 PyObjects, 1 int, 6 doubles, 1 int, then optional unsigned int, and int
             kwlist,
             &onset_obj, &offset_obj, &pitch_obj,
             &max_voices,
             &pitch_penalty, &gap_penalty, &chord_penalty,
-            &overlap_penalty, &cross_penalty,
+            &overlap_penalty, &cross_penalty, &chord_spread,
             &pitch_lookback,
-            &lcg))
+            &lcg,
+            &debug_print))
     {
         return NULL;
     }
@@ -98,8 +102,10 @@ py_voice_separation(PyObject* self, PyObject* args, PyObject* kwargs)
     desc.chord_penalty   = chord_penalty;
     desc.overlap_penalty = overlap_penalty;
     desc.cross_penalty   = cross_penalty;
+    desc.chord_spread    = chord_spread;
     desc.pitch_lookback  = pitch_lookback;
     desc.lcg             = lcg;
+    desc.debug_print     = debug_print;
 
     for(int i=0; i<max_notes; ++i){
         desc.duration[i] = desc.offset[i] - desc.onset[i];
@@ -114,7 +120,7 @@ py_voice_separation(PyObject* self, PyObject* args, PyObject* kwargs)
         if (!lst) { Py_DECREF(voices_list); voices_list = NULL; goto cleanup; }
         for (int i = 0; i < max_notes; ++i) {
             if (voice[i] == v) {
-                PyObject *note = Py_BuildValue("i", i);
+                PyObject *note = Py_BuildValue("(i,i)", i, desc.chord[i]);
                 PyList_Append(lst, note);
                 Py_DECREF(note);
             }
@@ -144,7 +150,8 @@ static PyMethodDef VoiceMethods[] = {
         "Optional:\n"
         "  max_voices (int)  # defaults to 6\n"
         "  pitch_penalty, gap_penalty, chord_penalty, # defaults to 1\n"
-        "  overlap_penalty, cross_penalty (floats) # defaults to 1\n"
+        "  overlap_penalty, cross_penalty (doubles) # defaults to 1\n"
+        "  chord_spread # defaults to 0.0\n"
         "  pitch_lookback (int) # defaults to 2\n\n"
         "  seed (unsigned int)  # PRNG seed, defaults to 0\n"
     },

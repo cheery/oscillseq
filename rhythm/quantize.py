@@ -134,6 +134,11 @@ class Interval:
     def __repr__(self):
         return str(self.start) + ":" + str(self.stop)
 
+def bars(grammar, count):
+    nt = Nonterminal(f"BARS_{count}")
+    nt.prod.append((0, DTree(1, None, [DTree(1, grammar, [])]*count))) 
+    return nt
+
 def equivalent(nt, pts, notes, alpha=1.0):
     @functools.cache
     def produce(ref, segment):

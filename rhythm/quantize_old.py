@@ -9,7 +9,6 @@ import rhythm as measure
 import math
 import numpy as np
 
-costs = {2 : 0.2, 4 : 0.3, 3 : 0.4, 6 : 0.5, 8 : 0.6, 5 : 0.7, 7 : 0.8}
 #costs = {2 : 0, 4 : 0.5, 3 : 1, 6 : 2, 8 : 3, 5 : 4, 7 : 5}
 
 class Quant:
@@ -58,13 +57,18 @@ class Interval:
        return Quant(out)
 
    def index(self, point):
-       return round((point - self.start) / (self.stop - self.start))
+       return max(0, min(1, round((point - self.start) / (self.stop - self.start))))
 
    def snap(self, point):
-       return [self.start, self.stop][self.index(point)]
+       try:
+           return [self.start, self.stop][self.index(point)]
+       except IndexError:
+           print("IX", self.index(point))
+           raise
 
    def dist(self, points):
-       return sum(abs(self.snap(pt)-pt) for pt in self.narrow(points))
+       delta = self.stop - self.start
+       return sum(abs(self.snap(pt)-pt) for pt in self.narrow(points)) / delta
 
    def cost(self, points, alpha):
        return self.dist(points)*10*alpha
@@ -75,80 +79,6 @@ class Interval:
    def copy(self):
        return self
 
-def intervals(rt):
-    intervals = []
-    def visit(rt):
-        if isinstance(rt, Quant):
-            for x in rt:
-                visit(x)
-        else:
-            intervals.append(rt)
-    visit(rt)
-    return intervals
-
-def snaps(rt, points):
-    snaps = [0]
-    for iv in intervals(rt):
-        snaps.append(0)
-        for pt in iv.narrow(points):
-            snaps[-2 + iv.index(pt)] += 1
-    if iv.stop == points[-1]:
-        snaps[-1] += 1
-    return snaps
-
-def grace(rt, points):
-    return sum(k-1 for k in snaps(rt, points) if k > 1)
-
-def grid(rt):
-    output = [0]
-    for iv in intervals(rt):
-        output.append(iv.stop)
-    return output
-
-def snap(rt, points):
-    offsets = []
-    for k, pt in zip(snaps(rt, points), grid(rt)):
-        offsets.extend([pt]*k)
-    return offsets
-
-# indicates which indices were removed, can be used to remap attributes into the new tree.
-def remapper(rt, points):
-    g = grid(rt)
-    ix = []
-    for pt in snap(rt,points):
-        ix.append(bisect.bisect_left(g, pt))
-    rmp = []
-    for i in range(len(ix)-1):
-        if ix[i] < ix[i+1]:
-            rmp.append(i)
-    return rmp
-
-def val(rt, points, m=1):
-    fractions = [Fraction(1, iv.denom) for iv in intervals(rt)]
-    g = grid(rt)
-    ix = []
-    for pt in snap(rt,points):
-        ix.append(bisect.bisect_left(g, pt))
-    val = []
-    for i in range(len(ix)-1):
-        if ix[i] < ix[i+1]:
-            val.append(m*sum(fractions[ix[i]:ix[i+1]]))
-    return val
-
-def debug_dtree(rt, points):
-    s = snaps(rt, points)
-    def visit(rt, ix):
-        if isinstance(rt, Quant):
-            trees = []
-            for x in rt:
-                tree, ix = visit(x, ix)
-                trees.append(tree)
-            return DTree(1, None, trees), ix
-        else:
-            return DTree(1, "n", []) if s[ix] > 0 else DTree(1, "s", []), ix+1
-    return visit(rt, 0)[0]
-
-# "A Supervised Approach for Rhythm Transcription Based on Tree Series Enumeration"
 class Exhausted(Exception):
     pass
 
@@ -169,7 +99,7 @@ def k_best(k, interval, points, alpha=0.5, beta=0.2, costs=costs):
         unc.sort(key=lambda x: x[0])
         return cand, unc, best
 
-    def best(k, interval, depth=5):
+    def best(k, interval, depth=3):
         if depth == 0:
             raise Exhausted
         h = interval.start,interval.stop
