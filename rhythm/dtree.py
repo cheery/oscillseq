@@ -185,11 +185,15 @@ def decompose(n):
     if n.denominator != highest_bit_mask(n.denominator):
         return None
     prefix = []
-    while n > 0:
-        p = Fraction(highest_bit_mask(n.numerator), n.denominator)
-        for p, n in decompose_with(n, p):
-            prefix.append(p)
-            break
+    if n.denominator == 1:
+        for _ in range(n.numerator):
+            prefix.append(1)
+    else:
+        while n > 0:
+            p = Fraction(highest_bit_mask(n.numerator), n.denominator)
+            for p, n in decompose_with(n, p):
+                prefix.append(p)
+                break
     return prefix
 
 def decompose_with(n, p):

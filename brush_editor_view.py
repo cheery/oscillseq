@@ -296,6 +296,34 @@ class BrushEditorView:
             self.editor.doc.brushes = []
             self.editor.doc.rebuild_labels()
 
+    def control_point_menu(self):
+        choices = []
+        for tag, desc in self.editor.definitions.descriptors(self.editor.doc.cells).items():
+            if desc.quadratic_controllable:
+                choices.append((f"control {tag}", self.create_control_point(tag)))
+        self.tool = ContextMenu(self.tool, pygame.mouse.get_pos(), choices)
+
+    def create_control_point(self, tag):
+        v = 0
+        def _impl_():
+            self.insert_brush(0, lambda duration: (ControlPoint("", tag=tag, transition=True, value=v)))
+            self.editor.refresh_layout()
+        return _impl_
+
+    def create_key(self):
+        self.insert_brush(1, lambda duration: Key("", -1, 0))
+        self.editor.refresh_layout()
+
+    def create_tracker(self):
+        self.insert_brush(1,
+            lambda duration: (Tracker("", duration, rhythm.from_string("n"), [], None)))
+        self.editor.refresh_layout()
+
+    def create_clip(self):
+        self.insert_brush(1, lambda duration: (Clip("", duration, [])))
+        self.editor.refresh_layout()
+
+
 class NoTool:
     def __init__(self, view):
         self.view = view
@@ -331,7 +359,8 @@ class SelectionTool:
             if not shift_held:
                 editor.timeline_tail = i
             self.view.tool = DragTimelineHead(self.view, self)
-        pass
+        if ev.button == 3:
+            self.view.tool = ScrollTimeline(self.view, self, editor.timeline_scroll, ev.pos[0])
 
     def handle_mousebuttonup(self, ev):
         pass
@@ -358,6 +387,39 @@ class DragTimelineHead:
         w = (editor.SCREEN_WIDTH - editor.MARGIN) / editor.BARS_VISIBLE
         i = max(0, round((ev.pos[0] - self.view.editor.MARGIN) / w)) + editor.timeline_scroll
         editor.timeline_head = i
+
+class ScrollTimeline:
+    def __init__(self, view, tool, timeline_scroll, x):
+        self.view = view
+        self.tool = tool
+        self.timeline_scroll = timeline_scroll
+        self.x = x
+        self.open_menu = True
+
+    def draw(self, screen):
+        pass
+
+    def handle_mousebuttondown(self, ev):
+        pass
+
+    def handle_mousebuttonup(self, ev):
+        if self.open_menu:
+            self.view.tool = ContextMenu(self.tool, ev.pos, [
+                (f'new control point', self.view.control_point_menu),
+                (f'new key', self.view.create_key),
+                (f'new tracker', self.view.create_tracker),
+                (f'new clip', self.view.create_clip)
+            ])
+        else:
+            self.view.tool = self.tool
+
+    def handle_mousemotion(self, ev):
+        editor = self.view.editor
+        w = (editor.SCREEN_WIDTH - editor.MARGIN) / editor.BARS_VISIBLE
+        a = round((self.x - ev.pos[0]) / w) + self.timeline_scroll
+        editor.timeline_scroll = max(0, a)
+        if editor.timeline_scroll != self.timeline_scroll:
+            self.open_menu = False
 
 def dfs_list(brushes):
     output = []

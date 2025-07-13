@@ -282,7 +282,7 @@ class StavesLayout:
                 if self.rect.top < y1 < self.rect.bottom:
                     position = 40 - int((pointer[1] - y) // (k/12))
                     acci = get_accidentals(i)
-                    acc = accidental or acci[position%7]
+                    acc = accidental if accidental is not None else acci[position%7]
                     return music.Pitch(position, acc)
 
     def draw_tracks(self, screen, font, editor, rhythmd, generators, get_accidentals, pointer, w, accidental):
