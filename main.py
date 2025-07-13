@@ -374,7 +374,7 @@ class Editor:
         for command in sequence.com:
             with score.at(command.time):
                 command.send(clavier, fabric)
-        with score.at(sequence.t(2)):
+        with score.at(sequence.t(self.doc.duration)):
             score.do_nothing()
         supriya.render(score, output_file_path=self.record_path)
         print("saved", self.record_path)
