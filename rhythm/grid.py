@@ -116,14 +116,17 @@ class Viterbi:
     costs = {2 : 0.9, 4 : 0.85, 3 : 0.8, 6 : 0.75, 8 : 0.7, 5 : 0.65, 7 : 0.55}
     best = 1
 
-    def __init__(self, alpha = 0.0, beta = 0.75):
+    def __init__(self, alpha = 0.0, beta = 0.75, grace=0.95):
         self.alpha = alpha
         self.beta  = beta
+        self.grace = grace
 
     def cost(self, interval, points):
         total = 1
         for point in points:
             total *= 1 - float(abs(interval.snap(point) - point))*2
+        for _ in range(1, len(points)):
+            total *= self.grace
         return total + (1-total) * self.alpha
 
     def ordering(self, item):
@@ -141,16 +144,14 @@ class Tropical:
     costs = {2 : 0.2, 4 : 0.3, 3 : 0.4, 6 : 0.5, 8 : 0.6, 5 : 0.7, 7 : 0.8}
     best = 0
 
-    def __init__(self, alpha = 0.8, grace = 0.1):
+    def __init__(self, alpha = 0.9):
         self.alpha = alpha
-        self.grace = grace
 
     def cost(self, interval, points):
         total = 0
         for point in points:
             total += float(abs(interval.snap(point) - point))
         total /= float(interval.stop - interval.start) * 0.5
-        total += max(0, len(points) - 1) * self.grace
         return total * self.alpha
 
     def ordering(self, item):
