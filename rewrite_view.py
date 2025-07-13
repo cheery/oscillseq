@@ -1,3 +1,4 @@
+from collections import defaultdict
 import pygame
 import bisect
 from rhythm import quantize
@@ -40,7 +41,14 @@ class RewriteView:
         offset = rhythm.grid.snap(grid, self.offset)
         assert len(onset) == len(offset) == len(self.pitch), (onset, offset, self.pitch)
 
-        self.voices = voice_separation(np.array(onset, np.double), np.array(offset, np.double), self.pitch)
+        # I have this ready, but for now it seems to work quite fine again.
+        #self.debug = defaultdict(dict)
+        #def monitor(start, stop, voices, cost, stage):
+        #    m = frozenset((x, i) for i, voice in enumerate(voices) for x in voice)
+        #    for i in range(start, stop):
+        #        self.debug[i][m] = cost
+
+        self.voices = voice_separation(np.array(onset, np.double), np.array(offset, np.double), self.pitch, monitor=None)
 
         onset = rhythm.grid.snap(grid, self.onset)
         offset = rhythm.grid.snap(grid, self.offset)
@@ -52,7 +60,7 @@ class RewriteView:
             notes  = []
             on     = None
             off    = grid.start
-            for i, _ in voice:
+            for i in voice:
                 if on is None or on < onset[i]:
                     if off < onset[i]:
                         points.append(off)
@@ -113,7 +121,7 @@ class RewriteView:
 
         for k, voice in enumerate(self.voices):
             color = [c * 255 for c in golden_ratio_color_varying(k)]
-            for i, chord in voice:
+            for i in voice:
                 x0 = self.onset[i]*w
                 x1 = self.offset[i]*w
                 p  = self.pitch[i]

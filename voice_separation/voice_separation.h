@@ -1,7 +1,11 @@
 #pragma once
 
 typedef struct {
-  unsigned int max_notes;
+    double total, pp, gp, cp, op, rp;
+} CostVector;
+
+typedef struct descriptor {
+  int max_notes;
   double *onset;
   double *duration;
   double *offset;
@@ -9,16 +13,17 @@ typedef struct {
   int    *chord;
   int    *voice;
   int    *link;
-  unsigned max_voices;
+  int max_voices;
   double pitch_penalty;
   double gap_penalty;
   double chord_penalty;
   double overlap_penalty;
   double cross_penalty;
   double chord_spread;
-  unsigned int pitch_lookback;
+  int pitch_lookback;
   unsigned int lcg;
-  int debug_print;
+  void (*monitor)(struct descriptor*, int start, int stop, CostVector*, int stage);
+  void *data;
 } Descriptor;
 
 void voice_separation(Descriptor*);

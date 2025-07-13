@@ -3,6 +3,9 @@
 #include <math.h>
 #include "voice_separation.h"
 
+// TODO: Lift CostVector out and use it to reduce amount of redundant
+//       calls to "calculate_total_cost"
+
 // Define constants for the LCG (from Numerical Recipes)
 #define LCG_A 1664525
 #define LCG_C 1013904223
@@ -327,7 +330,7 @@ double calculate_cross_penalty(Descriptor* m, Slice* s) {
     return 0.0;
 }
 
-double calculate_total_cost(Descriptor* m, Slice* s, int print) {
+double calculate_total_cost(Descriptor* m, Slice* s, int stage) {
     for (int i = 0; i < m->max_voices; i++) {
         s->cands[i] = s->links[i];
     }
@@ -335,30 +338,16 @@ double calculate_total_cost(Descriptor* m, Slice* s, int print) {
         m->link[i] = s->cands[m->voice[i]];
         s->cands[m->voice[i]] = i;
     }
-    double total_cost = 0.0, pp, gp, cp, op, rp;
-    total_cost += pp = m->pitch_penalty * calculate_pitch_penalty(m, s->start, s->stop, s->cands);
-    total_cost += gp = m->gap_penalty * calculate_gap_penalty(m, s);
-    total_cost += cp = m->chord_penalty * calculate_chord_penalty(m, s->start, s->stop, s->cands);
-    total_cost += op = m->overlap_penalty * calculate_overlap_penalty(m, s);
-    total_cost += rp = m->cross_penalty * calculate_cross_penalty(m, s);
-    if (print) {
-        printf("range %d:%d\n", s->start, s->stop);
-        for (int k = 0; k < m->max_voices; k++) {
-            if (s->start <= s->cands[k]) {
-                printf("  voice %d\n", k);
-            }
-            for (int i = s->start; i < s->stop; i++) {
-                if (m->voice[i] == k) printf("    note: %f:%f p=%d\n", m->onset[i], m->offset[i], m->position[i]);
-            }
-        }
-        printf("  total pen: %f\n", total_cost);
-        printf("    pitch pen: %f\n", pp);
-        printf("    gap pen: %f\n", gp);
-        printf("    chord pen: %f\n", cp);
-        printf("    overlap pen: %f\n", op);
-        printf("    cross pen: %f\n", rp);
+    CostVector cost = {.total = 0.0};
+    cost.total += cost.pp = m->pitch_penalty * calculate_pitch_penalty(m, s->start, s->stop, s->cands);
+    cost.total += cost.gp = m->gap_penalty * calculate_gap_penalty(m, s);
+    cost.total += cost.cp = m->chord_penalty * calculate_chord_penalty(m, s->start, s->stop, s->cands);
+    cost.total += cost.op = m->overlap_penalty * calculate_overlap_penalty(m, s);
+    cost.total += cost.rp = m->cross_penalty * calculate_cross_penalty(m, s);
+    if (m->monitor) {
+        m->monitor(m, s->start, s->stop, &cost, stage);
     }
-    return total_cost;
+    return cost.total;
 }
 
 void lowest_cost_neighbor(Descriptor* m, Slice* s) {
@@ -366,13 +355,13 @@ void lowest_cost_neighbor(Descriptor* m, Slice* s) {
     int best_index = s->start;
     int best_voice = m->voice[s->start];
     double best_cost, new_cost;
-    best_cost = calculate_total_cost(m, s, 0);
+    best_cost = calculate_total_cost(m, s, 1);
     for (int i = s->start; i < s->stop; i++) {
         voice_index = m->voice[i];
         for (int j = 0; j < m->max_voices; j++) {
             if (j != voice_index) {
                 m->voice[i] = j;
-                new_cost = calculate_total_cost(m, s, 0);
+                new_cost = calculate_total_cost(m, s, 2);
                 if (new_cost < best_cost) {
                     best_index = i;
                     best_voice = j;
@@ -410,7 +399,7 @@ void stochastic_local_search(Descriptor* m, Slice* s) {
         } else {
             random_neighbour(m, s->start, s->stop);
         }
-        new_cost = calculate_total_cost(m, s, m->debug_print >= 2);
+        new_cost = calculate_total_cost(m, s, 3);
         if (new_cost < best_cost) {
             for (int i = 0; i < s->stop - s->start; i++) {
                 best[i] = m->voice[i+s->start];
@@ -422,11 +411,11 @@ void stochastic_local_search(Descriptor* m, Slice* s) {
         }
     }
 
-    if (m->debug_print) {
+    if (m->monitor) {
         for (int i = 0; i < s->stop - s->start; i++) {
             m->voice[i+s->start] = best[i];
         }
-        calculate_total_cost(m, s, 1);
+        calculate_total_cost(m, s, 4);
     }
 
     for (int i = 0; i < s->stop - s->start; i++) {

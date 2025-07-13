@@ -116,17 +116,16 @@ class Viterbi:
     costs = {2 : 0.9, 4 : 0.85, 3 : 0.8, 6 : 0.75, 8 : 0.7, 5 : 0.65, 7 : 0.55}
     best = 1
 
-    def __init__(self, alpha = 0.0, beta = 0.75, grace=0.95):
+    def __init__(self, alpha = 0.0, beta = 0.95):
         self.alpha = alpha
         self.beta  = beta
-        self.grace = grace
 
     def cost(self, interval, points):
         total = 1
+        #maximum = float(interval.stop - interval.start) * 0.5
         for point in points:
-            total *= 1 - float(abs(interval.snap(point) - point))*2
-        for _ in range(1, len(points)):
-            total *= self.grace
+            offset = float(abs(interval.snap(point) - point))
+            total *= 1 - offset #(offset / maximum)
         return total + (1-total) * self.alpha
 
     def ordering(self, item):
@@ -149,9 +148,11 @@ class Tropical:
 
     def cost(self, interval, points):
         total = 0
+        maximum = float(interval.stop - interval.start) * 0.5
         for point in points:
-            total += float(abs(interval.snap(point) - point))
-        total /= float(interval.stop - interval.start) * 0.5
+            offset = float(abs(interval.snap(point) - point))
+            total += offset
+        total /= maximum
         return total * self.alpha
 
     def ordering(self, item):
@@ -166,7 +167,7 @@ class Tropical:
 class Exhausted(Exception):
     pass
 
-def k_best(points, ring=Tropical()):
+def k_best(points, ring=Viterbi()):
     @functools.cache
     def task(interval, points):
         solv = []
@@ -176,7 +177,7 @@ def k_best(points, ring=Tropical()):
             ivs = interval.divide(int(interval.stop - interval.start))
             run = [(0, iv, iv.select(points)) for iv in ivs]
             unco.append((ring.best, run))
-        elif len(points) > 1:
+        elif len(points) > 0:
             for p, w in ring.costs.items():
                 run = [(0, iv, iv.select(points)) for iv in interval.divide(p)]
                 unco.append((w, run))

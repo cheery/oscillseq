@@ -3,6 +3,51 @@
 #include <numpy/arrayobject.h>
 #include "voice_separation.h"
 
+static void monitor_callback(Descriptor *m, int start, int stop, CostVector *cv, int stage) {
+    PyGILState_STATE gstate = PyGILState_Ensure();
+
+    PyObject *py_cb = (PyObject*)m->data;
+    if (py_cb && PyCallable_Check(py_cb)) {
+        PyObject *voices_list = PyList_New(m->max_voices);
+        if (!voices_list) { goto eject; }
+        for (int v = 0; v < m->max_voices; ++v) {
+            PyObject *lst = PyList_New(0);
+            if (!lst) { Py_DECREF(voices_list); voices_list = NULL; goto eject; }
+            for (int i = start; i < stop; ++i) {
+                if (m->voice[i] == v) {
+                    PyObject *note = Py_BuildValue("i", i);
+                    PyList_Append(lst, note);
+                    Py_DECREF(note);
+                }
+            }
+            PyList_SetItem(voices_list, v, lst);  // steals reference
+        }
+
+        PyObject *args = Py_BuildValue("(iiO(ddddd)i)",
+            start, stop, voices_list,
+            cv->pp, cv->gp, cv->cp, cv->op, cv->rp,
+            stage);
+        if (!args) { Py_DECREF(voices_list); goto eject; }
+        PyObject *result = PyObject_CallObject(py_cb, args);
+        Py_DECREF(args);
+        Py_DECREF(voices_list);
+        if (!result) {
+            goto eject;
+        } else {
+            Py_DECREF(result);
+        }
+    }
+    else {
+        PyErr_SetString(PyExc_TypeError, "Descriptor.monitor data is not a callable");
+        goto eject;
+    }
+
+    PyGILState_Release(gstate);
+    return;
+
+    eject: PyGILState_Release(gstate); m->monitor = NULL; m->data = NULL; return;
+}
+
 static PyObject*
 py_voice_separation(PyObject* self, PyObject* args, PyObject* kwargs)
 {
@@ -17,7 +62,8 @@ py_voice_separation(PyObject* self, PyObject* args, PyObject* kwargs)
            chord_spread = 0.0;
     int    pitch_lookback = 2;
     unsigned int lcg       = 0;
-    int    debug_print = 0;
+    PyObject *py_monitor = NULL;
+    PyObject *voices_list = NULL;
 
     static char *kwlist[] = {
         "onset", "offset", "pitch",
@@ -26,13 +72,13 @@ py_voice_separation(PyObject* self, PyObject* args, PyObject* kwargs)
         "overlap_penalty", "cross_penalty", "chord_spread",
         "pitch_lookback",
         "seed",
-        "debug_print",
+        "monitor",
         NULL
     };
 
     if (!PyArg_ParseTupleAndKeywords(
             args, kwargs,
-            "OOO|iddddddiIi",   // 4 PyObjects, 1 int, 6 doubles, 1 int, then optional unsigned int, and int
+            "OOO|iddddddiIO",   // 4 PyObjects, 1 int, 6 doubles, 1 int, then optional unsigned int, and int
             kwlist,
             &onset_obj, &offset_obj, &pitch_obj,
             &max_voices,
@@ -40,7 +86,7 @@ py_voice_separation(PyObject* self, PyObject* args, PyObject* kwargs)
             &overlap_penalty, &cross_penalty, &chord_spread,
             &pitch_lookback,
             &lcg,
-            &debug_print))
+            &py_monitor))
     {
         return NULL;
     }
@@ -72,19 +118,12 @@ py_voice_separation(PyObject* self, PyObject* args, PyObject* kwargs)
     }
 
     double *duration = calloc(max_notes, sizeof(double));
-    double *chord = calloc(max_notes, sizeof(int));
+    int *chord = calloc(max_notes, sizeof(int));
     int *voice = calloc(max_notes, sizeof(int));
     int *link  = calloc(max_notes, sizeof(int));
     if (!duration || !voice || !link) {
         PyErr_NoMemory();
-        Py_DECREF(onset_arr);
-        Py_DECREF(offset_arr);
-        Py_DECREF(pitch_arr);
-        free(duration);
-        free(chord);
-        free(voice);
-        free(link);
-        return NULL;
+        goto cleanup;
     }
 
     Descriptor desc;
@@ -105,7 +144,19 @@ py_voice_separation(PyObject* self, PyObject* args, PyObject* kwargs)
     desc.chord_spread    = chord_spread;
     desc.pitch_lookback  = pitch_lookback;
     desc.lcg             = lcg;
-    desc.debug_print     = debug_print;
+    if (py_monitor != NULL && py_monitor != Py_None) {
+        if (!PyCallable_Check(py_monitor)) {
+            PyErr_SetString(PyExc_TypeError, "monitor must be callable");
+            goto cleanup;
+        }
+        Py_INCREF(py_monitor);
+        desc.monitor = monitor_callback;
+        desc.data    = (void*)py_monitor;
+    }
+    else {
+        desc.monitor = NULL;
+        desc.data    = NULL;
+    }
 
     for(int i=0; i<max_notes; ++i){
         desc.duration[i] = desc.offset[i] - desc.onset[i];
@@ -113,14 +164,22 @@ py_voice_separation(PyObject* self, PyObject* args, PyObject* kwargs)
 
     voice_separation(&desc);
 
-    PyObject *voices_list = PyList_New(max_voices);
+    if (py_monitor != NULL && py_monitor != Py_None) {
+        Py_DECREF(py_monitor);
+    }
+
+    if (PyErr_Occurred()) {
+        goto cleanup;
+    }
+
+    voices_list = PyList_New(max_voices);
     if (!voices_list) goto cleanup;
     for (int v = 0; v < max_voices; ++v) {
         PyObject *lst = PyList_New(0);
         if (!lst) { Py_DECREF(voices_list); voices_list = NULL; goto cleanup; }
         for (int i = 0; i < max_notes; ++i) {
             if (voice[i] == v) {
-                PyObject *note = Py_BuildValue("(i,i)", i, desc.chord[i]);
+                PyObject *note = Py_BuildValue("i", i);
                 PyList_Append(lst, note);
                 Py_DECREF(note);
             }
