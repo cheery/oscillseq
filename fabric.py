@@ -167,10 +167,10 @@ class Fabric:
         return {n: self.map_param(d.field_type(n), v) for n, v in params.items()}
 
     def map_param(self, ty, param):
-        if isinstance(param, music.Pitch) and ty == "hz":
-            return 440.0 * 2**((int(param)-69)/12)
-        elif isinstance(param, music.Pitch):
-            return int(param)
+        if isinstance(param, music.Pitch):
+            param = int(param)
+        if ty == "hz" and isinstance(param, int):
+            return 440.0 * 2**((param-69)/12)
         return param
 
     def control(self, label, **args):
