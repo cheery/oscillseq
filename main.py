@@ -721,7 +721,7 @@ class TrackLayout:
                 if isinstance(e.brush, ControlPoint):
                     name = f"{e.brush.tag} {' ~'[e.brush.transition]} {e.brush.value}"
                 if isinstance(e.brush, Key):
-                    name = f"key {e.brush.lanes} {e.brush.index} {music.major[e.brush.index]}"
+                    name = f"key {e.brush.index} {music.major[e.brush.index]}"
                 text = font.render(name, True, [(200, 200, 200), (0,255,0), (200, 0, 200), (200, 255, 100)][selected])
                 screen.blit(text, (start*w + 10 + editor.MARGIN, y))
                 if isinstance(e.brush, Clip):
