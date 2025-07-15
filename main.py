@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from fractions import Fraction
-from model import Entity, ControlPoint, Key, Clip, NoteGen, Tracker, Cell, Document, json_to_brush
+from model import Entity, ControlPoint, Key, Clip, NoteGen, Tracker, Cell, Document, json_to_brush, from_file
 from typing import List, Dict, Optional, Callable, Tuple, Any
 from sequencer import Player, Sequencer, SequenceBuilder2
 from fabric import Definitions, Fabric
@@ -135,7 +135,10 @@ class Editor:
         else:
             self.filename = "unnamed.seq.json"
         if os.path.exists(self.filename):
-            self.doc = Document.from_json_file(self.filename)
+            if self.filename.endswith(".seq"):
+                self.doc = from_file(self.filename)
+            else:
+                self.doc = Document.from_json_file(self.filename)
         self.pngs_record_path = os.path.abspath(os.path.splitext(self.filename)[0] + ".pngs")
         self.record_path = os.path.abspath(os.path.splitext(self.filename)[0] + ".wav")
 
@@ -306,8 +309,11 @@ class Editor:
             #elif ev.key == pygame.K_6:
             #elif ev.key == pygame.K_7:
             elif ev.key == pygame.K_s:
-                self.doc.to_json_file(self.filename)
-                print("document saved!")
+                if self.filename.endswith(".seq"):
+                    print("TODO: save .seq file")
+                else:
+                    self.doc.to_json_file(self.filename)
+                    print("document saved!")
             elif ev.key == pygame.K_r:
                 self.render_score()
             elif ev.key == pygame.K_v:

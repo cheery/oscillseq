@@ -7,7 +7,8 @@ from .quantize import Nonterminal
 
 __all__ = [
     'grammar_from_string',
-    'from_string'
+    'from_string',
+    'from_stream',
 ]
 
 _BLANK_RE = re.compile(r'^(#.*)?$')
@@ -43,6 +44,8 @@ def grammar_from_string(s):
         nt.prod.append((weight, rule.rewrite(rw)))
     return rules[0][0]
 
+# TODO: discard the 'from_string' entirely,
+#       the 'from_stream' is so much more readable.
 _EUC_RE = re.compile(
     r'^\s*E'
     r'\(\s*'
@@ -121,3 +124,42 @@ def parse_dtree(tree_str):
     if i != len(tokens):
         raise ValueError(f"Unexpected extra tokens from index {i}: {tokens[i:]}")
     return root
+
+
+_BIT_STRING = re.compile(r"^[01]+$")
+_DIGITS     = re.compile(r"^\d+$")
+_DIGITS_WORD     = re.compile(r"^(?!^$)(\d+)?(\w+)?$")
+_NONZERO    = re.compile(r"^[1-9][0-9]*$")
+_DTREE      = re.compile(r"^\(|\)|r|n$")
+
+def from_stream(stream):
+    if s := stream.perhaps_regex(_BIT_STRING):
+        bits = [int(ch) for ch in s]
+        return StepRhyhm(bits)
+    elif stream.perhaps("euclidean"):
+        pulses = int(stream.advance_regex(_NONZERO, "nonzero number"))
+        steps  = int(stream.advance_regex(_NONZERO, "nonzero number"))
+        rotation = stream.advance_int()
+        return EuclideanRhythm(pulses, steps, rotation)
+    elif stream.match_regex(_DTREE):
+        return dtree_from_stream(stream)
+    else:
+        self.expect("rhythm structure")
+
+def dtree_from_stream(stream):
+    if m := stream.perhaps_match(_DIGITS_WORD):
+        weight = int(m.group(1) or 1)
+        label  = m.group(2)
+        cont   = stream.perhaps(":")
+    else:
+        weight = 1
+        label  = None
+        cont   = True
+    children = []
+    if cont:
+        if stream.perhaps("("):
+            while not stream.perhaps(")"):
+                children.append(dtree_from_stream(stream))
+    if label is None and not children:
+        stream.expected("rhythm tree")
+    return DTree(weight, label, children)

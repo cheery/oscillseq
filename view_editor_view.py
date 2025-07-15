@@ -107,6 +107,8 @@ class ViewEditorView:
                 for name in desc.avail(elem.ty):
                     if (label,name) not in elem.lane.edit:
                         choices.append((editparam_text(label, name, self.editor), add_editparam(label, name)))
+            if elem.ty == "boolean":
+                choices.append((editparam_text(label, "+", self.editor), add_editparam(label, "+")))
             self.tool = ContextMenu(self.tool, pygame.mouse.get_pos(), choices)
         return menu
 
@@ -411,7 +413,9 @@ class GridLayout:
                 screen.blit(text, (x - text.get_width() - 10, y + 2))
                 for i, (b, span) in enumerate(rhythmd):
                     args = gen.track[i % len(gen.track)]
-                    if args is None:
+                    if param == "+":
+                        text = "x" if args is not None else "o"
+                    elif args is None:
                         text = " "
                     else:
                         text = str(args.get(param, "_"))
@@ -433,6 +437,6 @@ def draw_editparams(screen, font, x, y, edit, editor, selected=None):
 
 def editparam_text(label, name, editor):
     text = f"{label}:{name}"
-    if text not in ["tempo:~", "tempo:*"]:
+    if text not in ["tempo:~", "tempo:*"] and label in editor.doc.labels:
         text = f"{label}:{editor.doc.labels[label].synth}:{name}"
     return text
