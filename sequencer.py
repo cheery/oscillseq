@@ -38,7 +38,7 @@ class Sequencer:
         goal_clavier, quadratics, controls = {}, {}, {}
         index = 0
         for index, event in enumerate(self.sequence.com):
-            if event.time <= self.point:
+            if event.time < self.point:
                 event.sim(goal_clavier, quadratics, controls)
             else:
                 break
