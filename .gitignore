@@ -1,1 +1,8 @@
 __pycache__
+build
+*.egg-info
+.venv
+venv
+*.wav
+*.mp3
+*.swp
