@@ -252,7 +252,7 @@ def layout_lanes(editor, lanes, y, generators):
             layout.append(PianoRollLayout(rect, lane))
         if isinstance(lane, Grid):
             height = max(1, len(lane.edit))
-            height = max(height, sum(1 for tag,param in lane.edit for gen in generators if gen.tag == tag))
+            height += sum(1 for tag,param in lane.edit for gen in generators if gen.tag == tag)
             height *= 15
             rect = pygame.Rect(0, y, editor.SCREEN_WIDTH, height)
             layout.append(GridLayout(rect, lane))
@@ -429,6 +429,13 @@ class GridLayout:
                         rect = pygame.Rect(x + b + span*0.05, y, span*0.9, 15)
                         pygame.draw.rect(screen, (200,200,200), rect, 1)
                 y += 15
+            text = font.render(editparam_text(tag, param, editor), True, (200,200,200))
+            screen.blit(text, (x - text.get_width() - 10, y + 2))
+            for i, (b, span) in enumerate(rhythmd):
+                if 0 <= pointer[0] - x - b <= span and y <= pointer[1] <= y + 15:
+                    rect = pygame.Rect(x + b + span*0.05, y, span*0.9, 15)
+                    pygame.draw.rect(screen, (200,200,200), rect, 1)
+            y += 15
 
 def draw_editparams(screen, font, x, y, edit, editor, selected=None):
     for label, name in edit:
