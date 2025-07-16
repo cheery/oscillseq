@@ -13,6 +13,10 @@ class ContextMenu:
             self.rect.x = 0
         if self.rect.y < 0:
             self.rect.y = 0
+        if self.rect.bottom >= self.view.editor.SCREEN_HEIGHT - 64:
+            self.rect.y -= self.rect.bottom - self.view.editor.SCREEN_HEIGHT + 64
+        if self.rect.right >= self.view.editor.SCREEN_WIDTH:
+            self.rect.x -= self.rect.right - self.view.editor.SCREEN_WIDTH
         self.selected = None
 
     def draw(self, screen):
