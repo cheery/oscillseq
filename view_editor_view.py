@@ -404,6 +404,9 @@ class GridLayout:
         pygame.draw.line(screen, (70, 70, 70), self.rect.topleft, self.rect.topright)
 
     def query_pitch(self, editor, pointer, rhythmd, get_accidentals, accidental, editparam, w):
+        if self.rect.collidepoint(pointer):
+            if self.grid.kind == "trigger":
+                return 1
         return None
 
     def draw_tracks(self, screen, font, editor, rhythmd, generators, get_accidentals, pointer, w, accidental):

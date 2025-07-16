@@ -303,18 +303,26 @@ class CellMenu:
         self.view = tool.view
         self.tool = tool
         x = 150
-        y = 150
+        y = 100
+        next_line = 10
         self.wire_inputs = {}
         self.wire_outputs = {}
         self.gui = []
         for i, name in enumerate(self.view.editor.definitions.list_available()):
+            # TODO: write height estimator
             cell = Cell(str(i), False, name, (x,y), {})
-            gcell = layout_cell(cell, self.wire_inputs, self.wire_outputs, self.view.editor.definitions)
-            self.gui.append(gcell)
+            gcell = layout_cell(cell, {}, {}, self.view.editor.definitions)
+            gcell.rect.y += gcell.rect.height * 0.5
             x += 200
+            next_line = max(gcell.rect.height + 20, next_line)
             if x >= 1000:
                 x = 150
-                y += 200
+                y += next_line
+                next_line = 10
+            cell = Cell(str(i), False, name, gcell.rect.center, {})
+            gcell = layout_cell(cell, self.wire_inputs, self.wire_outputs, self.view.editor.definitions)
+            self.gui.append(gcell)
+        self.scroll = np.array([0,0])
 
     def draw(self, screen):
         font = self.view.editor.font
@@ -324,13 +332,14 @@ class CellMenu:
         pygame.draw.rect(screen, (0, 0, 0), rect.move(-2, 2), 0, 3)
         pygame.draw.rect(screen, (60, 60, 60), rect, 0, 3)
         pygame.draw.rect(screen, (200, 200, 200), rect, 2, 3)
+        screen.set_clip(rect)
 
-        scroll = [0, 0]
+        scroll = self.scroll
 
         for element in self.gui:
-            if element.rect.collidepoint(mouse_pos):
-                pygame.draw.rect(screen, (200, 200, 200), element.rect, 2, 3)
             element.draw(screen, font, self.view.editor.definitions, scroll, None, None)
+            if element.rect.collidepoint(mouse_pos - scroll):
+                pygame.draw.rect(screen, (200, 200, 200), element.rect.move(scroll), 2, 3)
 
         for point, spec in self.wire_inputs.values():
             point = point[0] + scroll[0], point[1] + scroll[1]
@@ -341,27 +350,30 @@ class CellMenu:
             pygame.draw.circle(screen, color_of_bus(spec), point, 7.5, 0)
             pygame.draw.circle(screen, (255, 255, 255), point, 7.5, 1)
 
+        screen.set_clip(None)
+
     def handle_mousebuttondown(self, ev):
-        self.view.tool = self.tool
-        gcell = None
-        for element in self.gui:
-            if element.rect.collidepoint(ev.pos):
-                gcell = element
-        if gcell is not None:
-            cell = gcell.cell
-            cell.label = ""
-            cell = self.view.editor.doc.intro(cell)
-            cell.pos = tuple(np.array(cell.pos) - self.view.scroll)
-            self.view.editor.doc.cells.append(cell)
-            self.view.tool = CellPositionTool(self.tool, gcell.rect.move(-self.view.scroll), cell, np.array(ev.pos) - self.view.scroll)
-            restart_fabric(self.view.editor)
+        if ev.button == 1:
+            self.view.tool = self.tool
+            gcell = None
+            for element in self.gui:
+                if element.rect.collidepoint(ev.pos - self.scroll):
+                    gcell = element
+            if gcell is not None:
+                cell = gcell.cell
+                cell.label = ""
+                cell = self.view.editor.doc.intro(cell)
+                cell.pos = tuple(np.array(cell.pos) + self.scroll - self.view.scroll)
+                self.view.editor.doc.cells.append(cell)
+                self.view.tool = CellPositionTool(self.tool, gcell.rect.move(-self.view.scroll), cell, np.array(ev.pos) - self.view.scroll)
+                restart_fabric(self.view.editor)
 
     def handle_mousebuttonup(self, ev):
         pass
 
     def handle_mousemotion(self, ev):
-        pass
-
+        if ev.buttons[2]:
+            self.scroll += ev.rel
 
 def detect_cycle(i, o, connections, definitions):
     if ":" in i and ":" in o:

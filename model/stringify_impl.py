@@ -115,6 +115,8 @@ def str_track(track):
         for args in track:
             if args:
                 rows.update(args)
+        if not rows and track:
+            rows.add('+')
         for tag in rows:
             values = ["_"]
             repeats = [0]

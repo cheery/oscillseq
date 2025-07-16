@@ -742,7 +742,15 @@ class NoteEditorTool:
                     if s <= (ev.pos[0] - x) <= s+span:
                         gens0 = [gen for gen in tracker.generators if gen.tag == tag and gen.loop_group() == self.view.loop]
                         gens = [gen for gen in tracker.generators if gen.tag == tag]
-                        if ev.button == 1:
+                        if ev.button == 1 and param == "+":
+                            if gens0:
+                                gen = gens0[0]
+                            else:
+                                gen = NoteGen(tag, [None]*(self.view.loop or len(rhythmd)), loop=self.view.loop is not None)
+                                tracker.generators.append(gen)
+                            if gen.track[i % len(gen.track)] is None:
+                                gen.track[i % len(gen.track)] = {}
+                        elif ev.button == 1:
                             blank_row = None
                             for gen in gens0:
                                 j = i % len(gen.track)
@@ -763,7 +771,12 @@ class NoteEditorTool:
                             for gen in gens0:
                                 j = i % len(gen.track)
                                 gen.track[j] = None
-                        if ev.button == 3:
+                        if ev.button == 3 and param == "+": # TODO: LOL, really, redesign the tracker.
+                            for gen in gens0:
+                                j = i % len(gen.track)
+                                gen.track[j] = None
+                                break
+                        elif ev.button == 3:
                             for gen in gens:
                                 j = i % len(gen.track)
                                 if gen.track[j] is not None:
