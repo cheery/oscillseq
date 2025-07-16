@@ -40,7 +40,8 @@ pitch     = "pitch"
 hz        = "hz"
 db        = "db"
 duration  = "duration"
-kinds = [boolean, unipolar, number, bipolar, pitch, hz, db, duration]
+trigger   = "trigger"
+kinds = [boolean, unipolar, number, bipolar, pitch, hz, db, duration, trigger]
 
 class Saver:
     def __init__(self, directory):

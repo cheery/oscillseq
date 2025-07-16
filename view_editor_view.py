@@ -111,7 +111,7 @@ class ViewEditorView:
                 for name in desc.avail(elem.ty):
                     if (label,name) not in elem.lane.edit:
                         choices.append((editparam_text(label, name, self.editor), add_editparam(label, name)))
-                if "boolean" in elem.ty and is_multi(label):
+                if "trigger" in elem.ty and is_multi(label):
                     choices.append((editparam_text(label, "+", self.editor), add_editparam(label, "+")))
             self.tool = ContextMenu(self.tool, pygame.mouse.get_pos(), choices)
         return menu
