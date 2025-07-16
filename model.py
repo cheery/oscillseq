@@ -11,12 +11,14 @@ import re
 
 _FLOAT_EXPR = r"[-+]?[0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?"
 _FLOAT = re.compile("^" + _FLOAT_EXPR + "$")
+_WORD = re.compile(r"^\w+$")
+_STRING = re.compile(r'^"[^"]*"?$')
 
 _TOKEN = re.compile("|".join([
     r'#.*$',
-    r'\w+',
-    r'"[^"]*"?',
+    r'(?:\w|\.)+',
     _FLOAT_EXPR,
+    r'"[^"]*"?',
     r' +',
     r'.'
 ]))
@@ -152,7 +154,7 @@ def tokenize(s, lineno):
         yield lineno, token
 
 def from_file(filename):
-    stream = TokenStream(tokenize_file("hello.seq"))
+    stream = TokenStream(tokenize_file(filename))
     stream.advance("")
     stream.advance("oscillseq")
     stream.advance("file")
@@ -241,10 +243,10 @@ def lanes_from_stream(stream):
         flavor = stream.advance_regex(_LANE_CLASS, "staves|pianoroll|grid")
         if flavor == "staves":
             extra = inline_parameters_from_stream(stream, {"count": pos, "above": pos, "below": pos})
-            lane = Staves(extra['count'], extra['above'], extra['below'], [])
+            lane = Staves(extra['count'] or 0, extra['above'] or 0, extra['below'] or 0, [])
         elif flavor == "pianoroll":
             extra = inline_parameters_from_stream(stream, {"bot": pos, "top": pos})
-            lane = PianoRoll(extra['bot'], extra['top'], [])
+            lane = PianoRoll(extra['bot'] or 0, extra['top'] or 0, [])
         elif flavor == "grid":
             kind = stream.shift_id()
             lane = Grid(kind, [])
@@ -461,6 +463,10 @@ class ControlPoint:
     def copy(self):
         return ControlPoint("", self.tag, self.transition, self.value)
 
+    def __str__(self):
+        tr = " ~" if self.transition else ""
+        return f"controlpoint {str_tag(self.label)} {str_tag(self.tag)}{tr} {str_value(self.value)}"
+
 @dataclass(eq=False)
 class Key:
     label : str
@@ -490,6 +496,9 @@ class Key:
 
     def copy(self):
         return Key("", self.lanes, self.index)
+
+    def __str__(self):
+        return f"key {str_tag(self.label)} {self.index}"
 
 @dataclass(eq=False)
 class Clip:
@@ -522,6 +531,9 @@ class Clip:
 
     def copy(self):
         return Clip("", self.duration, [e.copy() for e in self.brushes])
+
+    def __str__(self):
+        return f"clip {str_tag(self.label)} {self.duration}" + "".join(str_entities(self.brushes))
 
 def json_to_gen(obj):
     return {
@@ -581,6 +593,10 @@ class NoteGen:
 
     def copy(self):
         return NoteGen(self.tag, [copy_args(a) for a in self.track], self.loop, self.flavor)
+
+    def __str__(self):
+        extra = " loop" if self.loop else ""
+        return f"{self.flavor} {str_tag(self.tag)}{extra}" + str_track(self.track)
 
 def legacy_to_notegens(generators):
     if isinstance(generators, list):
@@ -648,6 +664,12 @@ class Tracker:
             [g.copy() for g in self.generators],
             self.view)
 
+    def __str__(self):
+        s_view = ""
+        if self.view:
+            s_view = "\n    view " + str_tag(self.view.label)
+        return f"tracker {str_tag(self.label)} {self.duration} {str(self.rhythm)}" + str_generators(self.generators) + s_view
+
 @dataclass(eq=False)
 class Cell:
     label : str
@@ -680,6 +702,14 @@ class Cell:
     def copy(self):
         return Cell("", self.multi, self.synth, tuple(self.pos), self.params.copy(), self.type_param)
 
+    def __str__(self):
+        extra = ""
+        if self.multi:
+            extra += " multi"
+        if self.type_param:
+            extra += " type_param:" + str_tag(self.type_param)
+        return f"cell {str_tag(self.label)} {str_tag(self.synth)} {int(self.pos[0])} {int(self.pos[1])}{extra}" + str_params(self.params)
+
 def json_to_view_lane(obj):
     return {
         "staves": Staves,
@@ -709,6 +739,14 @@ class PianoRoll:
             edit = [tuple(o) for o in obj["edit"]],
         )
 
+    def __str__(self):
+        extra = ""
+        if self.bot:
+            extra += " bot:" + str(self.bot)
+        if self.top:
+            extra += " top:" + str(self.top)
+        return f"pianoroll{extra}" + str_edit(self.edit)
+
 @dataclass(eq=False)
 class Staves:
     count : int
@@ -734,6 +772,16 @@ class Staves:
             edit = [tuple(o) for o in obj["edit"]],
         )
 
+    def __str__(self):
+        extra = ""
+        if self.count:
+            extra += " count:" + str(self.count)
+        if self.above:
+            extra += " above:" + str(self.above)
+        if self.below:
+            extra += " below:" + str(self.below)
+        return f"staves{extra}" + str_edit(self.edit)
+
 @dataclass(eq=False)
 class Grid:
     kind : str
@@ -752,6 +800,9 @@ class Grid:
             kind = obj["kind"],
             edit = [tuple(o) for o in obj["edit"]],
         )
+
+    def __str__(self):
+        return f"grid {str_tag(self.kind)}" + str_edit(self.edit)
 
 @dataclass(eq=False)
 class View:
@@ -772,6 +823,14 @@ class TrackerView(View):
         return cls(
             label = label,
             lanes = [json_to_view_lane(o) for o in obj['lanes']])
+
+    def str_lines(self):
+        yield f"view {str_tag(self.label)}"
+        for lane in self.lanes:
+            yield str(lane)
+
+    def __str__(self):
+        return "\n    ".join(self.str_lines())
 
 @dataclass(eq=False)
 class Document:
@@ -887,3 +946,96 @@ class Document:
     def from_json_file(cls, filename):
         with open(filename, "r") as fd:
             return cls.from_json_fd(fd)
+
+    def str_lines(self):
+        yield "oscillseq file version 0"
+        yield f"document {self.duration}" + "".join(str_entities(self.brushes))
+        for brush in self.labels.values():
+            yield str(brush)
+        yield "\n    ".join(str_connections(self.connections))
+
+    def __str__(self):
+        return "\n\n".join(self.str_lines())
+
+def str_connections(connections):
+    yield "connections"
+    for src, dst in connections:
+        src = ":".join(map(str_tag, src.split(":")))
+        dst = ":".join(map(str_tag, dst.split(":")))
+        yield f"{src} {dst}"
+
+def str_edit(edit):
+    def _impl_():
+        for src, dst in edit:
+            yield "\n        " + str_tag(src) + ":" + str_tag(dst)
+    return "".join(_impl_())
+
+def str_entities(entities):
+    bins = defaultdict(list)
+    for entity in entities:
+        bins[entity.shift].append(str_tag(entity.brush.label))
+    for shift in sorted(list(bins.keys())):
+        yield f"\n    {shift} " + " ".join(bins[shift])
+
+def str_generators(generators):
+    def _impl_():
+        for gen in generators:
+            yield "\n    " + str(gen)
+    return "".join(_impl_())
+
+def str_track(track):
+    def _impl_():
+        rows = set()
+        for args in track:
+            if args:
+                rows.update(args)
+        for tag in rows:
+            values = ["_"]
+            repeats = [0]
+            def push(s):
+                if values[-1] == s:
+                    repeats[-1] += 1
+                else:
+                    values.append(s)
+                    repeats.append(1)
+            for args in track:
+                if args is None:
+                    push("_")
+                elif tag in args:
+                    push(str_value(args[tag]))
+                else:
+                    push("x")
+            values = [(f"{v}*{r}" if r != 1 else v) for v,r in zip(values, repeats) if r > 0]
+            yield f"\n        {str_tag(tag)}:" + " ".join(values)
+        return iter(())
+    return "".join(_impl_())
+
+def str_tag(label):
+    if _WORD.match(label):
+        return label
+    else:
+        s_label = '"' + label + '"'
+        if _STRING.match(s_label):
+            return s_label
+        else:
+            raise ValueError("label {repr(label)} contains disallowed characters")
+
+def str_params(params):
+    def _impl_():
+        for key, value in params.items():
+            yield "\n    " + str_tag(key) + ": " + str_value(value)
+    return "".join(_impl_())
+
+def str_value(value):
+    if isinstance(value, music.Pitch):
+        cls = "CDEFGAB"[value.position%7]
+        octave = value.position//7
+        if value.accidental < 0:
+            t = "b" * -value.accidental
+        else:
+            t = "s" * value.accidental
+        return f"{cls}{t}{octave}"
+    elif isinstance(value, float):
+        return repr(value)
+    else:
+        return str(value)

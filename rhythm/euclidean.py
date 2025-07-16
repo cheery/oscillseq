@@ -48,5 +48,5 @@ class EuclideanRhythm:
         return self.to_step_sequence().to_events(start, duration)
 
     def __str__(self):
-        return f"E({self.pulses}, {self.steps}, {self.rotation})"
+        return f"euclidean {self.pulses}, {self.steps}, {self.rotation}"
 

@@ -135,7 +135,7 @@ _DTREE      = re.compile(r"^\(|\)|r|n$")
 def from_stream(stream):
     if s := stream.perhaps_regex(_BIT_STRING):
         bits = [int(ch) for ch in s]
-        return StepRhyhm(bits)
+        return StepRhythm(bits)
     elif stream.perhaps("euclidean"):
         pulses = int(stream.advance_regex(_NONZERO, "nonzero number"))
         steps  = int(stream.advance_regex(_NONZERO, "nonzero number"))

@@ -139,6 +139,8 @@ class Editor:
                 self.doc = from_file(self.filename)
             else:
                 self.doc = Document.from_json_file(self.filename)
+            if self.filename.endswith(".json"):
+                self.filename = self.filename[:-5]
         self.pngs_record_path = os.path.abspath(os.path.splitext(self.filename)[0] + ".pngs")
         self.record_path = os.path.abspath(os.path.splitext(self.filename)[0] + ".wav")
 
@@ -310,10 +312,12 @@ class Editor:
             #elif ev.key == pygame.K_7:
             elif ev.key == pygame.K_s:
                 if self.filename.endswith(".seq"):
-                    print("TODO: save .seq file")
+                    s_doc = str(self.doc)
+                    with open(self.filename, "w") as fd:
+                        fd.write(s_doc)
                 else:
                     self.doc.to_json_file(self.filename)
-                    print("document saved!")
+                print("document saved!")
             elif ev.key == pygame.K_r:
                 self.render_score()
             elif ev.key == pygame.K_v:
