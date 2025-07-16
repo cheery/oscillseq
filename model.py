@@ -275,7 +275,7 @@ def synth_name_from_stream(stream):
     return name
 
 def inline_parameters_from_stream(stream, parameter_spec):
-    params = {name: None if paramfn is None else False for name, paramfn in parameter_spec.items()}
+    params = {name: False if paramfn is None else None for name, paramfn in parameter_spec.items()}
     encountered = set()
     while stream.token in parameter_spec and stream.token not in encountered:
         name = stream.shift_id()

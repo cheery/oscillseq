@@ -100,6 +100,10 @@ class ViewEditorView:
                 elem.lane.edit.insert(k, (label, name))
                 self.refresh()
             return _impl_
+        def is_multi(label):
+            if cell := self.editor.doc.labels.get(label, None):
+                return cell.multi
+            return False
         def menu():
             choices = []
             descriptors = self.editor.definitions.descriptors(self.editor.doc.cells)
@@ -107,8 +111,8 @@ class ViewEditorView:
                 for name in desc.avail(elem.ty):
                     if (label,name) not in elem.lane.edit:
                         choices.append((editparam_text(label, name, self.editor), add_editparam(label, name)))
-            if elem.ty == "boolean":
-                choices.append((editparam_text(label, "+", self.editor), add_editparam(label, "+")))
+                if "boolean" in elem.ty and is_multi(label):
+                    choices.append((editparam_text(label, "+", self.editor), add_editparam(label, "+")))
             self.tool = ContextMenu(self.tool, pygame.mouse.get_pos(), choices)
         return menu
 
