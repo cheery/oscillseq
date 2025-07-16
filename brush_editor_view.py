@@ -1,4 +1,4 @@
-from model import Entity, ControlPoint, Key, Clip, NoteGen, Tracker, Cell, PianoRoll, Staves, Grid, Document, json_to_brush
+from model import Entity, ControlPoint, Key, Clip, NoteGen, Tracker, Cell, PianoRoll, Staves, Grid, Document
 from view_editor_view import layout_lanes, draw_editparams
 from components import ContextMenu
 from fractions import Fraction
