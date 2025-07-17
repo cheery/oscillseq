@@ -145,7 +145,7 @@ def str_params(params):
 
 @stringify.register
 def Str_stringify(self : str):
-    if _WORD.match(self):
+    if _WORD.match(self) or self == "+":
         return self
     else:
         s_self = '"' + self + '"'
