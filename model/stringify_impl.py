@@ -166,8 +166,8 @@ def Pitch_stringify(self : music.Pitch):
 
 @stringify.register
 def Float_stringify(self : float):
-    return repr(self)
+    return repr(float(self))
 
 @stringify.register
 def Int_stringify(self : int):
-    return str(self)
+    return str(int(self))

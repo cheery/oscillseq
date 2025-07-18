@@ -1,6 +1,6 @@
 from descriptors import *
 from supriya import Envelope, synthdef
-from supriya.ugens import Sweep, Out, In, SinOsc, WhiteNoise, Saw, EnvGen, LPF, RLPF
+from supriya.ugens import *
 
 save = Saver("synthdefs")
 
@@ -12,6 +12,18 @@ def saw(out=0, note=69, gate=1, volume=0):
     Out.ar(bus=out, source=[sig, sig])
 
 save(saw,
+    out = bus("ar", "out", 2),
+    note = pitch,
+    volume = db)
+
+@synthdef()
+def flutelike(out=0, note=69, gate=1, volume=0):
+    sig = Pulse.ar(frequency=note.midi_to_hz())
+    sig *= EnvGen.kr(envelope=Envelope.adsr(0.5, 0, 1.0, 0.5), gate=gate, done_action=2)
+    sig *= volume.db_to_amplitude()
+    Out.ar(bus=out, source=[sig, sig])
+
+save(flutelike,
     out = bus("ar", "out", 2),
     note = pitch,
     volume = db)
