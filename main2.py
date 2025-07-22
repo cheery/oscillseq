@@ -314,16 +314,21 @@ class ViewView:
 
     @composable
     def stave_layout(self, selected, index, count, above, below, edit):
-        layout().style_min_height = 80
+        layout().style_min_height = height = calculate_staves_heigth(self.editor, count, above, below)
         self.common(selected, index, edit)
         with frame():
             @widget().attach
             def _draw_(this, frame):
                 pygame.draw.rect(frame.screen, (250,0,0), frame.rect, 5, 5)
+        with frame():
+            layout().style_flex_grow = 1
+            layout().style_height = height
+            layout().style_align_self = "center"
+            widget().attach(draw_staves(self.editor, count, above, below))
 
     @composable
     def grid_layout(self, selected, index, kind, edit):
-        layout().style_min_height = 20
+        layout().style_min_height = calculate_grid_height(self.editor, kind)
         self.common(selected, index, edit)
         with frame():
             @widget().attach
@@ -332,12 +337,17 @@ class ViewView:
 
     @composable
     def pianoroll_layout(self, selected, index, bot, top, edit):
-        layout().style_min_height = 50
+        layout().style_min_height = height = calculate_pianoroll_height(self.editor, bot, top)
         self.common(selected, index, edit)
         with frame():
             @widget().attach
             def _draw_(this, frame):
                 pygame.draw.rect(frame.screen, (250,0,0), frame.rect, 5, 5)
+        with frame():
+            layout().style_flex_grow = 1
+            layout().style_height = height
+            layout().style_align_self = "center"
+            widget().attach(draw_pianoroll(self.editor, bot, top))
 
     def common(self, selected, index, edit):
         layout().style_flex_direction = "row"
@@ -423,6 +433,49 @@ def editparam_text(editor, label, name):
         text = f"{label}:{editor.doc.labels[label].synth}:{name}"
     return text
 
+def calculate_staves_heigth(editor, count, above, below):
+    return editor.STAVE_HEIGHT * 2 * (count + above + below)
+
+def calculate_pianoroll_height(editor, bot, top):
+    return editor.STAVE_HEIGHT * 2 / 12 * (top - bot + 1)
+
+def calculate_grid_height(editor, kind):
+    return editor.font.size("X")[1]
+
+def draw_staves(editor, count, above, below):
+    def _draw_(this, frame):
+        rect = frame.rect
+        x, y = rect.topleft
+        w = rect.width
+        k = rect.height / (count + above + below)
+        y += above * k
+        for _ in range(count):
+            for p in range(2, 12, 2):
+                pygame.draw.line(frame.screen, (70, 70, 70), (x, y+p*k/12), (x+w, y+p*k/12))
+            y += k
+    return _draw_
+
+def draw_pianoroll(editor, bot, top):
+    def _draw_(this, frame):
+        rect = frame.rect
+        x, y = rect.bottomleft
+        w = rect.width
+        k = rect.height / (top - bot + 1)
+        for note in range(bot, top + 1):
+            py = y - k*(note - bot)
+            rect = pygame.Rect(x, py-k, w, k)
+            if note == 69:
+                pygame.draw.rect(frame.screen, (100*1.5, 50*1.5, 50*1.5), rect)
+            elif note % 12 == 9:
+                pygame.draw.rect(frame.screen, (100, 50, 50), rect)
+            elif note % 12 in [0, 2, 4, 5, 7, 9, 11]:
+                pygame.draw.rect(frame.screen, (50, 50, 50), rect)
+            elif note == bot:
+                pygame.draw.line(frame.screen, (70, 70, 70), (x, py), (rect.right, py))
+            else:
+                pygame.draw.line(frame.screen, (50, 50, 50), (x, py), (rect.right, py))
+    return _draw_
+
 class Editor:
     screen_width = 1200
     screen_height = 600
@@ -430,6 +483,7 @@ class Editor:
 
     MARGIN = 220
     BARS_VISIBLE = 4
+    STAVE_HEIGHT = 3 * 12
 
     def __init__(self):
         pygame.init()
