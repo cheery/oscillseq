@@ -207,8 +207,12 @@ class NodeView:
                         if frame.ev.button == 1:
                             rect = frame.rect.move(-np.array(frame.ev.pos))
                             frame.press(DragCell(self, rect, tag, frame.ev.pos))
+                            break
                         elif frame.ev.button == 3:
                             frame.emit(self.editor.enter_popup(self.open_node_menu, tag))
+                            break
+                else:
+                    raise NoCapture
             widget().post_mousebuttondown = _node_mousebuttondown_
             @widget().attach
             def _draw_dragging_(this, frame):

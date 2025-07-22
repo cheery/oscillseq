@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 from typing import List, Dict, Set, Optional, Callable, Tuple, Any, Union, DefaultDict
 from descriptors import bus, read_desc, Descriptor
 from supriya import synthdef
-from supriya.ugens import In, Out
+from supriya.ugens import In, Out, LeakDC, Limiter
 from model import Cell
 import supriya
 import os
@@ -54,11 +54,23 @@ class Relay:
 
 class Fabric:
     def __init__(self, server, cells, connections, definitions):
+        self.server = server
         self.trail = defaultdict(dict)
         descriptors = definitions.descriptors(cells)
         synthdefs = set(desc.synthdef for desc in descriptors.values() if desc.synthdef is not None)
+
+        self.safe_output = server.add_bus_group("ar", 2)
+        @synthdef()
+        def safety_wrapper():
+            sig = In.ar(bus=self.safe_output, channel_count=2)
+            sig = LeakDC.ar(source=sig)
+            sig = Limiter.ar(source=sig)
+            Out.ar(bus=0, source=sig)
+        synthdefs.add(safety_wrapper)
+
         if synthdefs:
             server.add_synthdefs(*synthdefs)
+        self.synthdefs = synthdefs
 
         if not isinstance(server, supriya.Score):
             server.sync()
@@ -96,7 +108,7 @@ class Fabric:
             return dummies[sm]
 
         output_busi = assignment['output']
-        buses = {output_busi: 0}
+        buses = {output_busi: self.safe_output}
         for name, busi in assignment.items():
             if ":" not in name:
                 continue
@@ -135,6 +147,7 @@ class Fabric:
         self.descriptors = descriptors
         self.synths = {}
         self.root = server.add_group()
+        self.safety = self.root.add_synth(safety_wrapper)
         for c in reversed(self.cells):
             if isinstance(c, Relay):
                 #print("INSERT RELAY", {'in': int(buses[c.i]), 'out': int(buses[c.o])})
@@ -161,6 +174,9 @@ class Fabric:
         self.root.free()
         for group in self.bus_groups:
             group.free()
+        self.safe_output.free()
+        if self.synthdefs:
+            self.server.free_synthdefs(*self.synthdefs)
 
     def map_params(self, tag, params):
         d = self.descriptors[tag]
