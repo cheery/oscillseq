@@ -56,7 +56,7 @@ class Fabric:
     def __init__(self, server, cells, connections, definitions):
         self.trail = defaultdict(dict)
         descriptors = definitions.descriptors(cells)
-        synthdefs = set(desc.synthdef for desc in descriptors.values())
+        synthdefs = set(desc.synthdef for desc in descriptors.values() if desc.synthdef is not None)
         if synthdefs:
             server.add_synthdefs(*synthdefs)
 

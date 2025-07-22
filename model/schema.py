@@ -21,6 +21,7 @@ __all__ = [
     'Staves',
     'Grid',
     'View', 'TrackerView',
+    'stringify'
 ]
 
 def random_name():

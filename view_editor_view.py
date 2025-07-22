@@ -4,6 +4,8 @@ from descriptors import kinds
 import music
 import pygame
 
+# Add subdirectory system.
+
 class ViewEditorView:
     def __init__(self, editor):
         self.editor = editor

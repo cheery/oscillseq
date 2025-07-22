@@ -75,6 +75,11 @@ class Descriptor:
         if isinstance(spec, str):
             return spec
 
+    def field_mode(self, name):
+        spec = self.mdesc.get(name, None)
+        if isinstance(spec, bus):
+            return spec.mode
+
     def field_bus(self, name):
         spec = self.mdesc.get(name, None)
         if isinstance(spec, bus):

@@ -123,9 +123,7 @@ def tokenize_file(filename):
         for lineno, line in enumerate(fd.readlines(), 1):
             yield from tokenize(line, lineno)
 
-def tokenize(s, lineno):
-    first = True
-    indent = 0
+def tokenize(s, lineno, first = True, indent = 0):
     for token in _TOKEN.findall(s.strip('\r\n')):
         if first:
             first = False
@@ -372,3 +370,12 @@ def value_from_stream(stream):
     else:
         stream.expected("value")
 
+
+def string_to_value(s):
+    try:
+         val = value_from_stream(ts := TokenStream(tokenize(s, 0, first=False, indent=None)))
+         if ts.token is not None:
+             return None
+         return val
+    except ValueError as e:
+        return None
