@@ -213,6 +213,21 @@ class Widget(sarpasana.Node):
             return rect.move(x0, y0)
 
 @dataclass(eq=False)
+class ComputedPan:
+    xf : Callable[[], float]
+    yf : Callable[[], float]
+    def calc_x(self, _):
+        return self.xf()
+    def calc_y(self, _):
+        return self.yf()
+
+    def nudge(self, rect):
+        pass
+
+    def estimate(self):
+        return self.xf(), self.yf()
+
+@dataclass(eq=False)
 class Panner:
     x : float
     y : float
