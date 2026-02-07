@@ -3,16 +3,11 @@ from typing import List, Dict, Optional, Callable, Tuple, Any, Set, Union
 from controllers import quick_connect
 from descriptors import bus, kinds
 from fabric import Definitions, Fabric
-from gui.base import ScrollField, UIEvent, UIState, move_focus, draw_widget, Widget, NoCapture, AnchorToCenter, Panner, DrawFrame
-from gui.components import *
-from gui.event import uievent, invoke_at_event
-from gui.compostor import composable, component, Compostor, layout, widget, context, key, Hook
 from model import Document, Cell, from_file, stringify, reader
-from sarpasana import gutters, edges, pc
 from sequencer import Player, Sequencer, SequenceBuilder2
 from track_view import TrackView, TimelineScroll
 from view_view import ViewView
-from node_view import NodeView
+from node_view3 import NodeView
 import numpy as np
 import math
 import music
@@ -22,28 +17,6 @@ import spectroscope
 import supriya
 import sys
 from simgui import SIMGUI, Grid, Text, Slider
-
-class Spectros:
-    def __init__(self, editor):
-        out = editor.server.audio_output_bus_group
-        self.s1 = editor.make_spectroscope(bus=out[0])
-        self.s2 = editor.make_spectroscope(bus=out[1])
-        self.widget_id = object()
-
-    def behavior(self, ui):
-        return None
-
-    def draw(self, ui, screen):
-        self.s1.refresh()
-        self.s2.refresh()
-        y0 = screen.get_height()/4 - 100
-        y1 = screen.get_height()*3/4 - 100
-        self.s1.draw(screen, ui.font24, (255, 0, 0), screen.get_width()/2, y0)
-        self.s2.draw(screen, ui.font24, (0, 255, 0), screen.get_width()/2, y1)
-
-    def close(self):
-        self.s1.close()
-        self.s2.close()
 
 class Editor:
     screen_width = 1200
@@ -108,22 +81,7 @@ class Editor:
         self.playback_range = None
         self.playback_loop  = True
 
-        # Sequence is built so it could be visualized.
         self.group_ids = {}
-        #sb = SequenceBuilder2(self.group_ids, self.definitions.descriptors(self.doc.cells))
-        #self.doc.construct(sb, 0, ())
-        #self.sequence = sb.build(self.doc.duration)
-
-        #self.transport_bar = TransportBar(self)
-
-        #self.toolbar = Toolbar(pygame.Rect(0, self.SCREEN_HEIGHT - 32, self.SCREEN_WIDTH, 32),
-        #    [
-        #        ("track editor", BrushEditorView),
-        #        ("view editor", ViewEditorView),
-        #        ("cell editor", NodeEditorView)
-        #    ],
-        #    (lambda ev, view: self.change_view(view)),
-        #    (lambda name, cls: isinstance(self.view, cls)))
 
         self.timeline_head = 0
         self.timeline_tail = 0
@@ -133,15 +91,11 @@ class Editor:
 
         self.lane_tag = None
 
+        self.cell_view = NodeView(self)
+
         self.view = "file"
         self.spectros = None
         #self.layout = TrackLayout(self.doc, offset = 30)
-#        self.view = MainView(self)
-#        self.view.deploy()
-
-#        self.popups = ()
-#        self.compostor = Compostor(self.screen_layout, self)
-#        self.ui = UIState(self.compostor.root)
         self.refresh_layout()
 
     def refresh_layout(self):
@@ -164,6 +118,20 @@ class Editor:
             ui.widget(self.spectros)
         else:
             self.discard_spectros()
+        grid = Grid(0, 24, 24, 24)
+        if self.view == "file":
+            if ui.button(f"record {os.path.basename(self.wav_filename)!r}",
+                grid(2, 2, 20, 3), "record"):
+                self.render_score()
+            if ui.button(f"save {os.path.basename(self.filename)!r}",
+                grid(2, 4, 20, 5), "save"):
+                self.save_file()
+        elif self.view == "track":
+            pass
+        elif self.view == "view":
+            pass
+        elif self.view == "cell":
+            self.cell_view.present(ui)
         self.transport_bar(ui)
         self.view_bar(ui)
 
@@ -209,6 +177,7 @@ class Editor:
 
     def set_offline(self):
         if self.transport_status > 0:
+            self.discard_spectros()
             self.set_online()
             self.server.quit()
             self.server = None
@@ -333,316 +302,11 @@ class Editor:
             ui.draw(self.screen)
             pygame.display.flip()
 
-        #self.view.close()
         self.set_offline()
         self.set_midi_off()
         pygame.quit()
         sys.exit()
 
-#    def screen_layout(self, scene, popups):
-#        layout().style_flex_direction = "column"
-#        with frame():
-#            layout().style_height = 20
-#            layout().style_flex_direction = "row"
-#            @widget().attach
-#            def _draw_top_background_(this, frame):
-#                pygame.draw.rect(frame.screen, (60, 60, 60), frame.rect, 0, 0)
-#            self.transport_bar_buttons()
-#            with frame():
-#                layout().style_flex_direction = "row"
-#                layout().style_flex_grow = 1
-#                @widget().attach
-#                def _draw_transport_bar_(this, frame):
-#                    w = self.BAR_WIDTH
-#                    mg = []
-#                    for i in range(self.BARS_VISIBLE + 1):
-#                        x = i * w + frame.rect.left
-#                        if (i + self.timeline_scroll) == self.timeline_head:
-#                            pygame.draw.line(frame.screen, (0, 255, 255),
-#                                (x, frame.rect.top), (x, frame.rect.bottom))
-#                        else:
-#                            pygame.draw.line(frame.screen, (200, 200, 200),
-#                                (x, frame.rect.top), (x, frame.rect.bottom))
-#                        text = self.font.render(str(i + editor.timeline_scroll), True, (200, 200, 200))
-#                        frame.screen.blit(text, (x + 2, frame.rect.centery - text.get_height()/2))
-#                        mg.append(text.get_width())
-#
-#                    if self.playback_range is not None:
-#                        i, j = self.playback_range
-#                        half_width  = 6 / 2
-#                        half_height = 6 / 2
-#                        if self.timeline_scroll <= i < self.timeline_scroll + self.BARS_VISIBLE:
-#                            centerx = (i - self.timeline_scroll) * w + 6 + mg[i - self.timeline_scroll] + frame.rect.left
-#                            centery = frame.rect.centery
-#                            top = (centerx, centery - half_height)
-#                            rig = (centerx + half_width, centery)
-#                            bot = (centerx, centery + half_height)
-#                            lef = (centerx - half_width, centery)
-#                            pygame.draw.polygon(frame.screen, (200, 200, 200), [top, rig, bot])
-#
-#                        if self.timeline_scroll < j <= self.timeline_scroll + self.BARS_VISIBLE:
-#                            centerx = (j - self.timeline_scroll) * w - 6 + frame.rect.left
-#                            centery = frame.rect.centery
-#                            top = (centerx, centery - half_height)
-#                            rig = (centerx + half_width, centery)
-#                            bot = (centerx, centery + half_height)
-#                            lef = (centerx - half_width, centery)
-#                            pygame.draw.polygon(frame.screen, (200, 200, 200), [top, bot, lef])
-#
-#                    k = self.doc.duration
-#                    if self.timeline_scroll < k <= self.timeline_scroll + self.BARS_VISIBLE:
-#                        x = (k - editor.timeline_scroll) * w + frame.rect.left
-#                        pygame.draw.line(frame.screen, (0, 255, 0),
-#                            (x, frame.rect.top), (x, frame.rect.bottom), 4)
-#
-#                    frame.screen.set_clip(frame.rect)
-#                    if (t := self.get_playing()) is not None:
-#                        x = (t - editor.timeline_scroll) * w + frame.rect.left
-#                        pygame.draw.line(frame.screen, (255, 0, 0),
-#                            (x, frame.rect.top), (x, frame.rect.bottom))
-#                    frame.screen.set_clip(None)
-#                def _mousebuttondown_(this, frame):
-#                    if frame.ev.button == 3:
-#                        frame.press(TimelineScroll(self, frame.ev.pos))
-#                    else:
-#                        raise NoCapture
-#                widget().post_mousebuttondown = _mousebuttondown_
-#
-#        self.view.scene_layout(scene)
-#
-#        with frame():
-#            layout().style_height = 32
-#            layout().style_flex_direction = "row"
-#            with button(uievent(self.change_view)(TrackView), keyboard=False):
-#                @widget().attach
-#                def _when_selected_(this, frame):
-#                    if isinstance(self.view, TrackView):
-#                        pygame.draw.rect(frame.screen, (70,70,70), frame.rect.inflate((-2,-2)))
-#                layout().style_align_items = "center"
-#                layout().style_justify_content = "center"
-#                layout().style_min_width = 100
-#                label("track")
-#            with button(uievent(self.change_view)(ViewView), keyboard=False):
-#                @widget().attach
-#                def _when_selected_(this, frame):
-#                    if isinstance(self.view, ViewView):
-#                        pygame.draw.rect(frame.screen, (70,70,70), frame.rect.inflate((-2,-2)))
-#                layout().style_align_items = "center"
-#                layout().style_justify_content = "center"
-#                layout().style_min_width = 100
-#                label("view")
-#            with button(uievent(self.change_view)(NodeView), keyboard=False):
-#                @widget().attach
-#                def _when_selected_(this, frame):
-#                    if isinstance(self.view, NodeView):
-#                        pygame.draw.rect(frame.screen, (70,70,70), frame.rect.inflate((-2,-2)))
-#                layout().style_align_items = "center"
-#                layout().style_justify_content = "center"
-#                layout().style_min_width = 100
-#                label("cell")
-#
-#        for popup in popups:
-#            popup()
-#        def _mousebuttondown_(this, frame):
-#            frame.focus()
-#        widget().post_mousebuttondown = _mousebuttondown_
-#        def _keydown_(this, frame):
-#            mods = pygame.key.get_mods()
-#            shift_held = mods & pygame.KMOD_SHIFT
-#            ctrl_held = mods & pygame.KMOD_CTRL
-#            if frame.ev.key == pygame.K_TAB:
-#                frame.emit(self.tab(shift_held))
-#            elif frame.ev.key == pygame.K_SPACE and ctrl_held:
-#                self.set_online()
-#            elif frame.ev.key == pygame.K_SPACE:
-#                self.toggle_play()
-#        widget().at_keydown = _keydown_
-#
-#    @composable
-#    def transport_bar_buttons(self):
-#        layout().style_flex_direction = "row"
-#        layout().style_width = self.MARGIN
-#        menu = self.enter_popup(self.open_system_menu)
-#        with button(uievent(self.set_online), None, menu, decor=False, keyboard=False):
-#            layout().style_width  = 20
-#            layout().style_height = 20
-#            @widget().attach
-#            def _draw_down_arrow_(this, frame):
-#                if self.transport_status == 1:
-#                    color = 10, 10, 155
-#                else:
-#                    color = 100, 100, 100
-#                pygame.draw.rect(frame.screen, color, frame.rect, 0, 0)
-#                centerx, centery = frame.rect.center
-#                half_width  = 6 / 2
-#                half_height = 6 / 2
-#                top = (centerx, centery - half_height)
-#                rig = (centerx + half_width, centery)
-#                bot = (centerx, centery + half_height)
-#                lef = (centerx - half_width, centery)
-#                pygame.draw.line(frame.screen, (200, 200, 200), top, bot)
-#                pygame.draw.line(frame.screen, (200, 200, 200), lef, bot)
-#                pygame.draw.line(frame.screen, (200, 200, 200), bot, rig)
-#                if frame.same(frame.ui.pressed):
-#                    pygame.draw.rect(frame.screen, (50, 150, 50), frame.rect, 1)
-#
-#        with button(uievent(self.set_fabric_and_stop), None, menu, decor=False, keyboard=False):
-#            layout().style_width  = 20
-#            layout().style_height = 20
-#            @widget().attach
-#            def _draw_up_arrow_(this, frame):
-#                if self.transport_status >= 2:
-#                    color = 10, 155, 10
-#                else:
-#                    color = 100, 100, 100
-#                pygame.draw.rect(frame.screen, color, frame.rect, 0, 0)
-#                centerx, centery = frame.rect.center
-#                half_width  = 6 / 2
-#                half_height = 6 / 2
-#                top = (centerx, centery - half_height)
-#                rig = (centerx + half_width, centery)
-#                bot = (centerx, centery + half_height)
-#                lef = (centerx - half_width, centery)
-#                pygame.draw.line(frame.screen, (200, 200, 200), top, bot)
-#                pygame.draw.line(frame.screen, (200, 200, 200), lef, top)
-#                pygame.draw.line(frame.screen, (200, 200, 200), top, rig)
-#                if frame.same(frame.ui.pressed):
-#                    pygame.draw.rect(frame.screen, (50, 150, 50), frame.rect, 1)
-#        with button(self.at_play_button, None, menu, decor=False, keyboard=False):
-#            layout().style_width  = 20
-#            layout().style_height = 20
-#            @widget().attach
-#            def _draw_play_stop_(this, frame):
-#                pygame.draw.rect(frame.screen, (200, 200, 200), frame.rect, 1, 0)
-#                if (t := self.get_playing()) is not None:
-#                    pygame.draw.rect(frame.screen, (200, 200, 200),
-#                        frame.rect.inflate((-14, -14)), 0, 0)
-#                else:
-#                    centerx, centery = frame.rect.center
-#                    half_width  = 6 / 3
-#                    half_height = 6 / 2
-#                    points = [
-#                        (centerx - half_width, centery - half_height),  # top
-#                        (centerx + half_width, centery),   # right
-#                        (centerx - half_width, centery + half_height),  # bottom
-#                    ]
-#                    pygame.draw.polygon(frame.screen, (200, 200, 200), points)
-#                if frame.same(frame.ui.pressed):
-#                    pygame.draw.rect(frame.screen, (50, 150, 50), frame.rect, 1)
-#                elif frame.same(frame.ui.focus):
-#                    pygame.draw.rect(frame.screen, (50, 50, 150), frame.rect, 1)
-#        with button(uievent(self.toggle_midi), decor=False, keyboard=False):
-#            layout().style_width  = 70
-#            layout().style_height = 20
-#            @widget().attach
-#            def _midi_status_(this, frame):
-#                pygame.draw.rect(frame.screen, (200, 200, 200), frame.rect, 1, 0)
-#                midi_off_on = ["midi=off", "midi=on"][self.midi_status]
-#                text = self.font.render(midi_off_on, True, (200, 200, 200))
-#                frame.screen.blit(text,
-#                    (frame.rect.centerx - text.get_width()/2,
-#                     frame.rect.centery - text.get_height()/2))
-#                if frame.same(frame.ui.pressed):
-#                    pygame.draw.rect(frame.screen, (50, 150, 50), frame.rect, 1)
-#        with button(self.at_toggle_loop, decor=False, keyboard=False):
-#            layout().style_width  = 70
-#            layout().style_height = 20
-#            @widget().attach
-#            def _loop_status_(this, frame):
-#                pygame.draw.rect(frame.screen, (200, 200, 200), frame.rect, 1, 0)
-#                loop_off_on = ["loop=off", "loop=on"][self.playback_loop]
-#                text = self.font.render(loop_off_on, True, (200, 200, 200))
-#                frame.screen.blit(text,
-#                    (frame.rect.centerx - text.get_width()/2,
-#                     frame.rect.centery - text.get_height()/2))
-#                if frame.same(frame.ui.pressed):
-#                    pygame.draw.rect(frame.screen, (50, 150, 50), frame.rect, 1)
-#
-#    def handle_keydown(self, ev):
-#        mods = pygame.key.get_mods()
-#        shift_held = mods & pygame.KMOD_SHIFT
-#        ctrl_held = mods & pygame.KMOD_CTRL
-#        if mods & ctrl_held:
-#            if ev.key == pygame.K_1:
-#                self.change_view(TrackView)
-#            elif ev.key == pygame.K_2:
-#                self.change_view(ViewView)
-#            elif ev.key == pygame.K_3:
-#                self.change_view(NodeView)
-#            #elif ev.key == pygame.K_4:
-#            #elif ev.key == pygame.K_6:
-#            #elif ev.key == pygame.K_7:
-#            elif ev.key == pygame.K_s:
-#                self.save_file()
-#            elif ev.key == pygame.K_r:
-#                self.render_score()
-#            #elif ev.key == pygame.K_v:
-#            #    self.change_view(VideoRendererView)
-#            else:
-#                self.process_event(ev)
-#        else:
-#            self.process_event(ev)
-#
-#    def process_event(self, ev):
-#        pass
-#        invoke_at_event(self.ui, self.compostor.root, ev, self.screen.get_rect())
-#
-#    def scan(self, matcher):
-#        frame = DrawFrame(self.ui, self.screen, self.screen.get_rect())
-#        return self.compostor.root.scan(frame, matcher)
-#
-#    @uievent
-#    def tab(self, reverse):
-#        move_focus(self.ui, self.compostor.root, self.screen.get_rect(), reverse)
-#
-#    @uievent
-#    def enter_popup(self, make_popup, *args):
-#        self.popups += (make_popup(*args),)
-#        self.refresh_layout()
-#
-#    @uievent
-#    def leave_popup(self):
-#        self.popups = self.popups[:-1]
-#        self.refresh_layout()
-#
-#    @uievent
-#    def leave_popups(self):
-#        self.popups = ()
-#        self.refresh_layout()
-#
-#    @uievent
-#    def at_play_button(self):
-#        if self.transport_status <= 1:
-#            self.set_fabric()
-#        self.toggle_play()
-#
-#    @uievent
-#    def at_toggle_loop(self):
-#        self.playback_loop = not self.playback_loop
-#        if (status := self.get_playing()) is not None:
-#            self.set_fabric()
-#            sequence = self.sequence
-#            self.set_playing(Sequencer(sequence, point=sequence.t(status), **self.playback_params(sequence)))
-#
-#    def open_system_menu(self):
-#        @context_menu(None, *pygame.mouse.get_pos())
-#        def menu():
-#            layout().style_padding = edges(10)
-#            layout().style_gap = gutters(5)
-#            with button(uievent(self.save_file)):
-#                label(f"save {repr(os.path.basename(self.filename))}")
-#            with button(uievent(self.render_score)):
-#                label(f"record {repr(os.path.basename(self.wav_filename))}")
-#        return menu
-#
-#    def change_view(self, View):
-#        if not isinstance(self.view, View):
-#            if self.view is not None:
-#                self.view.close()
-#            self.view = View(self)
-#            self.view.deploy()
-#            self.refresh_layout()
-#
     def toggle_play(self):
         if self.transport_status < 2:
             self.set_fabric()
@@ -680,7 +344,6 @@ class Editor:
         print("document saved!")
 
     def render_score(self):
-        self.discard_spectros()
         self.set_offline()
 
         sequence = self.sequence
@@ -863,6 +526,29 @@ class Trackline:
             pygame.draw.line(screen, (255, 0, 0),
                 (x, self.rect.top), (x, self.rect.bottom))
         screen.set_clip(None)
+
+class Spectros:
+    def __init__(self, editor):
+        out = editor.server.audio_output_bus_group
+        self.s1 = editor.make_spectroscope(bus=out[0])
+        self.s2 = editor.make_spectroscope(bus=out[1])
+        self.widget_id = object()
+
+    def behavior(self, ui):
+        return None
+
+    def draw(self, ui, screen):
+        self.s1.refresh()
+        self.s2.refresh()
+        y0 = screen.get_height()/4 - 100
+        y1 = screen.get_height()*3/4 - 100
+        self.s1.draw(screen, ui.font24, (255, 0, 0), screen.get_width()/2, y0)
+        self.s2.draw(screen, ui.font24, (0, 255, 0), screen.get_width()/2, y1)
+
+    def close(self):
+        self.s1.close()
+        self.s2.close()
+
 
 def draw_diamond(screen, color, center, size):
     center_x, center_y = center
