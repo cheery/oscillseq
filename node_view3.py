@@ -29,32 +29,19 @@ class Layouter:
 
         for cell in cells:
             synth = cell.synth
-            synthdef, mdesc = self.view.editor.definitions.definition(synth)
-            x,y = cell.pos
-            inputs = []
-            outputs = []
-            params = []
-            for name, ty in mdesc.items():
-                if isinstance(ty, bus):
-                    if ty.mode == "out":
-                        outputs.append((name, ty))
-                    else:
-                        inputs.append((name, ty))
-                else:
-                    params.append((name, ty))
-            header = 24 + max(len(inputs), len(outputs))*24
-            body   = 24 * len(params)
-            total  = header + body
-            y -= total // 2
-            self.obstacles.append(obs := pygame.Rect(x-150//2, y, 150, total))
-            self.cells[cell.label] = (obs, cell, header, inputs, outputs, params, synthdef)
+            nodebox = self.view.compute_nodebox(synth)
+            obs = self.compute_obs(nodebox, cell.pos)
+            self.obstacles.append(obs)
+            self.cells[cell.label] = obs, cell, nodebox
 
-            for i, (name, ty) in enumerate(inputs):
+            x, y = cell.pos
+            y -= nodebox.total // 2
+            for i, (name, ty) in enumerate(nodebox.inputs):
                 pos = x - 150//2, y + i * 24 + 24 + 12
                 port = WirePort(pos, "input", f"{cell.label}:{name}", ty.sans_mode)
                 self.inputs[port.name] = port
 
-            for i, (name, ty) in enumerate(outputs):
+            for i, (name, ty) in enumerate(nodebox.outputs):
                 pos = x + 150//2, y + i * 24 + 24 + 12
                 port = WirePort(pos, "output", f"{cell.label}:{name}", ty.sans_mode)
                 self.outputs[port.name] = port
@@ -77,6 +64,19 @@ class Layouter:
             if s and e:
                 wire = self.router.route(s.pos, e.pos)
                 self.wires.append((wire, color_of_bus(s.spec), (src, dst)))
+
+    def compute_obs(self, nodebox, pos):
+        x,y = pos
+        return pygame.Rect(x-150//2, y - nodebox.total // 2, 150, nodebox.total)
+
+@dataclass
+class NodeBox:
+    header : int
+    total : int
+    inputs   : Any
+    outputs  : Any
+    params   : Any
+    synthdef : Any
             
 class Wires:
     def __init__(self, layouter):
@@ -84,35 +84,97 @@ class Wires:
         self.widget_id = "wires"
 
     def behavior(self, ui):
+        view = self.layouter.view
         if ui.hot_id is None:
             ui.hot_id = self.widget_id
+            if ui.mouse_just_pressed and ui.active_id is None:
+                ui.active_id = self.widget_id
+                view.mx_origin = ui.mouse_pos
+                view.active_port = self.pick_port(ui)
             if ui.r_mouse_just_pressed and ui.active_id is None:
                 ui.r_active_id = self.widget_id
-                self.layouter.view.pan_origin = (
-                    self.layouter.view.pan_x - ui.mouse_pos[0],
-                    self.layouter.view.pan_y - ui.mouse_pos[1])
+                view.pan_origin = (
+                    view.pan_x - ui.mouse_pos[0],
+                    view.pan_y - ui.mouse_pos[1])
         if ui.r_active_id == self.widget_id:
-            px, py = self.layouter.view.pan_origin
+            px, py = view.pan_origin
             mx, my = ui.mouse_pos
-            self.layouter.view.pan_x = px + mx
-            self.layouter.view.pan_y = py + my
+            view.pan_x = px + mx
+            view.pan_y = py + my
+        if ui.active_id == self.widget_id and ui.mouse_just_released:
+            if view.active_port is None:
+                self.erase_connections(ui)
+            else:
+                other_port = self.pick_port(ui)
+                if other_port is not None:
+                    self.insert_connection(ui, other_port)
+            return object()
+
+    def erase_connections(self, ui):
+        view = self.layouter.view
+        posa = np.array(ui.mouse_pos) - (view.pan_x, view.pan_y)
+        posb = np.array(view.mx_origin) - (view.pan_x, view.pan_y)
+        were_removed = False
+        for wire, _, ident in self.layouter.wires:
+            wire = list(wire)
+            if any(line_intersect_line(p,q, posa, posb) for p,q in zip(wire, wire[1:])):
+                view.editor.doc.connections.remove(ident)
+                were_removed = True
+        if were_removed:
+            view.editor.restart_fabric()
+            view.editor.refresh_layout()
+
+    def insert_connection(self, ui, other_port):
+        view = self.layouter.view
+        x = view.active_port
+        y = other_port
+        if x.spec != y.spec:
+            return
+        if x.which == "input" and y.which == "input":
+            return
+        if x.which == "output" and y.which == "output":
+            return
+        if x.which == "input":
+            conn = y.name,x.name
+        else:
+            conn = x.name,y.name
+        connections = view.editor.doc.connections
+        if conn in connections:
+            return
+        dscr = view.editor.definitions.descriptors(view.editor.doc.cells)
+        if detect_cycle(*conn, connections, dscr):
+            return
+        view.editor.doc.connections.add(conn)
+        view.editor.restart_fabric()
+        view.editor.refresh_layout()
+        
+    def pick_port(self, ui):
+        view = self.layouter.view
+        pos = np.array(ui.mouse_pos) - (view.pan_x, view.pan_y)
+        for name, port in self.layouter.inputs.items():
+            dx = port.pos - pos
+            if np.sum(dx*dx) <= 250:
+                return port
+        for name, port in self.layouter.outputs.items():
+            dx = port.pos - pos
+            if np.sum(dx*dx) <= 250:
+                return port
 
     def draw(self, ui, screen):
+        view = self.layouter.view
         for wire, color, _ in self.layouter.wires:
-            wire = [(px + self.layouter.view.pan_x,
-                     py + self.layouter.view.pan_y) for px, py in wire]
+            wire = [(px + view.pan_x,
+                     py + view.pan_y) for px, py in wire]
             pygame.draw.lines(screen, color, False, wire, 4)
-
-   # def pick_port(self, pointer):
-   #     pointer = np.array(pointer)
-   #     for tag, pos in self.inputs.values():
-   #         delta = (pointer - pos)
-   #         if np.sum(delta*delta) <= 50*50:
-   #             return tag, pos
-   #     for tag, pos in self.outputs.values():
-   #         delta = (pointer - pos)
-   #         if np.sum(delta*delta) <= 50*50:
-   #             return tag, pos
+        if ui.active_id == self.widget_id:
+            if view.active_port is None:
+                pygame.draw.line(screen, (200, 200, 200), view.mx_origin, ui.mouse_pos)
+            else:
+                pos = view.active_port.pos
+                pose = np.array(ui.mouse_pos) - (view.pan_x, view.pan_y)
+                wire = self.layouter.router.route(pos, pose)
+                wire = [np.array(pos) + (view.pan_x, view.pan_y) for pos in wire]
+                pygame.draw.lines(screen, (200, 200, 200), False, wire, 4)
 
 class Ports:
     def __init__(self, layouter):
@@ -137,8 +199,19 @@ class Ports:
 class NodeView:
     def __init__(self, editor):
         self.editor = editor
+        self.active_port = None
+        self.mx_origin = (0, 0)
+        self.mx_param = None
+        self.pan_origin = (0, 0)
+        self.synth_to_add = None
+        self.intros_pan_x = editor.screen_width // 2
+        self.intros_pan_y = editor.screen_height // 2
         self.pan_x = editor.screen_width // 2
         self.pan_y = editor.screen_height // 2
+        self.intros = False
+        self.selection = None
+        self.label_ctl = Text("", 0, None)
+        self.active_params = []
 
     def present(self, ui):
         # SET CLIP (0, 24, WIDTH, HEIGHT-24-24)
@@ -147,103 +220,69 @@ class NodeView:
             self.editor.doc.connections)
         ui.widget(Wires(layouter))
         for cell in self.editor.doc.cells:
-            ui.widget(CellBox(layouter, cell.label))
+            if ui.widget(CellBox(layouter, cell.label)) == 1:
+                self.selection = cell.label
+                self.label_ctl = Text(cell.label, 0, None)
         ui.widget(Ports(layouter))
+        if ui.button("new", pygame.Rect(0, 36, 24*3, 24), "new_node"):
+            self.intros = True
+        if self.selection in self.editor.doc.labels:
+            cell = self.editor.doc.labels[self.selection]
+            if isinstance(cell, Cell):
+                if ui.textbox(self.label_ctl, pygame.Rect(0, 36+24*1+12, 24*6, 24*2), "label_ctl"):
+                    newtext = self.label_ctl.text
+                    if newtext not in self.editor.doc.labels:
+                        # TODO: do a document-wide renaming tool
+                        cell = self.editor.doc.labels.pop(self.selection)
+                        cell.label = newtext
+                        self.editor.doc.labels[newtext] = cell
+                        connections = self.editor.doc.connections
+                        for src,dst in list(connections):
+                            src2 = src
+                            dst2 = dst
+                            if src.startswith(f"{self.selection}:"):
+                                src2 = newtext + ":" + src.split(":",1)[1]
+                            if dst.startswith(f"{self.selection}:"):
+                                dst2 = newtext + ":" + dst.split(":",1)[1]
+                            if (src,dst) != (src2,dst2):
+                                connections.discard((src,dst))
+                                connections.add((src2,dst2))
+                        self.selection = newtext
+                if ui.button(["multi=off", "multi=on"][cell.multi], pygame.Rect(0, 36+24*3+12, 24*6, 24), "toggle_multi"):
+                    cell.multi = not cell.multi
+                    self.editor.restart_fabric()
+                if ui.button("discard", pygame.Rect(0, 36+24*4+12, 24*6, 24), "discard node"):
+                    self.editor.doc.cells.remove(cell)
+                    self.editor.doc.labels.pop(cell.label)
+                    for src, dst in list(self.editor.doc.connections):
+                        do_remove = False
+                        if ":" in src:
+                            do_remove |= src.split(":")[0] == cell.label
+                        if ":" in dst:
+                            do_remove |= dst.split(":")[0] == cell.label
+                        if do_remove:
+                            self.editor.doc.connections.discard((src, dst))
+                    self.editor.restart_fabric()
 
-    def scene_layout(self, scene):
-        with frame():
-            widget().tag = "editor"
-            widget().mouse_hit_rect = False
-            layout().shifter = self.pan
-            layout().style_position_type = "absolute"
-            layout().style_position = edges(0)
-            widget().attach(wl := WireLayouter(scene[1]))
+                desc = self.editor.definitions.descriptor(cell)
+                if desc.quadratic_controllable:
+                    ui.label(f"type param={cell.type_param}", pygame.Rect(0, 36+24*5+12, 24*16, 24))
+                    for i, kind in enumerate(kinds):
+                        if ui.button(f"={kind}", pygame.Rect(4*24*(i%3), 36+24*6+24*(i//3)+12, 24*4, 24), f"typeparam={kind}"):
+                            cell.type_param = kind
+        for i, mxparam in reversed(list(enumerate(self.active_params))):
+            if ui.button(f"rm",
+                pygame.Rect(i*75, self.editor.screen_height - 48, 75, 24),
+                f"drop:{i}"):
+                del self.active_params[i]
+            ui.widget(MXParamWidget(mxparam, pygame.Rect(i*75, self.editor.screen_height - 64-48-48, 75, 64+48), f"ctl:{i}"))
+            ui.label16c(f"{mxparam.label}", pygame.Rect(i*75, self.editor.screen_height - 64-48-48, 75, 24))
+            ui.label16c(f"{mxparam.param}", pygame.Rect(i*75, self.editor.screen_height -48-24, 75, 24))
+        if self.intros:
+            ui.widget(Intros(self))
 
-            for cell in scene[0]:
-                self.node_layout(*cell)
-
-            with self.port_layout(WirePort("input", "output", ('ar', 2), trace=False)):
-                layout().style_position = edges(left=50*pc, top=50*pc)
-                layout().shifter = AnchorToCenter((400, 0), widget())
-                @widget().attach
-                def _draw_name_(this, frame):
-                    x, y = frame.rect.center
-                    surface = self.editor.font.render("output", True, (200, 200, 200))
-                    frame.screen.blit(surface, (x + 10, y - surface.get_height()*0.5))
-
-            @widget().attach
-            def _draw_disconnector_(this, frame):
-                if frame.same(frame.ui.pressed):
-                    mt = frame.ui.mouse_tool
-                    if isinstance(mt, Introduce):
-                        pos = np.array(frame.ui.pointer)
-                        pygame.draw.rect(frame.screen, (200, 200, 200), mt.rect.move(pos), 1, 3)
-                    elif isinstance(mt, Connector):
-                        wire = [np.array(p) + frame.rect.topleft for p in mt.wire]
-                        pygame.draw.lines(frame.screen, (200, 200, 200), False, wire, 4)
-                    elif isinstance(mt, Disconnector):
-                        pos0 = np.array(mt.pos0) + frame.rect.topleft
-                        pos1 = np.array(mt.pos1) + frame.rect.topleft
-                        pygame.draw.line(frame.screen, (200, 200, 200), pos0, pos1)
-
-            def _mousebuttondown_(this, frame):
-                if frame.ev.button == 1:
-                    tagpos = wl.pick_port(frame.pointer)
-                    if tagpos is None:
-                        frame.press(Disconnector(self, wl, frame.pointer))
-                    else:
-                        frame.press(Connector(self, wl, *tagpos))
-                elif frame.ev.button == 3:
-                    frame.press(PanOrMenu(self, frame.ev.pos))
-                else:
-                    raise NoCapture
-            widget().post_mousebuttondown = _mousebuttondown_
-
-        @widget().attach
-        def _unset_clip_(this, frame):
-            frame.screen.set_clip(None)
-
-
-    #def refresh(self):
-    #    scene = []
-    #    for cell in self.editor.doc.cells:
-    #        scene.append((cell.label, cell.synth, tuple(cell.pos)))
-    #    self.scene = tuple(scene), frozenset(self.editor.doc.connections)
-
-    def node_layout(self, tag, synth, pos, preview=False):
+    def compute_nodebox(self, synth):
         synthdef, mdesc = self.editor.definitions.definition(synth)
-        if not preview:
-            layout().style_position_type = "absolute"
-            layout().style_position = edges(left=50*pc, top=50*pc)
-            layout().shifter = AnchorToCenter(pos, widget())
-        else:
-            layout().style_margin = edges(10)
-            layout().style_align_self = "center"
-            def _mousebuttondown_(this, frame):
-                x, y = frame.ev.pos
-                rect = frame.rect.move(-x, -y)
-                frame.emit(self.editor.leave_popups)
-                frame.emit(self.introduce(rect, synth))
-            widget().pre_mousebuttondown = _mousebuttondown_
-        layout().tag = "obstacle"
-        @widget().attach
-        def _draw_rect_(this, frame):
-            pygame.draw.rect(frame.screen, (70,70,70), frame.rect, 0, 3)
-            if preview:
-                    pygame.draw.rect(frame.screen, (70,200,200), frame.rect, 2, 3)
-            else:
-                cell = self.editor.doc.labels[tag]
-                if cell.multi:
-                    pygame.draw.rect(frame.screen, (70,200,200), frame.rect, 2, 3)
-
-        with frame():
-            layout().style_padding = edges(0, 10, 2.5, 10)
-            if preview:
-                label(synth)
-            else:
-                label(f"{tag}:{synth}")
-                widget().tag = "header"
-
         inputs = []
         outputs = []
         params = []
@@ -255,217 +294,246 @@ class NodeView:
                     inputs.append((name, ty))
             else:
                 params.append((name, ty))
+        header = 24 + max(len(inputs), len(outputs))*24
+        body   = 24 * len(params)
+        total  = header + body
+        return NodeBox(header, total, inputs, outputs, params, synthdef)
 
-        with frame():
-            layout().style_flow_direction = "row"
-            with frame():
-                layout().style_flex = 1
-                layout().style_flex_grow = 1
-                layout().style_padding = edges(left=10, right=5)
-                for name, ty in inputs:
-                    with frame():
-                        label(name)
-                        with self.port_layout(WirePort("input", f"{tag}:{name}", ty.sans_mode)):
-                            layout().style_position = edges(left = -10, top = 50*pc)
-                        layout().style_padding = edges(2.5, 0)
-            with frame():
-                layout().style_flex = 1
-                layout().style_flex_grow = 1
-                layout().style_align_items = "flex_end"
-                layout().style_padding = edges(left=5, right=10)
-                for name, ty in outputs:
-                    with frame():
-                        label(name)
-                        with self.port_layout(WirePort("output", f"{tag}:{name}", ty.sans_mode)):
-                            layout().style_position = edges(right = -10, top = 50*pc)
-                        layout().style_padding = edges(2.5, 0)
+    #def param_editor(self, tag, param):
+    #    cell = self.editor.doc.labels[tag]
+    #    desc = self.editor.definitions.descriptor(cell)
+    #    def text_field_value():
+    #        val = cell.params.get(param, None)
+    #        if val is None:
+    #            parameter = desc.synthdef.parameters[param][0]
+    #            val = parameter.value[0]
+    #        return stringify(val)
+    #    textfield = None
+    #    def set_textfield(field, edited=True):
+    #        nonlocal textfield
+    #        textfield = field
+    #        if edited and (val := reader.string_to_value(field.text)) is not None:
+    #            cell.params[param] = val
+    #            if self.editor.fabric:
+    #                self.editor.fabric.control(tag, **{param: val})
+    #        get_textfield.invalidate()
+    #        self.editor.refresh_layout()
+    #    textfield = TextField(text_field_value(), 0, 0, set_textfield)
+    #    @Hook
+    #    def get_textfield():
+    #        return textfield
 
-        for name, ty in params:
-            with button(self.editor.enter_popup(self.param_editor, tag, name), None, self.reset_param(tag, name), decor=False, keyboard=False):
-                layout().style_padding = edges(2.5, 10)
-                with label(name):
-                    layout().style_align_self = "center"
-                with frame():
-                    layout().style_height = 10
-                    layout().style_min_width = 120
-                    widget().tag = name
-        layout().style_padding = edges(bottom = 5)
-
-        if not preview:
-            def _node_mousebuttondown_(this, frame):
-                for header, subframe in this.subscan(frame, lambda x, _: x.tag == "header"):
-                    if subframe.inside:
-                        if frame.ev.button == 1:
-                            rect = frame.rect.move(-np.array(frame.ev.pos))
-                            frame.press(DragCell(self, rect, tag, frame.ev.pos))
-                            break
-                        elif frame.ev.button == 3:
-                            frame.emit(self.editor.enter_popup(self.open_node_menu, tag))
-                            break
-                else:
-                    raise NoCapture
-            widget().post_mousebuttondown = _node_mousebuttondown_
-            @widget().attach
-            def _draw_dragging_(this, frame):
-                if isinstance(frame.ui.mouse_tool, DragCell) and frame.same(frame.ui.pressed):
-                    rect = frame.ui.mouse_tool.rect.move(frame.ui.pointer)
-                    pygame.draw.rect(frame.screen, (200, 200, 200), rect, 1, 3)
-
-    def open_palette(self):
-        sy = ScrollField()
-        @splash_screen(leave_with=self.editor.leave_popups)
-        def palette():
-            with vscrollable(sy, style_height=100*pc):
-                layout().style_flex_direction = "row"
-                layout().style_flex_wrap = "wrap"
-                for synth in self.editor.definitions.list_available():
-                    self.node_layout("", synth, (0,0), preview=True)
-        return palette
-
-    def introduce(self, rect, synth):
-        get_editor = lambda widget, subframe: widget.tag == "editor"
-        for node, frame in self.editor.scan(get_editor):
-            frame.press(Introduce(self, rect, synth))
-
-    def open_canvas_menu(self):
-        @context_menu(None, *pygame.mouse.get_pos())
-        def menu():
-            layout().style_padding = edges(10)
-            layout().style_gap = gutters(5)
-            layout().style_min_width = 100
-            with button(self.editor.enter_popup(self.open_palette)):
-                label(f"new")
-        return menu
-
-    def open_node_menu(self, tag):
-        cell = self.editor.doc.labels[tag]
-        desc = self.editor.definitions.descriptor(cell)
-        @context_menu(None, *pygame.mouse.get_pos())
-        def menu():
-            layout().style_padding = edges(10)
-            layout().style_gap = gutters(5)
-            layout().style_min_width = 100
-            with button(self.toggle_multi(tag)):
-                on_off = "on" if cell.multi else "off"
-                label(f"multi={on_off}")
-            if desc.quadratic_controllable:
-                with button(self.editor.enter_popup(self.open_type_param_menu, tag)):
-                    label(f"type param={cell.type_param}")
-            with button(self.remove_node(tag)):
-                label(f"remove")
-
-        return menu
-
-    def toggle_multi(self, tag):
-        cell = self.editor.doc.labels[tag]
-        cell.multi = not cell.multi
-        self.editor.restart_fabric()
-        self.editor.leave_popups().invoke()
-
-    def open_type_param_menu(self, tag):
-        @context_menu(None, *pygame.mouse.get_pos(), leave_with=self.editor.leave_popups)
-        def menu():
-            layout().style_padding = edges(10)
-            layout().style_gap = gutters(5)
-            layout().style_min_width = 100
-            for name in kinds:
-                with button(self.set_type_param(tag, name)):
-                    label(name)
-        return menu
-
-    def set_type_param(self, tag, type_param):
-        cell = self.editor.doc.labels[tag]
-        cell.type_param = type_param
-        self.editor.leave_popups().invoke()
-
-    def remove_node(self, tag):
-        cell = self.editor.doc.labels[tag]
-        self.editor.doc.cells.remove(cell)
-        self.editor.doc.labels.pop(cell.label)
-        for src, dst in list(self.editor.doc.connections):
-            do_remove = False
-            if ":" in src:
-                do_remove |= src.split(":")[0] == cell.label
-            if ":" in dst:
-                do_remove |= dst.split(":")[0] == cell.label
-            if do_remove:
-                self.editor.doc.connections.discard((src, dst))
-        self.editor.restart_fabric()
-        self.editor.leave_popups().invoke()
-
-    def param_editor(self, tag, param):
-        cell = self.editor.doc.labels[tag]
-        desc = self.editor.definitions.descriptor(cell)
-        def text_field_value():
-            val = cell.params.get(param, None)
-            if val is None:
-                parameter = desc.synthdef.parameters[param][0]
-                val = parameter.value[0]
-            return stringify(val)
-        textfield = None
-        def set_textfield(field, edited=True):
-            nonlocal textfield
-            textfield = field
-            if edited and (val := reader.string_to_value(field.text)) is not None:
-                cell.params[param] = val
-                if self.editor.fabric:
-                    self.editor.fabric.control(tag, **{param: val})
-            get_textfield.invalidate()
-            self.editor.refresh_layout()
-        textfield = TextField(text_field_value(), 0, 0, set_textfield)
-        @Hook
-        def get_textfield():
-            return textfield
-
-        @context_menu(None, *pygame.mouse.get_pos())
-        def menu():
-            layout().style_padding = edges(10)
-            layout().style_gap = gutters(5)
-            layout().style_min_width = 100
-            if desc.field_type(param) != 'number':
-                with frame():
-                    layout().style_width = 600
-                    layout().style_height = 50
-                    @widget().attach
-                    def _draw_slider_(this, frame):
-                        val = cell.params.get(param, None)
-                        if val is None:
-                            parameter = desc.synthdef.parameters[param][0]
-                            val = parameter.value[0]
-                        inset = frame.rect.inflate((-20, -20))
-                        pygame.draw.rect(frame.screen, (200, 200, 200), inset, 0, 3)
-                        slider = frame.rect.inflate((-40, -40))
-                        pygame.draw.rect(frame.screen, (20, 20, 20), slider, 0, 3)
-                        t = any_to_slider(val, desc.field_type(param))
-                        x = slider.left + slider.width * t
-                        knob = pygame.Rect(x - 3, slider.centery - 8, 6, 17)
-                        pygame.draw.rect(frame.screen, (50, 50, 50), knob, 0, 3)
-                    def _mousebuttondown_(this, frame):
-                        frame.press(None)
-                        _mousemotion_(this, frame)
-                    widget().post_mousebuttondown = _mousebuttondown_
-                    def _mousemotion_(this, frame):
-                         set_textfield(TextField(text_field_value(), textfield.head, textfield.tail, textfield.edit), False).invoke()
-                         slider = frame.rect.inflate((-40, -40))
-                         t = (frame.ev.pos[0] - slider.left) / slider.width
-                         t = max(0, min(1, t))
-                         cell.params[param] = val = slider_to_any(t, desc.field_type(param))
-                         if self.editor.fabric:
-                             self.editor.fabric.control(tag, **{param: val})
+    #    @context_menu(None, *pygame.mouse.get_pos())
+    #    def menu():
+    #        layout().style_padding = edges(10)
+    #        layout().style_gap = gutters(5)
+    #        layout().style_min_width = 100
+    #        if desc.field_type(param) != 'number':
+    #            with frame():
+    #                layout().style_width = 600
+    #                layout().style_height = 50
+    #                @widget().attach
+    #                def _draw_slider_(this, frame):
+    #                    val = cell.params.get(param, None)
+    #                    if val is None:
+    #                        parameter = desc.synthdef.parameters[param][0]
+    #                        val = parameter.value[0]
+    #                    inset = frame.rect.inflate((-20, -20))
+    #                    pygame.draw.rect(frame.screen, (200, 200, 200), inset, 0, 3)
+    #                    slider = frame.rect.inflate((-40, -40))
+    #                    pygame.draw.rect(frame.screen, (20, 20, 20), slider, 0, 3)
+    #                    t = any_to_slider(val, desc.field_type(param))
+    #                    x = slider.left + slider.width * t
+    #                    knob = pygame.Rect(x - 3, slider.centery - 8, 6, 17)
+    #                    pygame.draw.rect(frame.screen, (50, 50, 50), knob, 0, 3)
+    #                def _mousebuttondown_(this, frame):
+    #                    frame.press(None)
+    #                    _mousemotion_(this, frame)
+    #                widget().post_mousebuttondown = _mousebuttondown_
+    #                def _mousemotion_(this, frame):
+    #                     set_textfield(TextField(text_field_value(), textfield.head, textfield.tail, textfield.edit), False).invoke()
+    #                     slider = frame.rect.inflate((-40, -40))
+    #                     t = (frame.ev.pos[0] - slider.left) / slider.width
+    #                     t = max(0, min(1, t))
+    #                     cell.params[param] = val = slider_to_any(t, desc.field_type(param))
+    #                     if self.editor.fabric:
+    #                         self.editor.fabric.control(tag, **{param: val})
  
-                    widget().at_mousemotion = _mousemotion_
-            with textbox(get_textfield()):
-                layout().style_min_width = 600
-        return menu
+    #                widget().at_mousemotion = _mousemotion_
+    #        with textbox(get_textfield()):
+    #            layout().style_min_width = 600
+    #    return menu
 
-    def reset_param(self, tag, param):
-        cell = self.editor.doc.labels[tag]
-        desc = self.editor.definitions.descriptor(cell)
-        cell.params.pop(param, None)
-        if self.editor.fabric:
-            parameter = desc.synthdef.parameters[param][0]
-            val = parameter.value[0]
-            self.editor.fabric.control(tag, **{param: val})
+    #def reset_param(self, tag, param):
+    #    cell = self.editor.doc.labels[tag]
+    #    desc = self.editor.definitions.descriptor(cell)
+    #    cell.params.pop(param, None)
+    #    if self.editor.fabric:
+    #        parameter = desc.synthdef.parameters[param][0]
+    #        val = parameter.value[0]
+    #        self.editor.fabric.control(tag, **{param: val})
+
+class Intros:
+    def __init__(self, view):
+        self.view = view
+        self.widget_id = "intros"
+        self.rects = []
+        self.presentation = []
+        for i, synth in enumerate(view.editor.definitions.list_available()):
+            nodebox = view.compute_nodebox(synth)
+            x = math.cos(i)*(i+10)*10
+            y = math.sin(i)*(i+10)*10
+            obs = pygame.Rect(x, y-nodebox.total//2, 150, nodebox.total)
+            self.rects.append(obs)
+            self.presentation.append((synth, nodebox))
+        self.rects = resolve_overlaps(self.rects)
+
+    def behavior(self, ui):
+        view = self.view
+        if ui.hot_id is None:
+            ui.hot_id = self.widget_id
+            if ui.mouse_just_pressed and ui.active_id is None:
+                ui.active_id = self.widget_id
+                view.mx_origin = ui.mouse_pos
+                pos = np.array(ui.mouse_pos) - (view.intros_pan_x, view.intros_pan_y)
+                for rect, (synth, nodebox) in zip(self.rects, self.presentation):
+                    if rect.collidepoint(pos):
+                        rect = rect.move((view.intros_pan_x, view.intros_pan_y))
+                        view.synth_to_add = rect, synth
+                        break
+                else:
+                    view.synth_to_add = None
+            if ui.r_mouse_just_pressed and ui.active_id is None:
+                ui.r_active_id = self.widget_id
+                view.pan_origin = (
+                    view.intros_pan_x - ui.mouse_pos[0],
+                    view.intros_pan_y - ui.mouse_pos[1])
+        if ui.active_id == self.widget_id and ui.mouse_just_released:
+            if view.synth_to_add is not None:
+                dx = (np.array(ui.mouse_pos) - view.mx_origin)
+                pos = view.synth_to_add[0].move((dx[0]-view.pan_x, dx[1]-view.pan_y)).center
+                pos = int(pos[0]), int(pos[1])
+                synth = view.synth_to_add[1]
+                cell = Cell("", multi=False, synth=synth, pos=pos, params={}, type_param=None)
+                cell = view.editor.doc.intro(cell)
+                view.editor.doc.cells.append(cell)
+                view.editor.refresh_layout()
+                view.editor.restart_fabric()
+            view.intros = False
+            view.synth_to_add = None
+            return True
+        if ui.r_active_id == self.widget_id:
+            px, py = view.pan_origin
+            mx, my = ui.mouse_pos
+            view.intros_pan_x = px + mx
+            view.intros_pan_y = py + my
+
+    def draw(self, ui, screen):
+        screen.set_clip(pygame.Rect(0,24, screen.get_width(), screen.get_height()-48))
+        if self.view.synth_to_add is not None:
+            dx = (np.array(ui.mouse_pos) - self.view.mx_origin)
+            pygame.draw.rect(screen, (200,200,200), self.view.synth_to_add[0].move(dx), 1, 3)
+            return
+        pygame.draw.rect(screen, (100,100,100,100), screen.get_rect(), 0, 0)
+        for rect, (synth, nodebox) in zip(self.rects, self.presentation):
+            rect = rect.move((self.view.intros_pan_x, self.view.intros_pan_y))
+            synthdef = nodebox.synthdef
+            pygame.draw.rect(screen, (100, 100, 100), rect, 0, 3)
+            if nodebox.synthdef.has_gate:
+                pygame.draw.rect(screen, (100, 250, 250), rect, 1, 3)
+            else:
+                pygame.draw.rect(screen, (250, 250, 250), rect, 1, 3)
+            surf = ui.font24.render(synth, True, (200, 200, 200))
+            rc = surf.get_rect(center=pygame.Rect(rect.x, rect.y, rect.width, 24).center)
+            screen.blit(surf, rc)
+            for i, (name, ty) in enumerate(nodebox.inputs):
+                rc = pygame.Rect(rect.x, rect.y + 24 + 24*i, rect.width//2, 24)
+                surf = ui.font16.render(f"{name}", True, (200, 200, 200))
+                r = surf.get_rect(centery=rc.centery, left=rc.left+12)
+                screen.blit(surf, r)
+                pygame.draw.circle(screen, color_of_bus(ty.sans_mode), (rc.left, rc.centery), 7.5, 0)
+                pygame.draw.circle(screen, (255,255,255), (rc.left, rc.centery), 7.5, 1)
+            for i, (name, ty) in enumerate(nodebox.outputs):
+                rc = pygame.Rect(rect.x + rect.width // 2, rect.y + 24 + 24*i, rect.width//2, 24)
+                surf = ui.font16.render(f"{name}", True, (200, 200, 200))
+                r = surf.get_rect(centery=rc.centery, right=rc.right-12)
+                screen.blit(surf, r)
+                pygame.draw.circle(screen, color_of_bus(ty.sans_mode), (rc.right, rc.centery), 7.5, 0)
+                pygame.draw.circle(screen, (255,255,255), (rc.right, rc.centery), 7.5, 1)
+            for i, (name, ty) in enumerate(nodebox.params):
+                rc = pygame.Rect(rect.x, rect.y + nodebox.header + 24*i, rect.width, 24)
+                surf = ui.font16.render(f"{name}", True, (200, 200, 200))
+                r = surf.get_rect(centery=rc.centery, left=rc.left+12)
+                screen.blit(surf, r)
+                parameter = nodebox.synthdef.parameters[name][0]
+                val = format(parameter.value[0], ".4g")
+                color = (255, 255, 200)
+                surf = ui.font16.render(str(val), True, color)
+                r = surf.get_rect(centery=rc.centery, centerx=rc.left + 5*(rc.width/8))
+                screen.blit(surf, r)
+        screen.set_clip(None)
+
+def resolve_overlaps(rects, max_iterations=1000, push_strength=0.5):
+    """
+    Pushes overlapping rectangles apart while trying to maintain relative positions.
+    
+    Args:
+        rects: List of pygame.Rect objects
+        max_iterations: Maximum number of iterations to run
+        push_strength: How much to push overlapping rects (0-1, higher = faster but less stable)
+    
+    Returns:
+        List of pygame.Rect objects with resolved positions
+    """
+    # Work with copies to avoid modifying originals
+    result = [r.copy() for r in rects]
+    
+    for iteration in range(max_iterations):
+        overlaps_found = False
+        
+        # Check each pair of rectangles
+        for i in range(len(result)):
+            for j in range(i + 1, len(result)):
+                rect1 = result[i]
+                rect2 = result[j]
+                
+                if rect1.colliderect(rect2):
+                    overlaps_found = True
+                    
+                    # Calculate centers
+                    cx1, cy1 = rect1.centerx, rect1.centery
+                    cx2, cy2 = rect2.centerx, rect2.centery
+                    
+                    # Calculate push direction
+                    dx = cx2 - cx1
+                    dy = cy2 - cy1
+                    
+                    # Handle exact overlap (push in arbitrary direction)
+                    if dx == 0 and dy == 0:
+                        dx, dy = 1, 0
+                    
+                    # Normalize direction
+                    distance = math.sqrt(dx * dx + dy * dy)
+                    dx /= distance
+                    dy /= distance
+                    
+                    # Calculate overlap amount
+                    overlap_x = (rect1.width + rect2.width + 84) / 2 - abs(cx2 - cx1)
+                    overlap_y = (rect1.height + rect2.height + 84) / 2 - abs(cy2 - cy1)
+                    overlap = min(overlap_x, overlap_y)
+                    
+                    # Push apart
+                    push = overlap * push_strength / 2
+                    rect1.centerx -= int(dx * push)
+                    rect1.centery -= int(dy * push)
+                    rect2.centerx += int(dx * push)
+                    rect2.centery += int(dy * push)
+        
+        # Exit early if no overlaps
+        if not overlaps_found:
+            break
+    
+    return result
 
 class CellBox:
     def __init__(self, layout, label):
@@ -475,11 +543,41 @@ class CellBox:
         self.widget_id = f"cell({label!r})"
 
     def behavior(self, ui):
-        return None
+        pos = np.array(ui.mouse_pos) - (self.layout.view.pan_x, self.layout.view.pan_y)
+        if ui.hot_id is None and self.rect.collidepoint(pos):
+            ui.hot_id = self.widget_id
+            if ui.mouse_just_pressed and ui.active_id is None:
+                ui.active_id = self.widget_id
+                self.layout.view.mx_origin = ui.mouse_pos
+                nodebox = self.layout.cells[self.label][2]
+                mx_ix = (pos[1] - self.rect.top - nodebox.header) // 24
+                if 0 <= mx_ix <= len(nodebox.params):
+                    self.layout.view.mx_param = nodebox.params[mx_ix][0]
+                else:
+                    self.layout.view.mx_param = None
+        if ui.active_id == self.widget_id and ui.mouse_just_released and self.layout.view.mx_param is None:
+            r = self.rect.move(np.array(ui.mouse_pos) - self.layout.view.mx_origin)
+            pos = r.center
+            pos = int(pos[0]), int(pos[1])
+            self.layout.view.editor.doc.labels[self.label].pos = pos
+            return 1
+        if ui.was_clicked(self):
+            if self.layout.view.mx_param is not None:
+                for mxparam in self.layout.view.active_params:
+                    if (mxparam.label,mxparam.param) == (self.label,self.layout.view.mx_param):
+                        return 0
+                self.layout.view.active_params.append(
+                    MXParam(self.layout.view, self.label, self.layout.view.mx_param))
+                return 2
+            return 1
+        return 0
 
     def draw(self, ui, screen):
-        _, cell, header, inputs, outputs, params, synthdef = self.layout.cells[self.label]
+        _, cell, nodebox = self.layout.cells[self.label]
         rect = self.rect.move((self.layout.view.pan_x, self.layout.view.pan_y))
+        if ui.active_id == self.widget_id and self.layout.view.mx_param is None:
+            r = rect.move(np.array(ui.mouse_pos) - self.layout.view.mx_origin)
+            pygame.draw.rect(screen, (200, 200, 200), r, 1, 3)
         pygame.draw.rect(screen, (100, 100, 100), rect, 0, 3)
         if cell.multi:
             pygame.draw.rect(screen, (100, 250, 250), rect, 1, 3)
@@ -488,29 +586,29 @@ class CellBox:
         surf = ui.font24.render(f"{cell.label}:{cell.synth}", True, (200, 200, 200))
         rc = surf.get_rect(center=pygame.Rect(rect.x, rect.y, rect.width, 24).center)
         screen.blit(surf, rc)
-        for i, (name, ty) in enumerate(inputs):
+        for i, (name, ty) in enumerate(nodebox.inputs):
             rc = pygame.Rect(rect.x, rect.y + 24 + 24*i, rect.width//2, 24)
             surf = ui.font16.render(f"{name}", True, (200, 200, 200))
-            rc = surf.get_rect(centery=rc.centery, left=rc.left+12)
-            screen.blit(surf, rc)
-        for i, (name, ty) in enumerate(outputs):
+            r = surf.get_rect(centery=rc.centery, left=rc.left+12)
+            screen.blit(surf, r)
+        for i, (name, ty) in enumerate(nodebox.outputs):
             rc = pygame.Rect(rect.x + rect.width // 2, rect.y + 24 + 24*i, rect.width//2, 24)
             surf = ui.font16.render(f"{name}", True, (200, 200, 200))
-            rc = surf.get_rect(centery=rc.centery, right=rc.right-12)
-            screen.blit(surf, rc)
-        for i, (name, ty) in enumerate(params):
-            rc = pygame.Rect(rect.x, rect.y + header + 24*i, rect.width, 24)
+            r = surf.get_rect(centery=rc.centery, right=rc.right-12)
+            screen.blit(surf, r)
+        for i, (name, ty) in enumerate(nodebox.params):
+            rc = pygame.Rect(rect.x, rect.y + nodebox.header + 24*i, rect.width, 24)
             surf = ui.font16.render(f"{name}", True, (200, 200, 200))
             r = surf.get_rect(centery=rc.centery, left=rc.left+12)
             screen.blit(surf, r)
             trl = ""
             if self.layout.view.editor.fabric:
-                trl = self.layout.view.editor.fabric.trail[self.label].get(name, None)
+                trl = self.layout.view.editor.fabric.trail[self.label].get(name, "")
                 if isinstance(trl, float):
                     trl = format(trl, ".4g")
             val = cell.params.get(name, None)
             if val is None:
-                parameter = synthdef.parameters[name][0]
+                parameter = nodebox.synthdef.parameters[name][0]
                 val = format(parameter.value[0], ".4g")
                 color = (255, 255, 200)
             else:
@@ -523,6 +621,49 @@ class CellBox:
             surf = ui.font16.render(str(trl), True, color)
             r = surf.get_rect(centery=rc.centery, centerx=rc.left + 7*(rc.width/8))
             screen.blit(surf, r)
+
+class MXParam:
+    def __init__(self, view, label, param):
+        self.label = label
+        self.param = param
+        self.cell = view.editor.doc.labels[label]
+        self.desc = view.editor.definitions.descriptor(self.cell)
+
+class MXParamWidget:
+    def __init__(self, mxparam, rect, widget_id):
+        self.mxparam = mxparam
+        self.rect = rect
+        self.widget_id = widget_id
+
+    def behavior(self, ui):
+        mx = self.mxparam
+        ui.grab_active(self)
+        changed = False
+        if ui.active_id == self.widget_id:
+            y = (ui.mouse_pos[1] - self.rect.top - 8) / (self.rect.height - 16)
+            y = min(1, max(0, y))
+            mx.cell.params[mx.param] = slider_to_any(1 - y, mx.desc.field_type(mx.param))
+            changed = True
+        return changed
+        
+    def draw(self, ui, screen):
+        mx = self.mxparam
+        val = mx.cell.params.get(mx.param, None)
+        if val is None:
+            parameter = mx.desc.synthdef.parameters[mx.param][0]
+            val = parameter.value[0]
+        pygame.draw.rect(screen, (200,200,200), self.rect, 1)
+        x = any_to_slider(val, mx.desc.field_type(mx.param))
+        posa = self.rect.left,  self.rect.top + (1-x) * self.rect.height
+        posb = self.rect.right, self.rect.top + (1-x) * self.rect.height
+        pygame.draw.line(screen, (255,255,0), posa, posb, 2)
+        txt = format(val, ".4g")
+        if mx.desc.field_type(mx.param) == "pitch":
+            txt = stringify(music.Pitch.from_midi(int(val)))
+        surf = ui.font16.render(" " + txt + " ", True, (200,200,200))
+        rc = surf.get_rect(center=self.rect.center)
+        pygame.draw.rect(screen, (30,30,30,128), rc)
+        screen.blit(surf, rc)
 
 lhzbound = math.log2(10 / 440)
 hhzbound = math.log2(24000 / 440)
@@ -571,123 +712,22 @@ def slider_to_any(val, ty):
 def linlin(val, a0, a1, b0, b1):
     return ((val - a0) / (a1-a0)) * (b1-b0) + b0
 
-#class Introduce:
-#    def __init__(self, view, rect, synth):
-#        self.view = view
-#        self.rect = rect
-#        self.synth = synth
-#
-#    def at_mousebuttonup(self, this, frame):
-#        point = np.array(frame.ev.pos) - frame.rect.center
-#        pos = self.rect.move(point).center
-#        pos = int(pos[0]), int(pos[1])
-#        cell = Cell("", multi=False, synth=self.synth, pos=pos, params={}, type_param=None)
-#        cell = self.view.editor.doc.intro(cell)
-#        self.view.editor.doc.cells.append(cell)
-#        self.view.editor.refresh_layout()
-#        self.view.editor.restart_fabric()
-#
-#class DragCell:
-#    def __init__(self, view, rect, tag, pos):
-#        self.view = view
-#        self.rect = rect
-#        self.tag = tag
-#        self.pos = pos
-#
-#    def at_mousebuttonup(self, this, frame):
-#        cell = self.view.editor.doc.labels[self.tag]
-#        pos = np.array(frame.ev.pos) - self.pos + cell.pos
-#        cell.pos = int(pos[0]), int(pos[1])
-#        self.view.editor.refresh_layout()
-#
-#class Connector:
-#    def __init__(self, view, wl, tag, pos):
-#        self.view = view
-#        self.wl = wl
-#        self.tag = tag
-#        self.pos = pos
-#        self.endpos = pos
-#        self.wire = self.wl.router.route(self.pos, self.endpos)
-#
-#    def at_mousebuttonup(self, this, frame):
-#        tagpos = self.wl.pick_port(frame.pointer)
-#        if tagpos is None or self.tag.spec != tagpos[0].spec:
-#            return
-#        tag0 = self.tag
-#        tag1 = tagpos[0]
-#        if tag1.name in self.wl.outputs:
-#            tag0, tag1 = tag1, tag0
-#        if tag0.name not in self.wl.outputs or tag1.name not in self.wl.inputs:
-#            return
-#        connection = tag0.name, tag1.name
-#        connections = self.view.editor.doc.connections
-#        descrs = self.view.editor.definitions.descriptors(self.view.editor.doc.cells)
-#        if connection in connections:
-#            return
-#        if detect_cycle(tag0.name, tag1.name, connections, descrs):
-#            return
-#        self.view.editor.doc.connections.add(connection)
-#        self.view.editor.restart_fabric()
-#        self.view.editor.refresh_layout()
-#
-#    def at_mousemotion(self, this, frame):
-#        self.endpos = frame.pointer
-#        self.wire = self.wl.router.route(self.pos, self.endpos)
-#
-#def detect_cycle(i, o, connections, descriptors):
-#    if ":" in i and ":" in o:
-#        il,ix = i.split(":")
-#        ol,ox = o.split(":")
-#        visited = set()
-#        def visit(label):
-#            visited.add(label)
-#            for src,dst in connections:
-#                if ":" in src and ":" in dst:
-#                    il,ix = src.split(":")
-#                    ol,ox = dst.split(":")
-#                    if il == label and descriptors[ol].field_mode(ox) == 'in':
-#                        visit(ol)
-#        visit(ol)
-#        return (il in visited)
-#    return False
-#
-#class Disconnector:
-#    def __init__(self, view, wl, pos):
-#        self.view = view
-#        self.wl = wl
-#        self.pos0 = pos
-#        self.pos1 = pos
-#
-#    def at_mousebuttonup(self, this, frame):
-#        were_removed = False
-#        for wire, _, ident in self.wl.wires:
-#            wire = list(wire)
-#            if any(line_intersect_line(p,q, self.pos0, self.pos1) for p,q in zip(wire, wire[1:])):
-#                self.view.editor.doc.connections.remove(ident)
-#                were_removed = True
-#        if were_removed:
-#            self.view.editor.restart_fabric()
-#            self.view.editor.refresh_layout()
-#
-#    def at_mousemotion(self, this, frame):
-#        self.pos1 = frame.pointer
-#
-#class PanOrMenu:
-#    def __init__(self, view, pos):
-#        self.view = view
-#        self.pos  = pos
-#
-#    def at_mousebuttonup(self, this, frame):
-#        if self.pos:
-#            frame.emit(self.view.editor.enter_popup(self.view.open_canvas_menu))
-#
-#    def at_mousemotion(self, this, frame):
-#        self.view.pan.x -= frame.ev.rel[0]
-#        self.view.pan.y -= frame.ev.rel[1]
-#        if self.pos:
-#            delta = np.array(self.pos) - frame.ev.pos
-#            if np.sum(delta*delta) >= 10:
-#                self.pos = None
+def detect_cycle(i, o, connections, descriptors):
+    if ":" in i and ":" in o:
+        il,ix = i.split(":")
+        ol,ox = o.split(":")
+        visited = set()
+        def visit(label):
+            visited.add(label)
+            for src,dst in connections:
+                if ":" in src and ":" in dst:
+                    il,ix = src.split(":")
+                    ol,ox = dst.split(":")
+                    if il == label and descriptors[ol].field_mode(ox) == 'in':
+                        visit(ol)
+        visit(ol)
+        return (il in visited)
+    return False
 
 def color_of_bus(bus):
     if bus == ('ar', 1):

@@ -63,6 +63,10 @@ class Descriptor:
         self.type_param = type_param
 
     @property
+    def has_gate(self):
+        return self.synthdef.has_gate()
+
+    @property
     def quadratic_controllable(self):
         return (len(set(['a', 'b', 'c', 't', 'trigger']) - set(self.synthdef.parameters)) == 0)
 

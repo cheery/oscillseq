@@ -32,6 +32,7 @@ class SIMGUI:
         self.focused_id = None
         self.next_id = None
 
+        self.font16 = pygame.font.Font(None, 16)
         self.font24 = pygame.font.Font(None, 24)
         self.font32 = pygame.font.Font(None, 32)
 
@@ -108,6 +109,11 @@ class SIMGUI:
     def label(self, text, rect):
         surface = self.font24.render(text, True, (200, 200, 200))
         return self.surface(surface, rect)
+
+    def label16c(self, text, rect):
+        surface = self.font16.render(text, True, (200, 200, 200))
+        return self.surface(surface, surface.get_rect(center=rect.center))
+
 
     def cover(self, rect, widget_id):
         return self.widget(Cover(rect, widget_id))
