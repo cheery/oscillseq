@@ -2,6 +2,7 @@ import bisect
 import math
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Callable, Tuple, Any
+from model2.wadler_lindig import pformat_doc, text, sp, nl, pretty
 
 class Pitch:
     def __init__(self, position, accidental=0):
@@ -10,8 +11,17 @@ class Pitch:
         assert position is not None
         assert accidental is not None
 
+    def __pretty__(self):
+        cls = "cdefgab"[self.position%7]
+        octave = self.position//7
+        if self.accidental < 0:
+            t = "b" * -self.accidental
+        else:
+            t = "s" * self.accidental
+        return text(f"{cls}{t}{octave}")
+
     def __repr__(self):
-        return str(self)
+        return pformat_doc(pretty(self), 80)
 
     def to_pair(self):
         return self.position, self.accidental
