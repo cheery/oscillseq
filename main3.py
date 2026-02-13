@@ -3,10 +3,10 @@ from typing import List, Dict, Optional, Callable, Tuple, Any, Set, Union
 from controllers import quick_connect
 from descriptors import bus, kinds
 from fabric import Definitions, Fabric
-from model import Document, Cell, from_file, stringify, reader
+from model import Document, Cell, from_file, stringify, reader, to_file
 from sequencer import Player, Sequencer, SequenceBuilder2
-from track_view import TrackView, TimelineScroll
-from view_view import ViewView
+from track_view3 import TrackView
+from view_view3 import ViewView
 from node_view3 import NodeView
 import numpy as np
 import math
@@ -92,6 +92,8 @@ class Editor:
         self.lane_tag = None
 
         self.cell_view = NodeView(self)
+        self.view_view = ViewView(self)
+        self.track_view = TrackView(self)
 
         self.view = "file"
         self.spectros = None
@@ -127,9 +129,9 @@ class Editor:
                 grid(2, 4, 20, 5), "save"):
                 self.save_file()
         elif self.view == "track":
-            pass
+            self.track_view.present(ui)
         elif self.view == "view":
-            pass
+            self.view_view.present(ui)
         elif self.view == "cell":
             self.cell_view.present(ui)
         self.transport_bar(ui)

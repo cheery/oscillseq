@@ -7,6 +7,8 @@ from dataclasses import dataclass
 __all__ = ["pformat_doc", "text", "sp", "nl", "pretty"]
 
 def pretty(x):
+    if isinstance(x, (int, float, str)):
+        return text(str(x))
     return x.__pretty__()
 
 class AbstractDoc:
@@ -96,7 +98,7 @@ def fits(doc, width, indent):
 def pformat_doc(doc, width) -> str:
     outs = []
     width_so_far = 0
-    vertical = True
+    vertical = False # TODO: This didn't work out so well.. we need a better layouter.
     indent = 0
     todo = [GroupDoc(doc)]
     while len(todo) > 0:

@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Callable, Tuple, Any, Set, Union
 from descriptors import bus, kinds
-from model import Cell, stringify, reader
+from model2.schema import Synth, random_name
 import node_editor
 from node_editor import line_intersect_line
 import numpy as np
@@ -24,7 +24,7 @@ class Layouter:
         self.obstacles = []
         self.inputs = {}
         self.outputs = {}
-        self.inputs["output"] = WirePort((400, 0), "input", "output", ("ar", 2), trace=False)
+        self.inputs["system", "out"] = WirePort((400, 0), "input", ("system","out"), ("ar", 2), trace=False)
         self.cells = {}
 
         for cell in cells:
@@ -32,18 +32,18 @@ class Layouter:
             nodebox = self.view.compute_nodebox(synth)
             obs = self.compute_obs(nodebox, cell.pos)
             self.obstacles.append(obs)
-            self.cells[cell.label] = obs, cell, nodebox
+            self.cells[cell.name] = obs, cell, nodebox
 
             x, y = cell.pos
             y -= nodebox.total // 2
             for i, (name, ty) in enumerate(nodebox.inputs):
                 pos = x - 150//2, y + i * 24 + 24 + 12
-                port = WirePort(pos, "input", f"{cell.label}:{name}", ty.sans_mode)
+                port = WirePort(pos, "input", (cell.name, name), ty.sans_mode)
                 self.inputs[port.name] = port
 
             for i, (name, ty) in enumerate(nodebox.outputs):
                 pos = x + 150//2, y + i * 24 + 24 + 12
-                port = WirePort(pos, "output", f"{cell.label}:{name}", ty.sans_mode)
+                port = WirePort(pos, "output", (cell.name, name), ty.sans_mode)
                 self.outputs[port.name] = port
 
         rb = node_editor.WireRouterBuilder(self.obstacles)
@@ -121,8 +121,8 @@ class Wires:
                 view.editor.doc.connections.remove(ident)
                 were_removed = True
         if were_removed:
-            view.editor.restart_fabric()
-            view.editor.refresh_layout()
+            view.editor.transport.refresh(view.editor.proc)
+            view.editor.transport.restart_fabric()
 
     def insert_connection(self, ui, other_port):
         view = self.layouter.view
@@ -141,12 +141,12 @@ class Wires:
         connections = view.editor.doc.connections
         if conn in connections:
             return
-        dscr = view.editor.definitions.descriptors(view.editor.doc.cells)
+        dscr = view.editor.transport.definitions.descriptors(view.editor.doc.synths)
         if detect_cycle(*conn, connections, dscr):
             return
         view.editor.doc.connections.add(conn)
-        view.editor.restart_fabric()
-        view.editor.refresh_layout()
+        view.editor.transport.refresh(view.editor.proc)
+        view.editor.transport.restart_fabric()
         
     def pick_port(self, ui):
         view = self.layouter.view
@@ -216,55 +216,62 @@ class NodeView:
     def present(self, ui):
         # SET CLIP (0, 24, WIDTH, HEIGHT-24-24)
         layouter = Layouter(self,
-            self.editor.doc.cells,
+            self.editor.doc.synths,
             self.editor.doc.connections)
         ui.widget(Wires(layouter))
-        for cell in self.editor.doc.cells:
-            if ui.widget(CellBox(layouter, cell.label)) == 1:
-                self.selection = cell.label
-                self.label_ctl = Text(cell.label, 0, None)
+        for cell in self.editor.doc.synths:
+            if ui.widget(CellBox(layouter, cell.name)) == 1:
+                self.selection = cell.name
+                self.label_ctl = Text(cell.name, 0, None)
         ui.widget(Ports(layouter))
         if ui.button("new", pygame.Rect(0, 36, 24*3, 24), "new_node"):
             self.intros = True
-        if self.selection in self.editor.doc.labels:
-            cell = self.editor.doc.labels[self.selection]
-            if isinstance(cell, Cell):
+        if self.selection is not None:
+            cell = None
+            cell_index = None
+            for k, synth in enumerate(self.editor.doc.synths):
+                if synth.name == self.selection:
+                    cell = synth
+                    cell_index = k
+            if isinstance(cell, Synth):
                 if ui.textbox(self.label_ctl, pygame.Rect(0, 36+24*1+12, 24*6, 24*2), "label_ctl"):
                     newtext = self.label_ctl.text
-                    if newtext not in self.editor.doc.labels:
+                    #if newtext not in self.editor.doc.labels:
+                    if True: # TODO: do this in better way
                         # TODO: do a document-wide renaming tool
-                        cell = self.editor.doc.labels.pop(self.selection)
-                        cell.label = newtext
-                        self.editor.doc.labels[newtext] = cell
+                        #cell = self.editor.doc.labels.pop(self.selection)
+                        cell.name = newtext
+                        #self.editor.doc.labels[newtext] = cell
                         connections = self.editor.doc.connections
                         for src,dst in list(connections):
                             src2 = src
                             dst2 = dst
-                            if src.startswith(f"{self.selection}:"):
-                                src2 = newtext + ":" + src.split(":",1)[1]
-                            if dst.startswith(f"{self.selection}:"):
-                                dst2 = newtext + ":" + dst.split(":",1)[1]
+                            if src[0] == self.selection:
+                                src2 = newtext, src[1]
+                            if dst[0] == self.selection:
+                                dst2 = newtext, dst[1]
                             if (src,dst) != (src2,dst2):
                                 connections.discard((src,dst))
                                 connections.add((src2,dst2))
                         self.selection = newtext
+                    self.editor.transport.refresh(self.editor.proc)
+                    self.editor.transport.restart_fabric()
                 if ui.button(["multi=off", "multi=on"][cell.multi], pygame.Rect(0, 36+24*3+12, 24*6, 24), "toggle_multi"):
                     cell.multi = not cell.multi
-                    self.editor.restart_fabric()
+                    self.editor.transport.refresh(self.editor.proc)
+                    self.editor.transport.restart_fabric()
                 if ui.button("discard", pygame.Rect(0, 36+24*4+12, 24*6, 24), "discard node"):
-                    self.editor.doc.cells.remove(cell)
-                    self.editor.doc.labels.pop(cell.label)
+                    del self.editor.doc.synths[cell_index]
+                    #self.editor.doc.labels.pop(cell.label)
                     for src, dst in list(self.editor.doc.connections):
                         do_remove = False
-                        if ":" in src:
-                            do_remove |= src.split(":")[0] == cell.label
-                        if ":" in dst:
-                            do_remove |= dst.split(":")[0] == cell.label
+                        do_remove |= src[0] == cell.name
+                        do_remove |= dst[0] == cell.name
                         if do_remove:
                             self.editor.doc.connections.discard((src, dst))
-                    self.editor.restart_fabric()
+                    self.editor.transport.restart_fabric()
 
-                desc = self.editor.definitions.descriptor(cell)
+                desc = self.editor.transport.definitions.descriptor(cell)
                 if desc.quadratic_controllable:
                     ui.label(f"type param={cell.type_param}", pygame.Rect(0, 36+24*5+12, 24*16, 24))
                     for i, kind in enumerate(kinds):
@@ -275,14 +282,14 @@ class NodeView:
                 pygame.Rect(i*75, self.editor.screen_height - 48, 75, 24),
                 f"drop:{i}"):
                 del self.active_params[i]
-            ui.widget(MXParamWidget(mxparam, pygame.Rect(i*75, self.editor.screen_height - 64-48-48, 75, 64+48), f"ctl:{i}"))
+            ui.widget(MXParamWidget(self.editor, mxparam, pygame.Rect(i*75, self.editor.screen_height - 64-48-48, 75, 64+48), f"ctl:{i}"))
             ui.label16c(f"{mxparam.label}", pygame.Rect(i*75, self.editor.screen_height - 64-48-48, 75, 24))
             ui.label16c(f"{mxparam.param}", pygame.Rect(i*75, self.editor.screen_height -48-24, 75, 24))
         if self.intros:
             ui.widget(Intros(self))
 
     def compute_nodebox(self, synth):
-        synthdef, mdesc = self.editor.definitions.definition(synth)
+        synthdef, mdesc = self.editor.transport.definitions.definition(synth)
         inputs = []
         outputs = []
         params = []
@@ -379,7 +386,7 @@ class Intros:
         self.widget_id = "intros"
         self.rects = []
         self.presentation = []
-        for i, synth in enumerate(view.editor.definitions.list_available()):
+        for i, synth in enumerate(view.editor.transport.definitions.list_available()):
             nodebox = view.compute_nodebox(synth)
             x = math.cos(i)*(i+10)*10
             y = math.sin(i)*(i+10)*10
@@ -414,11 +421,10 @@ class Intros:
                 pos = view.synth_to_add[0].move((dx[0]-view.pan_x, dx[1]-view.pan_y)).center
                 pos = int(pos[0]), int(pos[1])
                 synth = view.synth_to_add[1]
-                cell = Cell("", multi=False, synth=synth, pos=pos, params={}, type_param=None)
-                cell = view.editor.doc.intro(cell)
-                view.editor.doc.cells.append(cell)
-                view.editor.refresh_layout()
-                view.editor.restart_fabric()
+                cell = Synth(random_name(), multi=False, synth=synth, pos=pos, params={}, type_param=None)
+                view.editor.doc.synths.append(cell)
+                view.editor.transport.refresh(view.editor.proc)
+                view.editor.transport.restart_fabric()
             view.intros = False
             view.synth_to_add = None
             return True
@@ -559,7 +565,9 @@ class CellBox:
             r = self.rect.move(np.array(ui.mouse_pos) - self.layout.view.mx_origin)
             pos = r.center
             pos = int(pos[0]), int(pos[1])
-            self.layout.view.editor.doc.labels[self.label].pos = pos
+            for synth in self.layout.view.editor.doc.synths:
+                if synth.name == self.label:
+                    synth.pos = pos
             return 1
         if ui.was_clicked(self):
             if self.layout.view.mx_param is not None:
@@ -583,7 +591,7 @@ class CellBox:
             pygame.draw.rect(screen, (100, 250, 250), rect, 1, 3)
         else:
             pygame.draw.rect(screen, (250, 250, 250), rect, 1, 3)
-        surf = ui.font24.render(f"{cell.label}:{cell.synth}", True, (200, 200, 200))
+        surf = ui.font24.render(f"{cell.name}:{cell.synth}", True, (200, 200, 200))
         rc = surf.get_rect(center=pygame.Rect(rect.x, rect.y, rect.width, 24).center)
         screen.blit(surf, rc)
         for i, (name, ty) in enumerate(nodebox.inputs):
@@ -602,8 +610,8 @@ class CellBox:
             r = surf.get_rect(centery=rc.centery, left=rc.left+12)
             screen.blit(surf, r)
             trl = ""
-            if self.layout.view.editor.fabric:
-                trl = self.layout.view.editor.fabric.trail[self.label].get(name, "")
+            if self.layout.view.editor.transport.fabric:
+                trl = self.layout.view.editor.transport.fabric.trail[self.label].get(name, "")
                 if isinstance(trl, float):
                     trl = format(trl, ".4g")
             val = cell.params.get(name, None)
@@ -624,13 +632,19 @@ class CellBox:
 
 class MXParam:
     def __init__(self, view, label, param):
-        self.label = label
         self.param = param
-        self.cell = view.editor.doc.labels[label]
-        self.desc = view.editor.definitions.descriptor(self.cell)
+        for synth in view.editor.doc.synths:
+            if synth.name == label:
+                self.cell = synth
+        self.desc = view.editor.transport.definitions.descriptor(self.cell)
+
+    @property
+    def label(self):
+        return self.cell.name
 
 class MXParamWidget:
-    def __init__(self, mxparam, rect, widget_id):
+    def __init__(self, editor, mxparam, rect, widget_id):
+        self.editor = editor
         self.mxparam = mxparam
         self.rect = rect
         self.widget_id = widget_id
@@ -642,7 +656,10 @@ class MXParamWidget:
         if ui.active_id == self.widget_id:
             y = (ui.mouse_pos[1] - self.rect.top - 8) / (self.rect.height - 16)
             y = min(1, max(0, y))
-            mx.cell.params[mx.param] = slider_to_any(1 - y, mx.desc.field_type(mx.param))
+            val = slider_to_any(1 - y, mx.desc.field_type(mx.param))
+            mx.cell.params[mx.param] = val
+            if self.editor.transport.fabric:
+                self.editor.transport.fabric.control(mx.cell.name, **{mx.param: val})
             changed = True
         return changed
         
@@ -659,7 +676,7 @@ class MXParamWidget:
         pygame.draw.line(screen, (255,255,0), posa, posb, 2)
         txt = format(val, ".4g")
         if mx.desc.field_type(mx.param) == "pitch":
-            txt = stringify(music.Pitch.from_midi(int(val)))
+            txt = repr(music.Pitch.from_midi(int(val)))
         surf = ui.font16.render(" " + txt + " ", True, (200,200,200))
         rc = surf.get_rect(center=self.rect.center)
         pygame.draw.rect(screen, (30,30,30,128), rc)

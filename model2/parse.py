@@ -1,4 +1,6 @@
 from lark import Lark, Transformer, v_args
+from .schema import *
+
 from .wadler_lindig import pformat_doc, text, sp, nl, pretty
 from fractions import Fraction
 from dataclasses import dataclass
@@ -6,14 +8,36 @@ from typing import List, Tuple, Dict, Optional, Any
 import music
 
 grammar = """
-    start: "oscillseq" "aqua" content (";" content)*
+    start: "oscillseq" "aqua" declaration* synths connections
 
-    content: base_rhythm
-           | content "/" group+ badge -> overlay
-           | content "=" CNAME -> stored
-           | content command CNAME -> commanded
-           | content "rename" CNAME "to" CNAME -> renamed
-           | content "repeat" number -> repeated
+    declaration: CNAME "=" component ";" -> component_decl
+               | CNAME "{" entity* "}" -> clip_decl
+
+    entity: number number "gate" CNAME component ";" -> gate_entity
+          | number number "clip" CNAME           ";" -> clip_entity
+          | number "to" number number "pianoroll" CNAME value value ";" -> pianoroll_entity
+          | number "to" number number "staves" CNAME staves number ";" -> staves_entity
+
+    staves: /_*\\.+_*/
+
+    synths: "@" "synths" synth+
+          | ()
+    synth: CNAME CNAME number number "multi" type_param synth_body -> m_synth
+         | CNAME CNAME number number         type_param synth_body -> s_synth
+    type_param: ("[" CNAME "]")?
+    synth_body: "{" "}"
+              | "{" synth_param ("," synth_param)* "}"
+    synth_param: CNAME "=" value
+
+    connections: "@" "connections" connection ("," connection)*
+               | ()
+    connection: CNAME ":" CNAME  CNAME ":" CNAME
+
+    component: base_rhythm
+           | component "/" group+ badge -> overlay
+           | component "rename" CNAME "to" CNAME -> renamed
+           | component "repeat" number -> repeated
+           | component "duration" number -> durated
 
     command: "gate" -> gate_command
 
@@ -25,7 +49,6 @@ grammar = """
                | "&" CNAME -> rhythm_ref
     
     group: value (":" value)*
-         | "_" -> skip
          | "~" -> discard
 
     value: number
@@ -74,325 +97,115 @@ grammar = """
     %ignore WS
 """
 
-note_durations = {
-    'w': Fraction(1),
-    'h': Fraction(1, 2),
-    'q': Fraction(1, 4),
-    'e': Fraction(1, 8),
-    's': Fraction(1, 16),
-    't': Fraction(1, 32),
-    'u': Fraction(1, 64),
-    'v': Fraction(1, 128),
-}
-
-dynamics_to_dbfs = {
-    'ppp': -40,
-    'pp': -30,
-    'p': -20,
-    'mp': -12,
-    'mf': -6,
-    'f': -3,
-    'ff': -1,
-    'fff': 0
-}
+#    0 10 2 2 pianoroll piano c3 e8;
+#    0 10 4 3 staves xxx 1 1 1;
+#    0 10 7 2 row yyy;
 
 demo_seq = """oscillseq aqua
 
-q q. e q' q[emf efff e_] ;
-001010101011 ;
+hello = q q. e q' q[emf efff e_];
+feat = 001010101011;
+baz = euclidean 0 5
+  repeat 4
+  / c4:d4 e5 [note:pitch:piano];
 
-euclidean 0 5 -6
- rename volume to bass
- repeat 4
- / c4:d4 e5 [note:pitch:piano] =hello gate foobar ;
+guux {
+}
 
-& hello
+main {
+    0 gate foobar &baz;
+    0 2 clip guux;
+}
 
+@synths
+  foobar synthname 0 0 multi [type_param] {
+    coprolite = 5,
+    funprolite = cs4
+  }
+
+@connections
+  foob:out scene:out,
+  bar:out scene:out
 """
-
-@dataclass
-class Pattern:
-    events : List[Tuple[float, float]]
-    values : List[List[Dict[str, Any]]]
-    duration : float
-
-    def overlay(self, other : List[List[Dict[str, Any]]]):
-        out = []
-        L = len(other)
-        for i,vg in enumerate(self.values):
-            x = []
-            for wg in other[i%L]:
-                x.append(vg | wg)
-            out.append(x)
-        return Pattern(self.events, out, self.duration)
-
-@dataclass
-class Object:
-     def __str__(self):
-         return pformat_doc(self.__pretty__(), 80)
-
-     def __repr__(self):
-         return str(self)
-
-@dataclass(repr=False)
-class Setup(Object):
-    contents : List[Any]
-    def __pretty__(self):
-        return (text(" ;") + sp).join(self.contents)
-
-@dataclass(repr=False)
-class Duration(Object):
-    symbol   : str
-    dots     : int = 0
-
-    def __float__(self):
-        duration = note_durations[self.symbol]
-        dot      = duration / 2
-        for _ in range(self.dots):
-            duration += dot
-            dot /= 2
-        return float(duration)
-
-    def __pretty__(self):
-        return text(self.symbol + "."*self.dots)
-
-@dataclass(repr=False)
-class Component(Object):
-    pass
-
-@dataclass(repr=False)
-class Element(Object):
-    pass
-
-@dataclass(repr=False)
-class Ref(Component):
-    name : str
-
-    def __pretty__(self):
-        return text("&" + self.name)
-
-@dataclass(repr=False)
-class Overlay(Component):
-    base : Component
-    data : List[List[Any]]
-    name : str
-    dtype : str
-    view : str
-
-    def to_values(self):
-        return [[{self.name: v} for v in vg] for vg in self.data]
-
-    def __pretty__(self):
-        base = pretty(self.base)
-        blob = sp.join(text(":").join(x) for x in self.data).group()
-        body = (text("/") + sp + blob + sp + text(f"[{self.name}:{self.dtype}:{self.view}]")).group()
-        return base + sp + body
-
-@dataclass(repr=False)
-class Stored(Component):
-    base : Component
-    name : str
-
-    def __pretty__(self):
-        base = pretty(self.base)
-        return base + sp + text("=" + self.name)
-
-@dataclass(repr=False)
-class Commanded(Component):
-    base : Component
-    method : str
-    name : str
-
-    def __pretty__(self):
-        base = pretty(self.base)
-        return base + sp + (text(self.method) + sp + text(self.name)).group()
-
-@dataclass(repr=False)
-class Renamed(Component):
-    base : Component
-    src : str
-    dst : str
-
-    def __pretty__(self):
-        base = pretty(self.base)
-        return base + sp + text(f"rename {self.src} to {self.dst}")
-
-@dataclass(repr=False)
-class Repeated(Component):
-    base : Component
-    count : int
-
-    def __pretty__(self):
-        base = pretty(self.base)
-        return base + sp + text(f"repeat {self.count}")
-
-@dataclass(repr=False)
-class Tuplet(Element):
-    duration : Duration
-    elements : List[Element]
-
-    def __pretty__(self):
-        d = pretty(self.duration)
-        o = sp.join(self.elements)
-        return d + text("[") + o + text("]")
-
-@dataclass(repr=False)
-class Note(Element):
-    duration : Duration
-    style : Optional[str]
-    dynamic : Optional[str]
-
-    def __pretty__(self):
-        p = pretty(self.duration)
-        if self.style:
-            p += text({"tenuto":"_", "staccato":"'"}[self.style])
-        if self.dynamic:
-            p += text(self.dynamic)
-        return p
-
-quarter = Note(Duration("q"), None, None)
-
-@dataclass(repr=False)
-class Rest(Element):
-    duration : Duration
-
-    def __pretty__(self):
-        return pretty(self.duration) + text("~")
-
-@dataclass(repr=False)
-class Rhythm(Component):
-    pass
-
-@dataclass
-class RhythmConfig:
-    beats_per_measure : int = 4
-    beat_division : int = 4
-    volume : float = -6.0
-    staccato : float = 0.25
-    normal : float = 0.85
-    tenuto : float = 1.0
-
-@dataclass(repr=False)
-class WestRhythm(Rhythm):
-    sequence : List[Element]
-
-    def to_pattern(self, config : RhythmConfig):
-        events = []
-        values = []
-        rate = 4.0 / config.beat_division / config.beats_per_measure
-        t = 0.0
-        for note in sequence:
-            duration = float(note.duration) * rate
-            volume = dynamics_to_dbfs.get(note.dynamic, config.volume)
-            match note.style:
-                case "staccato":
-                    d = duration * config.staccato
-                case "tenuto":
-                    d = duration * config.tenuto
-                case None:
-                    d = duration * config.normal
-            v = {"volume": volume}
-            events.append((t,d))
-            values.append([v])
-            t += duration
-        return Pattern(events, values, start, duration=t)
-
-    def __pretty__(self):
-        return sp.join(self.sequence)
-
-@dataclass(repr=False)
-class StepRhythm(Rhythm):
-    sequence : List[int]
-
-    def __pretty__(self):
-        return text("".join(map(str,self.sequence)))
-
-    def to_west(self, note=quarter):
-        out = []
-        for s in self.sequence:
-            if s > 0:
-                out.append(note)
-            else:
-                out.append(Rest(note.duration))
-        return WestRhythm(out)
-
-@dataclass(repr=False)
-class EuclideanRhythm(Rhythm):
-    pulses : int
-    steps : int
-    rotation : int = 0
-
-    def __pretty__(self):
-        if self.rotation == 0:
-            return (text("euclidean") + sp
-                  + text(str(self.pulses)) + sp
-                  + text(str(self.steps))).group()
-        return (text("euclidean") + sp
-              + text(str(self.pulses)) + sp
-              + text(str(self.steps)) + sp
-              + text(str(self.rotation))).group()
-
-    def to_west(self, note=quarter):
-        self.to_step_rhythm().to_west(note)
-
-    def to_step_rhythm(self):
-        table = rotate(bjorklund(self.pulses, self.steps), self.rotation)
-        return StepRhythm(table)
-
-def bjorklund(pulses: int, steps: int) -> list[int]:
-    """
-    Generate a Euclidean rhythm pattern using the Bjorklund algorithm.
-    Returns a list of 1s (onsets) and 0s (rests).
-    """
-    if pulses <= 0:
-        return [0] * steps
-    if pulses >= steps:
-        return [1] * steps
-    # Initialize
-    pattern = [[1] for _ in range(pulses)] + [[0] for _ in range(steps - pulses)]
-    # Repeatedly distribute
-    while True:
-        # Stop when grouping is no longer possible
-        if len(pattern) <= 1:
-            break
-        # Partition into two parts: first group, rest
-        first, rest = pattern[:pulses], pattern[pulses:]
-        if not rest:
-            break
-        # Append each element of rest into first, one by one
-        for i in range(min(len(rest), len(first))):
-            first[i] += rest[i]
-        # Rebuild pattern
-        pattern = first + rest[min(len(first), len(rest)):]
-    # Flatten
-    return list(itertools.chain.from_iterable(pattern))
-
-def rotate(l, n):
-    return l[n:] + l[:n]
 
 @v_args(inline=True)
 class ModelTransformer(Transformer):
-    def start(self, *stuff):
-        return Setup(stuff)
+    @v_args(inline=False)
+    def start(self, group):
+        connections  = group[-1]
+        synths       = group[-2]
+        declarations = group[:-2]
+        return Document(declarations, synths, connections)
 
-    def content(self, rh):
+    def component_decl(self, name, component):
+        return CompDecl(str(name), component)
+
+    def clip_decl(self, name, *clip):
+        return ClipDecl(str(name), list(clip))
+
+    def gate_entity(self, shift, lane, instrument, component):
+        return CommandEntity(shift, lane, "gate", instrument, component)
+
+    def clip_entity(self, shift, lane, name):
+        return ClipEntity(shift, lane, name)
+
+    def pianoroll_entity(self, shift, end, lane, name, bot, top):
+        duration = end - shift
+        return PianorollEntity(shift, lane, duration, str(name), bot, top)
+
+    def staves_entity(self, shift, end, lane, name, pattern, key):
+        duration = end - shift
+        above, count, below = pattern
+        return StavesEntity(shift, lane, duration, str(name), above, count, below, key)
+
+    def staves(self, pattern):
+        count = str(pattern).count(".")
+        above, below = map(len, str(pattern).split("."*count))
+        return above, count, below
+
+    @v_args(inline=False)
+    def synths(self, synths):
+        return list(synths)
+
+    def m_synth(self, name, synth, x, y, type_param, params):
+        return Synth(str(name), str(synth), (x,y), True, type_param, params)
+
+    def s_synth(self, name, synth, x, y, type_param, params):
+        return Synth(str(name), str(synth), (x,y), False, type_param, params)
+
+    def type_param(self, name=None):
+        if name is not None:
+            return str(name)
+
+    @v_args(inline=False)
+    def synth_body(self, params):
+        return dict(params)
+
+    def synth_param(self, name, value):
+        return str(name), value
+
+    @v_args(inline=False)
+    def connections(self, cons):
+        return set(cons)
+
+    def connection(self, srcname, srcport, dstname, dstport):
+        return ((str(srcname), str(srcport)), (str(dstname), str(dstport)))
+
+    def component(self, rh):
         return rh
 
     def overlay(self, obj, *group):
         name, dtype, view = group[-1]
         return Overlay(obj, list(group[:-1]), name, dtype, view)
 
-    def stored(self, obj, name):
-        return Stored(obj, str(name))
-
-    def commanded(self, obj, method, name):
-        return Commanded(obj, method, str(name))
-
     def renamed(self, obj, src, dst):
         return Renamed(obj, str(src), str(dst))
 
     def repeated(self, obj, num):
         return Repeated(obj, num)
+
+    def durated(self, obj, num):
+        return Durated(obj, num)
 
     def gate_command(self):
         return "gate"
@@ -405,9 +218,6 @@ class ModelTransformer(Transformer):
 
     def group(self, *data):
         return list(data)
-
-    def keep(self):
-        return [None]
 
     def discard(self):
         return []
@@ -496,7 +306,11 @@ class ModelTransformer(Transformer):
     def flat(self):
         return -1
 
+parser = Lark(grammar, parser="lalr", transformer=ModelTransformer())
+
+def from_string(source):
+    return parser.parse(source)
+
 if __name__=="__main__":
-    parser = Lark(grammar, parser="lalr", transformer=ModelTransformer())
     tree = parser.parse(demo_seq)
     print(tree)

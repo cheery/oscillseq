@@ -133,6 +133,12 @@ class SIMGUI:
             if ui.mouse_just_pressed and ui.active_id is None:
                 ui.active_id = self.widget_id
 
+    def r_grab_active(ui, self):
+        if ui.hot_id is None and self.rect.collidepoint(ui.mouse_pos):
+            ui.hot_id = self.widget_id
+            if ui.r_mouse_just_pressed and ui.r_active_id is None:
+                ui.r_active_id = self.widget_id
+
     def grab_focus(ui, self):
         if ui.focused_id is None or ui.active_id == self.widget_id:
             ui.focused_id = self.widget_id
@@ -157,6 +163,10 @@ class Grid:
 
     def point(self, i, j):
         return self.x + self.w*i, self.y + self.h*j
+
+    def offset(self, i, j):
+        x, y = self.point(i, j)
+        return Grid(x, y, self.w, self.h)
 
     def __call__(self, left, top, right, bottom):
         x0, y0 = self.point(left, top)
