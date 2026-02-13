@@ -19,7 +19,7 @@ import sys
 from simgui import SIMGUI, Grid, Text, Slider
 
 from model2.schema import *
-from model2.parse import from_string
+from model2.parse import from_string, from_file
 
 demo_seq = """oscillseq aqua
 
@@ -117,20 +117,25 @@ class DocumentProcessing:
         return duration, height
 
     def construct(self, sb, decl, shift, key, rhythm_config):
-        duration = 1
+        bound = shift+1
         for i, e in enumerate(decl.entities):
             k = key + (i,)
             s = shift + e.shift
             if isinstance(e, ClipEntity):
                 subdecl = self.declarations[e.name]
                 d = self.construct(sb, subdecl, s, k, rhythm_config)
-                duration = max(duration, d)
+                bound = max(bound, s+d)
             if isinstance(e, CommandEntity) and e.flavor == "gate":
                 pattern = self.process_component(e.component, rhythm_config)
                 d = self.construct_gate(sb,
                     e.instrument, pattern, s, k)
-                duration = max(duration, d)
-        return duration
+                bound = max(bound, s+d)
+            if isinstance(e, CommandEntity) and e.flavor == "quadratic":
+                pattern = self.process_component(e.component, rhythm_config)
+                d = self.construct_quadratic(sb,
+                    e.instrument, pattern, s, k)
+                bound = max(bound, s+d)
+        return bound - shift
 
     def process_component(self, component, rhythm_config):
         if isinstance(component, Ref):
@@ -178,6 +183,12 @@ class DocumentProcessing:
                 sb.note(tag, shift+start, duration, key + (i,j,), v)
         return pattern.duration
 
+    def construct_quadratic(self, sb, tag, pattern, shift, key):
+        for i, ((start, duration), values) in enumerate(zip(pattern.events, pattern.values)):
+            for j, v in enumerate(values):
+                sb.quadratic(shift+start, tag, bool(v.get("transition", False)), v["value"])
+        return pattern.duration
+
     #def quadratic(self):
     # if self.tag == "tempo" and self.value <= 0:
     #     continue
@@ -213,10 +224,11 @@ class Editor:
             self.filename = sys.argv[1]
         else:
             self.filename = "unnamed.seq.json"
-        # if os.path.exists(self.filename):
-        #     self.doc = from_file(self.filename)
-        #     if self.filename.endswith(".json"):
-        #         self.filename = self.filename[:-5]
+        if os.path.exists(self.filename):
+            self.doc = from_file(self.filename)
+            self.proc = DocumentProcessing(self.doc)
+            if self.filename.endswith(".json"):
+                self.filename = self.filename[:-5]
         #self.png_directory = os.path.abspath(
         #    os.path.splitext(self.filename)[0] + ".png")
         self.wav_filename = os.path.abspath(
@@ -232,6 +244,14 @@ class Editor:
 
         self.mode = "track"
         self.cell_view = NodeView(self)
+
+        self.scroll_ox = None
+        self.scroll_x = 0
+        self.timeline = TimelineControl()
+
+        self.midi_status = False
+        self.midi_controllers = []
+
 
     def run(self):
         ui = SIMGUI(self.present)
@@ -251,16 +271,15 @@ class Editor:
     def present(self, ui):
         top_grid = Grid(0, 0, 24, 24)
         bot_grid = Grid(0, self.screen_height - 24, 24, 24)
-        main_grid = Grid(self.MARGIN, 24, self.BAR_WIDTH, self.LANE_HEIGHT)
+        main_grid = Grid(
+            self.MARGIN - self.scroll_x * self.BAR_WIDTH,
+            24, self.BAR_WIDTH, self.LANE_HEIGHT)
+        main_rect = pygame.Rect(self.MARGIN, 24, self.screen_width - self.MARGIN, self.screen_height - 48)
+
+        side_rect = pygame.Rect(0, 24, self.MARGIN, self.screen_height - 48)
 
         if self.mode == "track":
-            ui.widget(GridWidget(self,
-                pygame.Rect(
-                    self.MARGIN,
-                    24,
-                    self.screen_width - self.MARGIN,
-                    self.screen_height - 48),
-                "grid"))
+            ui.widget(GridWidget(self, main_rect, "grid"))
 
             def traverse_decl(decl, x, y, kv, d=1):
                 views = {}
@@ -269,11 +288,12 @@ class Editor:
                     iy = y + e.lane
                     w, h, pat = self.proc.dimensions[decl.name, i]
                     if isinstance(e, CommandEntity):
-                        ui.widget(PatLane(f"{e.flavor} {e.instrument}",
+                        if ui.widget(PatLane(f"{e.flavor} {e.instrument}",
                             main_grid(ix, iy, ix+w, iy+h),
                             kv + (i,),
                             pat, main_grid.offset(ix,iy)
-                            ))
+                            )):
+                            print(kv + (i,))
                         for name, dtype, vw in pat.views:
                             try:
                                 views[vw].append((name, dtype, pat, ix))
@@ -281,9 +301,10 @@ class Editor:
                                 views[vw] = [(name, dtype, pat, ix)]
                     elif isinstance(e, ClipEntity):
                         sdecl = self.proc.declarations[e.name]
-                        ui.widget(Lane(e.name,
+                        if ui.widget(Lane(e.name,
                             main_grid(ix, iy, ix+w, iy+h),
-                            kv + (i,)))
+                            kv + (i,))):
+                            print(kv + (i,))
                         subviews = traverse_decl(sdecl, ix, iy, kv + (i,), d+1)
                         for vw, g in subviews.items():
                             try:
@@ -295,17 +316,19 @@ class Editor:
                     iy = y + e.lane
                     w, h, pat = self.proc.dimensions[decl.name, i]
                     if isinstance(e, PianorollEntity):
-                        ui.widget(PianorollWidget(
+                        if ui.widget(PianorollWidget(
                             main_grid(ix, iy, ix+w, iy+h),
                             int(e.bot), int(e.top),
                             views.get(e.name, []), main_grid,
-                            kv + (i,)))
+                            kv + (i,))):
+                            print(kv + (i,))
                     elif isinstance(e, StavesEntity):
-                        ui.widget(StavesWidget(
+                        if ui.widget(StavesWidget(
                             main_grid(ix, iy, ix+w, iy+h),
                             e.above, e.count, e.below, e.key,
                             views.get(e.name, []), main_grid,
-                            kv + (i,)))
+                            kv + (i,))):
+                            print(kv + (i,))
                 return views
 
             main_decl = self.proc.declarations['main']
@@ -313,16 +336,18 @@ class Editor:
             ui.widget(Lane("main", main_grid(0,0,w,h), "main"))
             traverse_decl(main_decl, 0, 0, ("main",))
             
-            ui.widget(TransportVisual(self.transport, main_grid,
-                pygame.Rect(
-                    self.MARGIN,
-                    24,
-                    self.screen_width - self.MARGIN,
-                    self.screen_height - 48),
+            ui.widget(TransportVisual(self.transport, main_grid, main_rect,
                 "transport-visual"))
+            ui.widget(Scroller(self, main_rect, "scroller"))
+            ui.widget(Sidepanel(side_rect, "sidepanel"))
         if self.mode == "synth":
             ui.widget(self.transport.get_spectroscope())
             self.cell_view.present(ui)
+        if self.mode == "file":
+            if ui.button(f"record {os.path.basename(self.wav_filename)!r}", main_grid(0, 0, 4, 1), "record-button"):
+                self.render_score()
+            if ui.button(f"save {os.path.basename(self.filename)!r}", main_grid(0, 2, 4, 3), "save-button"):
+                self.save_file()
 
         if ui.tab_button(self.mode, "file", bot_grid(0, 0, 5, 1),  "file-tab", allow_focus=False):
             self.mode = "file"
@@ -331,14 +356,12 @@ class Editor:
         elif ui.tab_button(self.mode, "cell", bot_grid(15, 0, 20, 1),  "cell-tab", allow_focus=False):
             self.mode = "synth"
 
-        # self.midi_status = False
-        # self.midi_controllers = []
+        self.transport_bar(ui, top_grid)
 
         # self.timeline_head = 0
         # self.timeline_tail = 0
         # self.timeline_scroll = 0
         # self.timeline_vertical_scroll = 0
-        # self.timeline = TimelineControl()
 
         # self.lane_tag = None
 
@@ -366,32 +389,32 @@ class Editor:
 #        elif self.view == "cell":
 #        self.transport_bar(ui)
 #        self.view_bar(ui)
-#
 
-#    def transport_bar(self, ui):
-#        grid = Grid(0, 0, 24, 24)
-#        if ui.widget(OnlineButton(self, grid(0, 0, 1, 1), "online")):
-#            self.set_online()
-#        if ui.widget(FabricButton(self, grid(1, 0, 2, 1), "fabric")):
-#            self.set_fabric_and_stop()
-#        if ui.widget(PlayButton(self, grid(2, 0, 3, 1), "play")):
-#            if self.transport_status <= 1:
-#                self.set_fabric()
-#            self.toggle_play()
-#        if ui.button(["midi=off", "midi=on"][self.midi_status],
-#            grid(3, 0, 6, 1), "midi status", allow_focus=False):
-#            self.toggle_midi()
-#        if ui.button(["loop=off", "loop=on"][self.playback_loop],
-#            grid(6, 0, 9, 1), "loop status", allow_focus=False):
-#            self.playback_loop = not self.playback_loop
-#            if (status := self.get_playing()) is not None:
-#                self.set_fabric()
-#                sequence = self.sequence
-#                self.set_playing(Sequencer(sequence, point=sequence.t(status), **self.playback_params(sequence)))
-#        ui.widget(Trackline(self, self.timeline,
-#            pygame.Rect(self.MARGIN, 0, self.screen_width - self.MARGIN, 24),
-#            "trackline"))
-#
+
+    def transport_bar(self, ui, grid):
+        grid = Grid(0, 0, 24, 24)
+        if ui.widget(OnlineButton(self, grid(0, 0, 1, 1), "online")):
+            self.transport.set_online()
+        if ui.widget(FabricButton(self, grid(1, 0, 2, 1), "fabric")):
+            self.transport.set_fabric_and_stop()
+        if ui.widget(PlayButton(self, grid(2, 0, 3, 1), "play")):
+            if self.transport.status <= 1:
+                self.transport.set_fabric()
+            self.transport.toggle_play()
+        if ui.button(["midi=off", "midi=on"][self.midi_status],
+            grid(3, 0, 6, 1), "midi status", allow_focus=False):
+            self.toggle_midi()
+        if ui.button(["loop=off", "loop=on"][self.transport.playback_loop],
+            grid(6, 0, 9, 1), "loop status", allow_focus=False):
+            self.transport.playback_loop = not self.transport.playback_loop
+            if (status := self.transport.get_playing()) is not None:
+                self.transport.set_fabric()
+                sequence = self.transport.sequence
+                self.transport.set_playing(Sequencer(sequence, point=sequence.t(status), **self.transport.playback_params(sequence)))
+        ui.widget(Trackline(self, self.timeline,
+            pygame.Rect(self.MARGIN, 0, self.screen_width - self.MARGIN, 24),
+            "trackline"))
+
 #    def view_bar(self, ui):
 #        grid = Grid(0, self.screen_height, 24, 24)
 #
@@ -411,68 +434,29 @@ class Editor:
 #        for controller in self.midi_controllers:
 #            controller.close()
 #        self.midi_controllers.clear()
-#
-#    def intro(self):
-#        layer("main", keyorder = 1)
-#        self.timeline()
-#        self.tools()
-#
-#    def trackview(self):
-#        layer("main", keyorder = 1)
-#        self.timeline()
-#        self.tools()
-#
-#    def staffview(self):
-#        layer("main", keyorder = 1)
-#        layer("margin", keyorder = -1)
-#        self.timeline()
-#        self.tools()
-#
-#    def cellview(self):
-#        layer("main", keyorder = 1)
-#        layer("margin", keyorder = -1)
-#        self.timeline()
-#        self.tools()
-#
-#    def timeline(self):
-#        layer("timeline", keyorder = -2)
-#        G = grid(0,0,10,10)
-#        offline_button(G(0,0,1,1))
-#        fabric_button(G(1,0,2,1))
-#        play_toggle(G(2,0,3,1))
-#        midi_toggle(G(3,0,8,1))
-#        loop_toggle(G(8,0,12,1))
-#
-#    def tools(self):
-#        layer("tools", keyorder = 2, y=self.screen_height)
-#        G = grid(0,self.screen_height,20,20)
-#        sel_button("trackview", "track", G(0,-1,3,0))
-#        sel_button("staffview", "view", G(3,-1,6,0))
-#        sel_button("cellview", "cell", G(6,-1,9,0))
-#
-#
-#    def save_file(self):
-#        to_file(self.filename, self.doc)
-#        print("document saved!")
-#
-#    def render_score(self):
-#        self.transport.set_offline()
-#
-#        sequence = self.sequence
-#        score = supriya.Score(output_bus_channel_count=2)
-#        clavier = {}
-#        with score.at(0):
-#            fabric = Fabric(score, self.doc.cells, self.doc.connections, self.definitions)
-#        for command in sequence.com:
-#            with score.at(command.time):
-#                command.send(clavier, fabric)
-#        with score.at(sequence.t(self.doc.duration)):
-#            score.do_nothing()
-#        supriya.render(score, output_file_path=self.wav_filename)
-#        print("saved", self.wav_filename)
-#
-#        self.transport.set_online()
-#        self.transport.refresh()
+
+    def save_file(self):
+        to_file(self.filename, self.doc)
+        print("document saved!")
+
+    def render_score(self):
+        self.transport.set_offline()
+
+        sequence = self.sequence
+        score = supriya.Score(output_bus_channel_count=2)
+        clavier = {}
+        with score.at(0):
+            fabric = Fabric(score, self.doc.cells, self.doc.connections, self.definitions)
+        for command in sequence.com:
+            with score.at(command.time):
+                command.send(clavier, fabric)
+        with score.at(sequence.t(self.doc.duration)):
+            score.do_nothing()
+        supriya.render(score, output_file_path=self.wav_filename)
+        print("saved", self.wav_filename)
+
+        self.transport.set_online()
+        self.transport.refresh(self.proc)
 
 class Transport:
     def __init__(self, synthdef_directory):
@@ -808,6 +792,36 @@ class TransportVisual:
                 (x, self.rect.top),
                 (x, self.rect.bottom))
 
+@dataclass
+class Scroller:
+    editor : Editor
+    rect : pygame.Rect
+    widget_id : Any
+
+    def behavior(self, ui):
+        if self.rect.collidepoint(ui.mouse_pos):
+            if ui.r_mouse_just_pressed and ui.r_active_id is None:
+                ui.r_active_id = self.widget_id
+                editor.scroll_ox = ui.mouse_pos[0], editor.scroll_x
+        if ui.r_mouse_pressed and ui.r_active_id == self.widget_id:
+            x, orig = editor.scroll_ox
+            editor.scroll_x = orig - round((ui.mouse_pos[0]-x) / self.editor.BAR_WIDTH)
+            return editor.scroll_x
+        return None
+
+    def draw(self, ui, screen):
+        pass
+
+@dataclass
+class Sidepanel:
+    rect : pygame.Rect
+    widget_id : Any
+
+    def behavior(self, ui):
+        return None
+
+    def draw(self, ui, screen):
+        pygame.draw.rect(screen, (30, 30, 30), self.rect)
 
 @dataclass
 class OnlineButton:
@@ -849,7 +863,7 @@ class FabricButton:
         return ui.was_clicked(self)
 
     def draw(self, ui, screen):
-        if self.editor.transport_status >= 2:
+        if self.editor.transport.status >= 2:
             color = 10, 155, 10
         else:
             color = 100, 100, 100
@@ -879,7 +893,7 @@ class PlayButton:
 
     def draw(self, ui, screen):
         pygame.draw.rect(screen, (200, 200, 200), self.rect, 1, 0)
-        if (t := self.editor.get_playing()) is not None:
+        if (t := self.editor.transport.get_playing()) is not None:
             pygame.draw.rect(screen, (200, 200, 200),
             self.rect.inflate((-14, -14)), 0, 0)
         else:
@@ -928,19 +942,19 @@ class Trackline:
         mg = []
         for i in range(self.editor.BARS_VISIBLE + 1):
             x = i * w + self.rect.left
-            if (i + self.editor.timeline_scroll) == self.editor.timeline_head:
+            if (i + self.editor.scroll_x) == self.editor.transport.cursor_head:
                 pygame.draw.line(screen, (0, 255, 255),
                                 (x, self.rect.top), (x, self.rect.bottom))
             else:
                 pygame.draw.line(screen, (200, 200, 200),
                                 (x, self.rect.top), (x, self.rect.bottom))
             text = ui.font24.render(
-                str(i + self.editor.timeline_scroll), True, (200, 200, 200))
+                str(i + self.editor.scroll_x), True, (200, 200, 200))
             screen.blit(text, (x + 2, self.rect.centery - text.get_height()/2))
             mg.append(text.get_width())
 
-        if self.editor.playback_range is not None:
-            i, j = self.editor.playback_range
+        if self.editor.transport.playback_range is not None:
+            i, j = self.editor.transport.playback_range
             half_width  = 6 / 2
             half_height = 6 / 2
             if self.editor.timeline_scroll <= i < self.editor.timeline_scroll + self.editor.BARS_VISIBLE:
@@ -961,15 +975,9 @@ class Trackline:
                 lef = (centerx - half_width, centery)
                 pygame.draw.polygon(screen, (200, 200, 200), [top, bot, lef])
 
-        k = self.editor.doc.duration
-        if self.editor.timeline_scroll < k <= self.editor.timeline_scroll + self.editor.BARS_VISIBLE:
-            x = (k - self.editor.timeline_scroll) * w + self.rect.left
-            pygame.draw.line(screen, (0, 255, 0),
-                (x, self.rect.top), (x, self.rect.bottom), 4)
-
         screen.set_clip(self.rect)
-        if (t := self.editor.get_playing()) is not None:
-            x = (t - self.editor.timeline_scroll) * w + self.rect.left
+        if (t := self.editor.transport.get_playing()) is not None:
+            x = (t - self.editor.scroll_x) * w + self.rect.left
             pygame.draw.line(screen, (255, 0, 0),
                 (x, self.rect.top), (x, self.rect.bottom))
         screen.set_clip(None)

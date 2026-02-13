@@ -95,3 +95,30 @@ save(low_pass,
     source = bus("ar", "in", 2),
     out = bus("ar", "out", 2),
     frequency = hz)
+
+@synthdef()
+def comb_l(out=0, source=0, decay_time=0.1, delay_time=0.2):
+    i = In.ar(bus=source, channel_count=2)
+    sig = CombL.ar(source=i,
+        decay_time = decay_time,
+        delay_time = delay_time,
+        maximum_delay_time = 0.5)
+    Out.ar(bus=out, source=sig)
+save(comb_l,
+    source = bus("ar", "in", 2),
+    out = bus("ar", "out", 2),
+    decay_time = duration,
+    delay_time = duration)
+
+@synthdef()
+def pluck(out=0, note=96, gate=1):
+    i = WhiteNoise.ar() * 0.1
+    sig = CombC.ar(source=i,
+        delay_time = 1 / note.midi_to_hz(),
+        decay_time = 2.0,
+        maximum_delay_time = 0.01)
+    sig *= EnvGen.kr(envelope=Envelope.adsr(), gate=gate, done_action=2)
+    Out.ar(bus=out, source=(sig,sig))
+save(pluck,
+    out = bus("ar", "out", 2),
+    note = pitch)

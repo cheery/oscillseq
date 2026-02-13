@@ -14,6 +14,7 @@ grammar = """
                | CNAME "{" entity* "}" -> clip_decl
 
     entity: number number "gate" CNAME component ";" -> gate_entity
+          | number number "quadratic" CNAME component ";" -> quadratic_entity
           | number number "clip" CNAME           ";" -> clip_entity
           | number "to" number number "pianoroll" CNAME value value ";" -> pianoroll_entity
           | number "to" number number "staves" CNAME staves number ";" -> staves_entity
@@ -145,6 +146,9 @@ class ModelTransformer(Transformer):
 
     def gate_entity(self, shift, lane, instrument, component):
         return CommandEntity(shift, lane, "gate", instrument, component)
+
+    def quadratic_entity(self, shift, lane, instrument, component):
+        return CommandEntity(shift, lane, "quadratic", instrument, component)
 
     def clip_entity(self, shift, lane, name):
         return ClipEntity(shift, lane, name)
@@ -310,6 +314,10 @@ parser = Lark(grammar, parser="lalr", transformer=ModelTransformer())
 
 def from_string(source):
     return parser.parse(source)
+
+def from_file(pathname):
+    with open(pathname, "r", encoding="utf-8") as fd:
+        return from_string(fd.read())
 
 if __name__=="__main__":
     tree = parser.parse(demo_seq)
