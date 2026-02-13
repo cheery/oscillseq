@@ -130,6 +130,11 @@ class DocumentProcessing:
                 d = self.construct_gate(sb,
                     e.instrument, pattern, s, k)
                 bound = max(bound, s+d)
+            if isinstance(e, CommandEntity) and e.flavor == "once":
+                pattern = self.process_component(e.component, rhythm_config)
+                d = self.construct_once(sb,
+                    e.instrument, pattern, s, k)
+                bound = max(bound, s+d)
             if isinstance(e, CommandEntity) and e.flavor == "quadratic":
                 pattern = self.process_component(e.component, rhythm_config)
                 d = self.construct_quadratic(sb,
@@ -181,6 +186,12 @@ class DocumentProcessing:
         for i, ((start, duration), values) in enumerate(zip(pattern.events, pattern.values)):
             for j, v in enumerate(values):
                 sb.note(tag, shift+start, duration, key + (i,j,), v)
+        return pattern.duration
+
+    def construct_once(self, sb, tag, pattern, shift, key):
+        for i, ((start, duration), values) in enumerate(zip(pattern.events, pattern.values)):
+            for j, v in enumerate(values):
+                sb.once(shift+start, tag, v)
         return pattern.duration
 
     def construct_quadratic(self, sb, tag, pattern, shift, key):

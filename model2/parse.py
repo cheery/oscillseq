@@ -15,6 +15,7 @@ grammar = """
 
     entity: number number "gate" CNAME component ";" -> gate_entity
           | number number "quadratic" CNAME component ";" -> quadratic_entity
+          | number number "once" CNAME component ";" -> once_entity
           | number number "clip" CNAME           ";" -> clip_entity
           | number "to" number number "pianoroll" CNAME value value ";" -> pianoroll_entity
           | number "to" number number "staves" CNAME staves number ";" -> staves_entity
@@ -149,6 +150,9 @@ class ModelTransformer(Transformer):
 
     def quadratic_entity(self, shift, lane, instrument, component):
         return CommandEntity(shift, lane, "quadratic", instrument, component)
+
+    def once_entity(self, shift, lane, instrument, component):
+        return CommandEntity(shift, lane, "once", instrument, component)
 
     def clip_entity(self, shift, lane, name):
         return ClipEntity(shift, lane, name)
