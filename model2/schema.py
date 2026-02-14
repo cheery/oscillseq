@@ -11,6 +11,7 @@ def random_name():
     return ''.join(random.choices(string.ascii_lowercase + string.digits, k=4))
 
 note_durations = {
+    'x': Fraction(2),
     'w': Fraction(1),
     'h': Fraction(1, 2),
     'q': Fraction(1, 4),

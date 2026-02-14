@@ -58,14 +58,15 @@ save(simple,
     out = bus("ar", "out", 2))
 
 @synthdef()
-def musical(out=0, note=69, gate=1, amplitude=1.0):
+def musical(out=0, note=69, gate=1, volume=0.0):
+    amplitude = volume.db_to_amplitude()
     sig = Saw.ar(frequency=note.midi_to_hz()) * amplitude
     sig *= EnvGen.kr(envelope=Envelope.adsr(), gate=gate, done_action=2)
     Out.ar(bus=out, source=[sig, sig])
 save(musical,
     out = bus("ar", "out", 2),
     note = pitch,
-    amplitude = unipolar)
+    volume = db)
 
 @synthdef()
 def test_signal(out=0, frequency=440, amplitude=0.1):
@@ -122,3 +123,18 @@ def pluck(out=0, note=96, gate=1):
 save(pluck,
     out = bus("ar", "out", 2),
     note = pitch)
+
+@synthdef()
+def freeverb(out=0, source=0, damping = 0.5, mix = 0.33, room_size = 0.5):
+    source = In.ar(bus=source, channel_count=2)
+    sig = FreeVerb.ar(source=source,
+      damping=damping,
+      mix=mix,
+      room_size=room_size)
+    Out.ar(bus=out, source=sig)
+save(freeverb,
+    source = bus("ar", "in", 2),
+    out = bus("ar", "out", 2),
+    damping = unipolar,
+    mix = unipolar,
+    room_size = unipolar)

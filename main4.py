@@ -39,8 +39,10 @@ main {
       / c4 g3 d4 e4 c5 b4 f4 [note:pitch:a];
     0 5 gate tone q e e q e e q q q e e q q q s s s s q q q q
       / c6 e6 d6 f6 e6 c6 e6 d6 f6 c6 c6 [note:pitch:b];
-    0 to 10 6 pianoroll a f3 d5;
-    0 to 10 14 staves b _._ 0;
+    0 to 10 7 pianoroll a f3 d5;
+    0 to 10 15 staves b _._ 0;
+    0 6 gate tone q q q q
+      / c3 [note:pitch:b];
 }
 
 @synths
@@ -255,6 +257,9 @@ class Editor:
 
         self.mode = "track"
         self.cell_view = NodeView(self)
+        self.selected = "main",
+        self.stack_index = None
+        self.rhythm_index = None
 
         self.scroll_ox = None
         self.scroll_x = 0
@@ -263,6 +268,9 @@ class Editor:
         self.midi_status = False
         self.midi_controllers = []
 
+    def after_rewrite(self):
+        self.proc = DocumentProcessing(self.doc)
+        self.transport.refresh(self.proc)
 
     def run(self):
         ui = SIMGUI(self.present)
@@ -291,20 +299,26 @@ class Editor:
 
         if self.mode == "track":
             ui.widget(GridWidget(self, main_rect, "grid"))
+            trackline = None
 
             def traverse_decl(decl, x, y, kv, d=1):
+                nonlocal trackline
                 views = {}
                 for i, e in enumerate(decl.entities):
                     ix = x + e.shift
                     iy = y + e.lane
                     w, h, pat = self.proc.dimensions[decl.name, i]
+                    key = kv + (i,)
                     if isinstance(e, CommandEntity):
+                        if self.selected == key and self.stack_index is not None:
+                            trackline = main_grid(ix, iy, ix+w, iy+h)
                         if ui.widget(PatLane(f"{e.flavor} {e.instrument}",
                             main_grid(ix, iy, ix+w, iy+h),
                             kv + (i,),
                             pat, main_grid.offset(ix,iy)
                             )):
-                            print(kv + (i,))
+                            self.selected = kv + (i,)
+                            self.stack_index = None
                         for name, dtype, vw in pat.views:
                             try:
                                 views[vw].append((name, dtype, pat, ix))
@@ -315,7 +329,8 @@ class Editor:
                         if ui.widget(Lane(e.name,
                             main_grid(ix, iy, ix+w, iy+h),
                             kv + (i,))):
-                            print(kv + (i,))
+                            self.selected = kv + (i,)
+                            self.stack_index = None
                         subviews = traverse_decl(sdecl, ix, iy, kv + (i,), d+1)
                         for vw, g in subviews.items():
                             try:
@@ -332,14 +347,16 @@ class Editor:
                             int(e.bot), int(e.top),
                             views.get(e.name, []), main_grid,
                             kv + (i,))):
-                            print(kv + (i,))
+                            self.selected = kv + (i,)
+                            self.stack_index = None
                     elif isinstance(e, StavesEntity):
                         if ui.widget(StavesWidget(
                             main_grid(ix, iy, ix+w, iy+h),
                             e.above, e.count, e.below, e.key,
                             views.get(e.name, []), main_grid,
                             kv + (i,))):
-                            print(kv + (i,))
+                            self.selected = kv + (i,)
+                            self.stack_index = None
                 return views
 
             main_decl = self.proc.declarations['main']
@@ -350,7 +367,204 @@ class Editor:
             ui.widget(TransportVisual(self.transport, main_grid, main_rect,
                 "transport-visual"))
             ui.widget(Scroller(self, main_rect, "scroller"))
+
             ui.widget(Sidepanel(side_rect, "sidepanel"))
+            if self.selected is not None:
+                y = 24
+                top = self.proc.declarations[self.selected[0]]
+                sel = (self.selected[0],)
+                if ui.button(top.name, pygame.Rect(0, y, self.MARGIN, 24), sel):
+                    self.selected = sel
+                    self.stack_index = None
+                y += 24
+                for i in self.selected[1:]:
+                    sel += (i,)
+                    if isinstance(top, ClipDecl):
+                        mid = top.entities[i]
+                        if isinstance(mid, ClipEntity):
+                            top = self.proc.declarations[mid.name]
+                            if ui.button(top.name, pygame.Rect(0, y, self.MARGIN, 24), sel):
+                                self.selected = sel
+                                self.stack_index = None
+                            y += 24
+                        if isinstance(mid, CommandEntity):
+                            if ui.button(f"{mid.flavor} {mid.instrument}",
+                                pygame.Rect(0, y, self.MARGIN, 24),
+                                sel):
+                                self.selected = sel
+                                self.stack_index = None
+                            top = mid
+                        if isinstance(mid, StavesEntity):
+                            if ui.button(f"staves {mid.name}",
+                                pygame.Rect(0, y, self.MARGIN, 24),
+                                sel):
+                                self.selected = sel
+                                self.stack_index = None
+                        if isinstance(mid, PianorollEntity):
+                            if ui.button(f"pianoroll {mid.name}",
+                                pygame.Rect(0, y, self.MARGIN, 24),
+                                sel):
+                                self.selected = sel
+                                self.stack_index = None
+                y += 12 + 24
+                if isinstance(top, CommandEntity):
+                    comp = top.component
+                    k = 0
+                    while comp:
+                        kur = "-> " if k == self.stack_index else ""
+                        if isinstance(comp, Ref):
+                            if ui.button(kur + f"{comp.name}",
+                                pygame.Rect(0, y, self.MARGIN, 24), (sel, k)):
+                                self.stack_index = k
+                            comp = None
+                        elif isinstance(comp, Overlay):
+                            if ui.button(kur + f"{comp.name}:{comp.dtype}:{comp.view}",
+                                pygame.Rect(0, y, self.MARGIN, 24), (sel, k)):
+                                self.stack_index = k
+                            comp = comp.base
+                        elif isinstance(comp, Repeated):
+                            if ui.button(kur + f"repeat {comp.count}",
+                                pygame.Rect(0, y, self.MARGIN, 24), (sel, k)):
+                                self.stack_index = k
+                            comp = comp.base
+                        elif isinstance(comp, Renamed):
+                            if ui.button(kur + f"rename {comp.src} to {comp.dst}",
+                                pygame.Rect(0, y, self.MARGIN, 24), (sel, k)):
+                                self.stack_index = k
+                            comp = comp.base
+                        elif isinstance(comp, Durated):
+                            if ui.button(kur + f"duration {comp.duration}",
+                                pygame.Rect(0, y, self.MARGIN, 24), (sel, k)):
+                                self.stack_index = k
+                            comp = comp.base
+                        elif isinstance(comp, WestRhythm):
+                            if ui.button(kur + "rhythm",
+                                pygame.Rect(0, y, self.MARGIN, 24), (sel, k)):
+                                self.stack_index = k
+                            comp = None
+                        elif isinstance(comp, StepRhythm):
+                            if ui.button(kur + "step",
+                                pygame.Rect(0, y, self.MARGIN, 24), (sel, k)):
+                                self.stack_index = k
+                            comp = None
+                        elif isinstance(comp, EuclideanRhythm):
+                            if ui.button(kur + "euclidean",
+                                pygame.Rect(0, y, self.MARGIN, 24), (sel, k)):
+                                self.stack_index = k
+                            comp = None
+                        else:
+                            assert False, comp
+                        y += 24
+                        k += 1
+                    if self.stack_index is not None and trackline is not None:
+                        comp = top.component
+                        for _ in range(self.stack_index):
+                            comp = comp.base
+                        modrect = pygame.Rect(trackline.left, self.screen_height - 24 - self.LANE_HEIGHT * 4, trackline.width, self.LANE_HEIGHT * 4)
+                        u = Grid(self.MARGIN, modrect.top, 24, self.LANE_HEIGHT)
+                        if isinstance(comp, Overlay):
+                            pass
+                        elif isinstance(comp, WestRhythm):
+                            W = sum(float(e.duration) for e in comp.sequence)
+                            g = Grid(modrect.left, modrect.top, modrect.width / W, self.LANE_HEIGHT)
+                            t = 0.0
+                            for k, x in enumerate(comp.sequence):
+                                d = float(x.duration)
+                                if ui.button(str(x), g(t, 2, t+d, 3), f"step-{k}"):
+                                    self.rhythm_index = k
+                                t += d
+                            if self.rhythm_index is not None:
+                                X = comp.sequence[self.rhythm_index]
+                                p = comp.sequence[self.rhythm_index].duration.symbol
+                                n = comp.sequence[self.rhythm_index].duration.dots
+                                if ui.button("+|", u(18, 1, 20, 2), "set-left"):
+                                    comp.sequence.insert(self.rhythm_index, Note(Duration("q", 0), None, None))
+                                    self.after_rewrite()
+                                if len(comp.sequence) > 1 and ui.button("DEL", u(20, 1, 22, 2), "set-del"):
+                                    del comp.sequence[self.rhythm_index]
+                                    self.rhythm_index = None
+                                if ui.button("|+", u(22, 1, 24, 2), "set-right"):
+                                    comp.sequence.insert(self.rhythm_index+1, Note(Duration("q", 0), None, None))
+                                    self.rhythm_index += 1
+                                    self.after_rewrite()
+                                if ui.button("'", u(4, 1, 5, 2), "set-stac"):
+                                    if isinstance(X, Rest):
+                                        comp.sequence[self.rhythm_index] = Note(X.duration, None, None)
+                                    comp.sequence[self.rhythm_index].style = "staccato"
+                                    self.after_rewrite()
+                                if ui.button(" ", u(5, 1, 6, 2), "set-normal"):
+                                    if isinstance(X, Rest):
+                                        comp.sequence[self.rhythm_index] = Note(X.duration, None, None)
+                                    comp.sequence[self.rhythm_index].style = None
+                                    self.after_rewrite()
+                                if ui.button("_", u(6, 1, 7, 2), "set-ten"):
+                                    if isinstance(X, Rest):
+                                        comp.sequence[self.rhythm_index] = Note(X.duration, None, None)
+                                    comp.sequence[self.rhythm_index].style = "tenuto"
+                                    self.after_rewrite()
+                                if ui.button("~", u(7, 1, 8, 2), "set-rest"):
+                                    comp.sequence[self.rhythm_index] = Rest(X.duration)
+                                    self.after_rewrite()
+                                for i, dyn in enumerate(dynamics_to_dbfs, 10):
+                                    if ui.button(dyn, u(i, 0, i+1, 1), "set-" + dyn):
+                                        comp.sequence[self.rhythm_index].dynamic = dyn
+                                        self.after_rewrite()
+                                if ui.button("", u(i+1, 0, i+2, 1), "set-nodyn"):
+                                    comp.sequence[self.rhythm_index].dynamic = None
+                                    self.after_rewrite()
+                                for i, m in enumerate("vutseqhwx"):
+                                    if ui.button(m, u(i, 0, i+1, 1), "set-" + m):
+                                        comp.sequence[self.rhythm_index].duration = Duration(m, n)
+                                        self.after_rewrite()
+                                if ui.button(".-", u(0, 1, 1, 2), "less-dots"):
+
+                                    n = max(0, n-1)
+                                    comp.sequence[self.rhythm_index].duration = Duration(p, n)
+                                    self.after_rewrite()
+                                if ui.button(".+", u(1, 1, 2, 2), "more-dots"):
+
+                                    n = n+1
+                                    comp.sequence[self.rhythm_index].duration = Duration(p, n)
+                                    self.after_rewrite()
+                            
+                        elif isinstance(comp, StepRhythm):
+                            g = Grid(modrect.left, modrect.top, modrect.width / len(comp.sequence), self.LANE_HEIGHT)
+                            if ui.button("+", u(1, 0, 2, 1), "more-rhythm"):
+                                comp.sequence.append(0)
+                                self.after_rewrite()
+                            if ui.button("-", u(0, 0, 1, 1), "less-rhythm"):
+                                if len(comp.sequence) > 1:
+                                    comp.sequence.pop()
+                                self.after_rewrite()
+                            for k, x in enumerate(comp.sequence):
+                                if ui.button(str(x), g(k, 1, k+1, 2), f"step-{k}"):
+                                    comp.sequence[k] = 1 - x
+                                    self.after_rewrite()
+                        elif isinstance(comp, EuclideanRhythm):
+                            if ui.button("P+", u(1, 0, 2, 1), "more-pulses"):
+                                comp.pulses = min(comp.steps, comp.pulses+1)
+                                self.after_rewrite()
+                            if ui.button("P-", u(0, 0, 1, 1), "less-pulses"):
+                                comp.pulses = max(0, comp.pulses - 1)
+                                self.after_rewrite()
+                            if ui.button("S+", u(3, 0, 4, 1), "more-steps"):
+                                comp.steps = comp.steps + 1
+                                self.after_rewrite()
+                            if ui.button("S-", u(2, 0, 3, 1), "less-steps"):
+                                comp.steps = max(1, comp.steps - 1)
+                                comp.pulses = min(comp.pulses, comp.steps)
+                                self.after_rewrite()
+                            if ui.button("<-", u(4, 0, 5, 1), "rot-left"):
+                                comp.rotation = comp.rotation + 1
+                                self.after_rewrite()
+                            if ui.button("->", u(5, 0, 6, 1), "rot-right"):
+                                comp.rotation = comp.rotation - 1
+                                self.after_rewrite()
+                            ui.label(f"{comp.pulses} {comp.steps} {comp.rotation}", u(0, 1, 10, 2))
+                        else:   
+                            if ui.button("modify", modrect, "modify-it"):
+                                pass
+
         if self.mode == "synth":
             ui.widget(self.transport.get_spectroscope())
             self.cell_view.present(ui)
@@ -447,21 +661,28 @@ class Editor:
 #        self.midi_controllers.clear()
 
     def save_file(self):
-        to_file(self.filename, self.doc)
+        with open(self.filename, "w", encoding='utf-8') as fd:
+            fd.write(repr(self.doc))
         print("document saved!")
 
     def render_score(self):
         self.transport.set_offline()
 
-        sequence = self.sequence
+        proc = self.proc
+        sb = SequenceBuilder2(self.transport.group_ids, self.transport.definitions.descriptors(proc.doc.synths))
+        duration = proc.construct(sb,
+            proc.declarations["main"], 0, ("main",),
+            default_rhythm_config)
+        sequence = sb.build(duration)
+
         score = supriya.Score(output_bus_channel_count=2)
         clavier = {}
         with score.at(0):
-            fabric = Fabric(score, self.doc.cells, self.doc.connections, self.definitions)
+            fabric = Fabric(score, self.doc.synths, self.doc.connections, self.transport.definitions)
         for command in sequence.com:
             with score.at(command.time):
                 command.send(clavier, fabric)
-        with score.at(sequence.t(self.doc.duration)):
+        with score.at(sequence.t(duration)):
             score.do_nothing()
         supriya.render(score, output_file_path=self.wav_filename)
         print("saved", self.wav_filename)
@@ -507,7 +728,6 @@ class Transport:
         self.current_connections = proc.doc.connections
 
         sb = SequenceBuilder2(self.group_ids, self.definitions.descriptors(proc.doc.synths))
-
         duration = proc.construct(sb,
             proc.declarations["main"], 0, ("main",),
             default_rhythm_config)
@@ -940,11 +1160,11 @@ class Trackline:
             if ui.r_mouse_just_pressed and ui.r_active_id is None:
                 ui.r_active_id = self.widget_id
                 self.control.drag_pos = ui.mouse_pos
-                self.control.drag_org = self.editor.timeline_scroll
+                self.control.drag_org = self.editor.scroll_x
         if ui.r_active_id == self.widget_id:
             dx = self.control.drag_pos[0] - ui.mouse_pos[0]
             ix = int(dx // self.editor.BAR_WIDTH)
-            self.editor.timeline_scroll = max(0, ix + self.control.drag_org)
+            self.editor.scroll_x = max(0, ix + self.control.drag_org)
             return True
         return False
 
@@ -968,8 +1188,8 @@ class Trackline:
             i, j = self.editor.transport.playback_range
             half_width  = 6 / 2
             half_height = 6 / 2
-            if self.editor.timeline_scroll <= i < self.editor.timeline_scroll + self.editor.BARS_VISIBLE:
-                centerx = (i - self.editor.timeline_scroll) * w + 6 + mg[i - self.editor.timeline_scroll] + self.rect.left
+            if self.editor.scroll_x <= i < self.editor.scroll_x + self.editor.BARS_VISIBLE:
+                centerx = (i - self.editor.scroll_x) * w + 6 + mg[i - self.editor.scroll_x] + self.rect.left
                 centery = self.rect.centery
                 top = (centerx, centery - half_height)
                 rig = (centerx + half_width, centery)
@@ -977,8 +1197,8 @@ class Trackline:
                 lef = (centerx - half_width, centery)
                 pygame.draw.polygon(screen, (200, 200, 200), [top, rig, bot])
 
-            if self.editor.timeline_scroll < j <= self.editor.timeline_scroll + self.editor.BARS_VISIBLE:
-                centerx = (j - self.editor.timeline_scroll) * w - 6 + self.rect.left
+            if self.editor.scroll_x < j <= self.editor.scroll_x + self.editor.BARS_VISIBLE:
+                centerx = (j - self.editor.scroll_x) * w - 6 + self.rect.left
                 centery = self.rect.centery
                 top = (centerx, centery - half_height)
                 rig = (centerx + half_width, centery)
