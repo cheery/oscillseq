@@ -671,9 +671,10 @@ class MXParamWidget:
             val = parameter.value[0]
         pygame.draw.rect(screen, (200,200,200), self.rect, 1)
         x = any_to_slider(val, mx.desc.field_type(mx.param))
-        posa = self.rect.left,  self.rect.top + (1-x) * self.rect.height
-        posb = self.rect.right, self.rect.top + (1-x) * self.rect.height
-        pygame.draw.line(screen, (255,255,0), posa, posb, 2)
+        if x is not None:
+            posa = self.rect.left,  self.rect.top + (1-x) * self.rect.height
+            posb = self.rect.right, self.rect.top + (1-x) * self.rect.height
+            pygame.draw.line(screen, (255,255,0), posa, posb, 2)
         txt = format(val, ".4g")
         if mx.desc.field_type(mx.param) == "pitch":
             txt = repr(music.Pitch.from_midi(int(val)))

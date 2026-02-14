@@ -125,6 +125,20 @@ save(pluck,
     note = pitch)
 
 @synthdef()
+def thingy(out=0, note=96, freq=30.0, gate=1):
+    i = Impulse.ar(frequency=freq)
+    sig = CombC.ar(source=i,
+        delay_time = 1 / note.midi_to_hz(),
+        decay_time = 2.0,
+        maximum_delay_time = 0.01)
+    sig *= EnvGen.kr(envelope=Envelope.adsr(), gate=gate, done_action=2)
+    Out.ar(bus=out, source=(sig,sig))
+save(thingy,
+    out = bus("ar", "out", 2),
+    note = pitch,
+    freq = hz)
+
+@synthdef()
 def freeverb(out=0, source=0, damping = 0.5, mix = 0.33, room_size = 0.5):
     source = In.ar(bus=source, channel_count=2)
     sig = FreeVerb.ar(source=source,

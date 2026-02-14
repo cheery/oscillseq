@@ -142,6 +142,11 @@ class DocumentProcessing:
                 d = self.construct_quadratic(sb,
                     e.instrument, pattern, s, k)
                 bound = max(bound, s+d)
+            if isinstance(e, CommandEntity) and e.flavor == "slide":
+                pattern = self.process_component(e.component, rhythm_config)
+                d = self.construct_slide(sb,
+                    e.instrument, pattern, s, k)
+                bound = max(bound, s+d)
         return bound - shift
 
     def process_component(self, component, rhythm_config):
@@ -194,6 +199,13 @@ class DocumentProcessing:
         for i, ((start, duration), values) in enumerate(zip(pattern.events, pattern.values)):
             for j, v in enumerate(values):
                 sb.once(shift+start, tag, v)
+        return pattern.duration
+
+    def construct_slide(self, sb, tag, pattern, shift, key):
+        for i, ((start, duration), values) in enumerate(zip(pattern.events, pattern.values)):
+            for j, v in enumerate(values):
+                sb.gate(shift+start, tag, key, v)
+        sb.gate(shift+start+duration, tag, key, v)
         return pattern.duration
 
     def construct_quadratic(self, sb, tag, pattern, shift, key):
