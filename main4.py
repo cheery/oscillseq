@@ -168,18 +168,20 @@ class DocumentProcessing:
             pattern = self.process_component(component.base, rhythm_config)
             events = []
             values = pattern.values * component.count
+            meta = pattern.meta * component.count
             for i in range(component.count):
                 for s, d in pattern.events:
                     events.append((s + pattern.duration*i, d))
-            return Pattern(events, values, pattern.duration*component.count, pattern.views)
+            return Pattern(events, values, pattern.duration*component.count, pattern.views, meta)
         elif isinstance(component, Durated):
             pattern = self.process_component(component.base, rhythm_config)
             events = []
             values = pattern.values
+            meta = pattern.meta
             p = component.duration / pattern.duration
             for s, d in pattern.events:
                 events.append((s * p, d * p))
-            return Pattern(events, values, component.duration, [])
+            return Pattern(events, values, component.duration, [], meta)
         elif isinstance(component, WestRhythm):
             return component.to_pattern(rhythm_config)
         elif isinstance(component, StepRhythm):
@@ -312,7 +314,7 @@ class Editor:
         if self.mode == "track":
             ui.widget(GridWidget(self, main_rect, "grid"))
             trackline = None
-
+            edit_widgets = []
             def traverse_decl(decl, x, y, kv, d=1):
                 nonlocal trackline
                 views = {}
@@ -333,9 +335,9 @@ class Editor:
                             self.stack_index = None
                         for name, dtype, vw in pat.views:
                             try:
-                                views[vw].append((name, dtype, pat, ix))
+                                views[vw].append((name, dtype, pat, ix, e))
                             except KeyError:
-                                views[vw] = [(name, dtype, pat, ix)]
+                                views[vw] = [(name, dtype, pat, ix, e)]
                     elif isinstance(e, ClipEntity):
                         sdecl = self.proc.declarations[e.name]
                         if ui.widget(Lane(e.name,
@@ -354,21 +356,23 @@ class Editor:
                     iy = y + e.lane
                     w, h, pat = self.proc.dimensions[decl.name, i]
                     if isinstance(e, PianorollEntity):
-                        if ui.widget(PianorollWidget(
+                        if ui.widget(e := PianorollWidget(
                             main_grid(ix, iy, ix+w, iy+h),
                             int(e.bot), int(e.top),
                             views.get(e.name, []), main_grid,
                             kv + (i,))):
                             self.selected = kv + (i,)
                             self.stack_index = None
+                        edit_widgets.append(e)
                     elif isinstance(e, StavesEntity):
-                        if ui.widget(StavesWidget(
+                        if ui.widget(e := StavesWidget(
                             main_grid(ix, iy, ix+w, iy+h),
                             e.above, e.count, e.below, e.key,
                             views.get(e.name, []), main_grid,
                             kv + (i,))):
                             self.selected = kv + (i,)
                             self.stack_index = None
+                        edit_widgets.append(e)
                 return views
 
             main_decl = self.proc.declarations['main']
@@ -475,7 +479,9 @@ class Editor:
                         modrect = pygame.Rect(trackline.left, self.screen_height - 24 - self.LANE_HEIGHT * 4, trackline.width, self.LANE_HEIGHT * 4)
                         u = Grid(self.MARGIN, modrect.top, 24, self.LANE_HEIGHT)
                         if isinstance(comp, Overlay):
-                            pass
+                            for widget in edit_widgets:
+                                if ui.widget(Editing(widget, top, comp)):
+                                    self.after_rewrite()
                         elif isinstance(comp, WestRhythm):
                             W = sum(float(e.duration) for e in comp.sequence)
                             g = Grid(modrect.left, modrect.top, modrect.width / W, self.LANE_HEIGHT)
@@ -923,6 +929,48 @@ class PatLane(Lane):
         rc = surf.get_rect(top=rect.top + 2, left=rect.left + 6)
         screen.blit(surf, rc)
 
+class Editing:
+    def __init__(self, widget, top, comp):
+        self.widget = widget
+        self.top = top
+        self.comp = comp
+        self.rect = widget.rect
+        self.widget_id = widget.widget_id, "editing"
+
+    def behavior(self, ui):
+        ui.grab_active(self)
+        note_edited = None
+        if ui.hot_id == self.widget_id and isinstance(self.widget, StavesWidget):
+            ox, oy = self.rect.topleft
+            k = self.rect.height / (self.widget.count + self.widget.above + self.widget.below)
+            note_pos = int(round((oy + self.widget.above*k - ui.mouse_pos[1]) / (k / 12) + 40))
+            note_edited = music.Pitch(note_pos, 0)
+        if ui.hot_id == self.widget_id and isinstance(self.widget, PianorollWidget):
+            k = self.rect.height / (self.widget.top - self.widget.bot + 1)
+            note_pos = int(round((self.rect.bottom - ui.mouse_pos[1])/k)) + self.widget.bot
+            note_edited = music.Pitch.from_midi(note_pos)
+        if note_edited is not None:
+            if ui.mouse_just_pressed:
+                for name, dtype, pat, x, e in self.widget.pats:
+                    if self.top is e:
+                        for (s,d), vg, m in zip(pat.events, pat.values, pat.meta):
+                            a = self.widget.grid.point(s + x, 0)[0]
+                            b = self.widget.grid.point(s + x + d, 0)[0]
+                            if a <= ui.mouse_pos[0] <= b:
+                                vals = self.comp.data[m[self.comp.name]]
+                                for i,v in enumerate(vals):
+                                    if isinstance(v, int):
+                                        v = music.Pitch.from_midi(v)
+                                    if v.position == note_edited.position:
+                                        vals.pop(i)
+                                        break
+                                else:
+                                    vals.append(note_edited)
+                                return True
+
+    def draw(self, ui, screen):
+        pass
+
 class StavesWidget:
     def __init__(self, rect, above, count, below, key, pats, grid, widget_id):
         self.rect = rect
@@ -951,7 +999,7 @@ class StavesWidget:
             y += k
         screen.set_clip(rect)
         colors = [(0,0,128), (0,0,255), (255,128,0), (255, 0, 0), (128,0,0)]
-        for name, dtype, pat, x in self.pats:
+        for name, dtype, pat, x, _ in self.pats:
             for (s,d), vg in zip(pat.events, pat.values):
                 a = self.grid.point(s + x, 0)[0]
                 b = self.grid.point(s + x + d, 0)[0]
@@ -1006,7 +1054,7 @@ class PianorollWidget:
             else:
                 pygame.draw.line(screen, (50, 50, 50), (x, py), (rc.right, py))
         screen.set_clip(rect)
-        for name, dtype, pat, x in self.pats:
+        for name, dtype, pat, x, e in self.pats:
             for (s,d), vg in zip(pat.events, pat.values):
                 a = self.grid.point(s + x, 0)[0]
                 b = self.grid.point(s + x + d, 0)[0]

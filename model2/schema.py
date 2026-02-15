@@ -175,17 +175,20 @@ class Pattern:
     values : List[List[Dict[str, Any]]]
     duration : float
     views : List[Tuple[str, str, str]]
+    meta : List[Dict[str, int]]
 
     def overlay(self, other : List[List[Dict[str, Any]]], view : Tuple[str, str, str]):
         out = []
+        meta = []
         L = len(other)
-        for i,vg in enumerate(self.values):
+        for i,(vg,m) in enumerate(zip(self.values, self.meta)):
             x = []
             for w in other[i%L]:
                 for v in vg:
                     x.append(v | w)
             out.append(x)
-        return Pattern(self.events, out, self.duration, self.views + [view])
+            meta.append(m | {view[0]: i%L})
+        return Pattern(self.events, out, self.duration, self.views + [view], meta)
 
 @dataclass(repr=False)
 class Duration(Object):
@@ -316,6 +319,7 @@ class WestRhythm(Rhythm):
     def to_pattern(self, config : RhythmConfig):
         events = []
         values = []
+        meta = []
         def process_note(t, note, duration):
             if isinstance(note, Note):
                 volume = dynamics_to_dbfs.get(note.dynamic, config['volume'])
@@ -329,6 +333,7 @@ class WestRhythm(Rhythm):
                 v = {"volume": volume}
                 events.append((t,d))
                 values.append([v])
+                meta.append({})
             elif isinstance(note, Tuplet):
                 subt = t
                 subrate = duration / sum(float(n.duration) for n in note.elements)
@@ -344,7 +349,7 @@ class WestRhythm(Rhythm):
             duration = float(note.duration) * rate
             process_note(t, note, duration)
             t += duration
-        return Pattern(events, values, duration=t, views=[])
+        return Pattern(events, values, duration=t, views=[], meta=meta)
 
     def __pretty__(self):
         return sp.join(self.sequence)
