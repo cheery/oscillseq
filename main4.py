@@ -204,10 +204,12 @@ class DocumentProcessing:
         return pattern.duration
 
     def construct_slide(self, sb, tag, pattern, shift, key):
+        i = None
         for i, ((start, duration), values) in enumerate(zip(pattern.events, pattern.values)):
             for j, v in enumerate(values):
                 sb.gate(shift+start, tag, key, v)
-        sb.gate(shift+start+duration, tag, key, v)
+        if i is not None:
+            sb.gate(shift+start+duration, tag, key, v)
         return pattern.duration
 
     def construct_quadratic(self, sb, tag, pattern, shift, key):
