@@ -41,6 +41,13 @@ class Object:
      def __repr__(self):
          return str(self)
 
+@dataclass
+class CName(Object):
+    value : str
+
+    def __pretty__(self):
+        return text("%" + self.value)
+
 @dataclass(repr=False)
 class Component(Object):
     pass
@@ -68,7 +75,8 @@ class ClipDecl(Declaration):
     def __pretty__(self):
         header = (text(self.name) + sp + text("{")).group()
         tail = nl + text("}")
-        return header + (nl + nl.join(self.entities)).nest(2).group() + tail
+        ents = (pretty(e) + text(";") for e in self.entities)
+        return header + (nl + nl.join(ents)).nest(2).group() + tail
 
 @dataclass(eq=False, repr=False)
 class CommandEntity(Entity):
@@ -81,7 +89,6 @@ class CommandEntity(Entity):
         total += sp + text(self.flavor)
         total += sp + text(self.instrument)
         total += sp + pretty(self.component)
-        total += text(";")
         return total.nest(2).group()
 
 @dataclass(eq=False, repr=False)
@@ -89,14 +96,14 @@ class ClipEntity(Entity):
     name : str
 
     def __pretty__(self):
-        return (pretty(self.shift) + sp + pretty(self.lane) + sp + text("clip") + sp + text(self.name) + text(";")).nest(2).group()
+        return (pretty(self.shift) + sp + pretty(self.lane) + sp + text("clip") + sp + text(self.name)).nest(2).group()
 
 @dataclass(eq=False, repr=False)
 class PianorollEntity(Entity):
     duration : int
     name : str
-    bot : int | float | music.Pitch
-    top : int | float | music.Pitch
+    bot : int | float | music.Pitch | CName
+    top : int | float | music.Pitch | CName
 
     def __pretty__(self):
         p = pretty(self.shift) + sp + text("to") + sp + pretty(self.shift + self.duration)
@@ -105,7 +112,6 @@ class PianorollEntity(Entity):
         p += sp + text(self.name)
         p += sp + pretty(self.bot)
         p += sp + pretty(self.top)
-        p += text(";")
         return p.nest(2).group()
 
 @dataclass(eq=False, repr=False)
@@ -124,7 +130,6 @@ class StavesEntity(Entity):
         p += sp + text(self.name)
         p += sp + text("_"*self.above + "."*self.count + "_"*self.below)
         p += sp + pretty(self.key)
-        p += text(";")
         return p.nest(2).group()
 
 @dataclass(eq=False, repr=False)
@@ -134,7 +139,7 @@ class Synth(Object):
     pos : Tuple[int, int]
     multi : bool
     type_param : Optional[str]
-    params : Dict[str, int | float | music.Pitch]
+    params : Dict[str, int | float | music.Pitch | CName]
 
     def __pretty__(self):
         header = text(self.name) + sp + text(self.synth)
@@ -301,7 +306,7 @@ class Rest(Element):
 class Rhythm(Component):
     pass
 
-RhythmConfig = Dict[str, int | float | music.Pitch]
+RhythmConfig = Dict[str, int | float | music.Pitch | CName]
 
 default_rhythm_config = {
     'beats_per_measure': 4,
@@ -423,3 +428,134 @@ def bjorklund(pulses: int, steps: int) -> list[int]:
 
 def rotate(l, n):
     return l[n:] + l[:n]
+
+@dataclass
+class Command(Object):
+    pass
+
+@dataclass
+class PreviousSelection(Command):
+    def __pretty__(self):
+        return text("cont")
+
+@dataclass
+class ByName(Command):
+    name : str
+
+    def __pretty__(self):
+        return text("&" + self.name)
+
+@dataclass
+class ByIndex(Command):
+    base : Command
+    index : int
+
+    def __pretty__(self):
+        return pretty(self.base) + text("." + str(self.index))
+
+@dataclass
+class AttributeOf(Command):
+    base : Command
+    name : str
+
+    def __pretty__(self):
+        return pretty(self.base) + text("." + str(self.name))
+
+@dataclass
+class Assign(Object):
+    attr : AttributeOf
+    value : int | float | music.Pitch | CName | Component | Entity | Command
+
+    def __pretty__(self):
+        if isinstance(self.value, Command):
+            assignment = text(" = from ") + pretty(self.value)
+        else:
+            assignment = text(" = ") + pretty(self.value)
+        return pretty(self.attr) + assignment
+
+@dataclass
+class MakeClip(Command):
+    base : Command
+
+    def __pretty__(self):
+        return pretty(self.base) + text(" clip")
+
+class MakeEval(Command):
+    base : Command
+
+    def __pretty__(self):
+        return pretty(self.base) + text(" eval")
+
+@dataclass
+class Before(Command):
+    base : Command
+    value : int | float | music.Pitch | CName | Component | Entity | Command
+
+    def __pretty__(self):
+        if isinstance(self.value, Command):
+            return pretty(self.base) + text(" before from ") + pretty(self.value)
+        return pretty(self.base) + text(" before ") + pretty(self.value)
+
+@dataclass
+class After(Command):
+    base : Command
+    value : int | float | music.Pitch | CName | Component | Entity | Command
+
+    def __pretty__(self):
+        if isinstance(self.value, Command):
+            return pretty(self.base) + text(" after from ") + pretty(self.value)
+        return pretty(self.base) + text(" after ") + pretty(self.value)
+
+@dataclass
+class SelectRange(Command):
+    base : Command
+    start : int
+    stop : int | None
+
+    def __pretty__(self):
+        suffix = text("")
+        if self.stop is not None:
+            suffix = text(":") + pretty(self.stop)
+        return pretty(self.base) + text("[") + pretty(self.start) + suffix + text("]")
+
+@dataclass
+class ReplaceSelection(Command):
+    base : Command
+    elements : List[Element]
+
+    def __pretty__(self):
+        return pretty(self.base) + text(" west ") + sp.join(self.elements)
+
+@dataclass
+class ClimbSelection(Command):
+    base : Command
+    def __pretty__(self):
+        return pretty(self.base) + text(" up")
+
+@dataclass
+class Stack(Command):
+    base : Command
+    component : Component
+
+    def __pretty__(self):
+        return pretty(self.base) + text(" stack ") + pretty(self.component)
+
+@dataclass
+class Fill(Command):
+    base : Command
+    name : str
+    data : List[List[Any]]
+
+    def __pretty__(self):
+        def process(x):
+            return text(":").join(x) if len(x) > 0 else text("~")
+        blob = sp.join(process(x) for x in self.data).group()
+        return pretty(self.base) + text(f" fill {self.name} ") + blob
+
+@dataclass
+class Coordinates(Command):
+    x : float
+    y : float
+
+    def __pretty__(self):
+        return text(f"{self.x}, {self.y};")

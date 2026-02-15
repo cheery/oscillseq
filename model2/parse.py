@@ -1,8 +1,5 @@
 from lark import Lark, Transformer, v_args
 from .schema import *
-
-from .wadler_lindig import pformat_doc, text, sp, nl, pretty
-from fractions import Fraction
 from dataclasses import dataclass
 from typing import List, Tuple, Dict, Optional, Any
 import music
@@ -11,15 +8,15 @@ grammar = """
     start: "oscillseq" "aqua" declaration* synths connections
 
     declaration: CNAME "=" component ";" -> component_decl
-               | CNAME "{" entity* "}" -> clip_decl
+               | CNAME "{" (entity ";")* "}" -> clip_decl
 
-    entity: number number "gate" CNAME component ";" -> gate_entity
-          | number number "quadratic" CNAME component ";" -> quadratic_entity
-          | number number "once" CNAME component ";" -> once_entity
-          | number number "slide" CNAME component ";" -> slide_entity
-          | number number "clip" CNAME           ";" -> clip_entity
-          | number "to" number number "pianoroll" CNAME value value ";" -> pianoroll_entity
-          | number "to" number number "staves" CNAME staves number ";" -> staves_entity
+    entity: number number "gate" CNAME component -> gate_entity
+          | number number "quadratic" CNAME component -> quadratic_entity
+          | number number "once" CNAME component -> once_entity
+          | number number "slide" CNAME component -> slide_entity
+          | number number "clip" CNAME           -> clip_entity
+          | number "to" number number "pianoroll" CNAME value value -> pianoroll_entity
+          | number "to" number number "staves" CNAME staves number -> staves_entity
 
     staves: /_*\\.+_*/
 
@@ -56,6 +53,7 @@ grammar = """
 
     value: number
          | pitch
+         | "%" CNAME -> cname_value
 
     euclidean_rhythm: "euclidean" number number number?
     step_rhythm: /[01]+/
@@ -98,41 +96,35 @@ grammar = """
     
     %import common.WS
     %ignore WS
-"""
 
-#    0 10 2 2 pianoroll piano c3 e8;
-#    0 10 4 3 staves xxx 1 1 1;
-#    0 10 7 2 row yyy;
+    cmd: "cont" -> previous
+       | "&" CNAME -> by_name
+       | SIGNED_NUMBER "," SIGNED_NUMBER ";" -> by_coords
+       | cmd "." SIGNED_INT -> by_index
+       | cmd "." CNAME      -> attribute
+       | cmd "=" "from" cmd -> assign
+       | cmd "=" value -> assign
+       | cmd "=" component -> assign
+       | cmd "=" entity -> assign
+       | cmd "clip" -> make_clip
+       | cmd "eval" -> make_eval
+       | cmd "before" value -> before
+       | cmd "before" entity -> before
+       | cmd "before" "from" cmd -> before
+       | cmd "after" value -> after
+       | cmd "after" entity -> after
+       | cmd "after" "from" cmd -> after
+       | cmd "[" SIGNED_INT "]" -> select_range
+       | cmd "[" SIGNED_INT ":" SIGNED_INT "]" -> select_range
+       | cmd "west" element* -> replace_selection
+       | cmd "up"            -> climb_selection
+       | cmd "stack" component -> stack
+       | cmd "fill" CNAME group+ -> fill
 
-demo_seq = """oscillseq aqua
-
-hello = q q. e q' q[emf efff e_];
-feat = 001010101011;
-baz = euclidean 0 5
-  repeat 4
-  / c4:d4 e5 [note:pitch:piano];
-
-guux {
-}
-
-main {
-    0 gate foobar &baz;
-    0 2 clip guux;
-}
-
-@synths
-  foobar synthname 0 0 multi [type_param] {
-    coprolite = 5,
-    funprolite = cs4
-  }
-
-@connections
-  foob:out scene:out,
-  bar:out scene:out
 """
 
 @v_args(inline=True)
-class ModelTransformer(Transformer):
+class DataModelTransformer(Transformer):
     @v_args(inline=False)
     def start(self, group):
         connections  = group[-1]
@@ -318,15 +310,82 @@ class ModelTransformer(Transformer):
     def flat(self):
         return -1
 
-parser = Lark(grammar, parser="lalr", transformer=ModelTransformer())
+    def cname_value(self, name):
+        return CName(name)
+
+data_parser = Lark(grammar, parser="lalr", transformer=DataModelTransformer())
 
 def from_string(source):
-    return parser.parse(source)
+    return data_parser.parse(source)
 
 def from_file(pathname):
     with open(pathname, "r", encoding="utf-8") as fd:
         return from_string(fd.read())
 
-if __name__=="__main__":
-    tree = parser.parse(demo_seq)
-    print(tree)
+@v_args(inline=True)
+class CommandModelTransformer(DataModelTransformer):
+    def cmd(self, cmd):
+        return cmd
+
+    def previous(self):
+        return PreviousSelection()
+
+    def assign(self, attribute, obj):
+        return Assign(attribute, obj)
+
+    def make_clip(self, selection):
+        return MakeClip(selection)
+
+    def make_eval(self, selection):
+        return MakeEval(selection)
+
+    def before(self, cmd, obj):
+        return Before(cmd, obj)
+
+    def after(self, cmd, obj):
+        return After(cmd, obj)
+
+    def select_range(self, cmd, start, stop=None):
+        return SelectRange(cmd, start, stop)
+
+    def replace_selection(self, cmd, *elements):
+        return ReplaceSelection(cmd, list(elements))
+
+    def climb_selection(self, cmd):
+        return ClimbSelection(cmd)
+
+    def stack(self, cmd, component):
+        return Stack(cmd, component)
+
+    def fill(self, cmd, name, *data):
+        return Fill(cmd, name, list(data))
+
+    def by_name(self, name):
+        return ByName(str(name))
+
+    def by_index(self, base, index):
+        return ByIndex(base, int(index))
+
+    def by_coords(self, x, y):
+        return Coordinates(self.number(x), self.number(y))
+
+    def attribute(self, base, name):
+        return AttributeOf(base, str(name))
+
+command_parser = Lark(grammar, parser="lalr", start="cmd", transformer=CommandModelTransformer())
+
+def command_from_string(source):
+    return command_parser.parse(source)
+
+print(command_from_string("&HELLO.5.2.1.foo = 0 0 clip foo"))
+print(command_from_string("&HELLO.5.2.1.foo = 01010101"))
+print(command_from_string("&HELLO.5.2 = 0 5 gate foo euclidean 1 10 repeat 4"))
+print(command_from_string("&HELLO.5.2.bar = c4 "))
+print(command_from_string("&HELLO.5.2.bar = q q e e "))
+print(command_from_string("&HELLO clip "))
+print(command_from_string("&HELLO = from &FOOBAR "))
+print(command_from_string("&HELLO [5:2] "))
+print(command_from_string("&HELLO [5:2] west q q q up"))
+print(command_from_string("&HELLO stack &self / 1 [guux:pitch:_]"))
+print(command_from_string("&HELLO fill foo 1 2 3"))
+print(command_from_string("4, 6; fill foo 1 2 3"))
