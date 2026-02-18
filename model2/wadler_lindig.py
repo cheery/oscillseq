@@ -9,6 +9,8 @@ __all__ = ["pformat_doc", "text", "sp", "nl", "pretty"]
 def pretty(x):
     if isinstance(x, (int, float, str)):
         return text(str(x))
+    if not hasattr(x, "__pretty__"):
+        raise Exception(f"{x!r} has not .__pretty__()")
     return x.__pretty__()
 
 class AbstractDoc:

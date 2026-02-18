@@ -3,389 +3,390 @@ from .schema import *
 from dataclasses import dataclass
 from typing import List, Tuple, Dict, Optional, Any
 import music
+import re
 
-grammar = """
-    start: "oscillseq" "aqua" declaration* synths connections
+from .sequences import *
 
-    declaration: CNAME "=" component ";" -> component_decl
-               | CNAME "{" (entity ";")* "}" -> clip_decl
+_NOTE = re.compile(r"^([A-Ga-g])(s|ss|b|bb|n)?(-?\d+)$")
 
-    entity: number number "gate" CNAME component -> gate_entity
-          | number number "quadratic" CNAME component -> quadratic_entity
-          | number number "once" CNAME component -> once_entity
-          | number number "slide" CNAME component -> slide_entity
-          | number number "clip" CNAME           -> clip_entity
-          | number "to" number number "pianoroll" CNAME value value -> pianoroll_entity
-          | number "to" number number "staves" CNAME staves number -> staves_entity
 
-    staves: /_*\\.+_*/
+grammar = r"""
+    file: "oscillseq" "aqua" [declarations] [synths] [connections]
 
-    synths: "@" "synths" synth+
-          | ()
-    synth: CNAME CNAME number number "multi" type_param synth_body -> m_synth
-         | CNAME CNAME number number         type_param synth_body -> s_synth
-    type_param: ("[" CNAME "]")?
-    synth_body: "{" "}"
-              | "{" synth_param ("," synth_param)* "}"
-    synth_param: CNAME "=" value
+    bigcmd: cmd header soup fx* -> attach_brush
+          | cmd -> as_it
+          | cmd ":=" soup fx* -> write_soup
 
-    connections: "@" "connections" connection ("," connection)*
-               | ()
-    connection: CNAME ":" CNAME  CNAME ":" CNAME
+    cmd: "cont" -> cont
+       | () -> cont
+       | "mk" identifier -> mk
+       | ":" identifier  -> by_name
+       | cmd "." identifier -> attr_of
+       | cmd "=" value -> assign
+       | cmd "remove" -> remove
+       | cmd "up" -> up
+       | cmd "&" identifier -> attach_clip
+       | cmd "@" identifier -> attach_view
+       | cmd coordinates -> by_coords
+       | cmd "..." coordinates -> search_coords
+       | bigcmd ">>" -> as_it
+       | cmd "[" value "]" -> index_of
+       | cmd "[" value ":" value "]" -> range_of
+       | cmd "<" -> lhs_of
+       | cmd ">" -> rhs_of
+       | cmd "rename" identifier -> rename
+       | cmd "connect" connection -> connect
+       | cmd "disconnect" connection -> disconnect
+       | "synth" identifier -> select_synth
+       | cmd "config" coordinates identifier identifier -> set_synth
+       | cmd "multi" -> toggle_multi
+       | cmd "*" "=" identifier -> set_type_param
+       | cmd "eval" -> _eval_
 
-    component: base_rhythm
-           | component "/" group+ badge -> overlay
-           | component "rename" CNAME "to" CNAME -> renamed
-           | component "repeat" number -> repeated
-           | component "duration" number -> durated
+    declarations: declaration+ -> as_list
+    declaration: identifier "{" [entities] [properties] "}" -> clipdef
 
-    command: "gate" -> gate_command
+    entities: (entity_line)+ -> as_list
 
-    badge: "[" CNAME ":" CNAME ":" CNAME "]"
+    entity_line: entity ";" -> as_it
+               | entity "{" [properties] "}" -> with_properties
+ 
+    entity: coordinates "&" identifier -> clip
+          | coordinates "@" identifier -> view
+          | coordinates header soup fx* -> brush
 
-    base_rhythm: west_rhythm
-               | euclidean_rhythm
-               | step_rhythm
-               | "&" CNAME -> rhythm_ref
-    
-    group: value (":" value)*
-         | "~" -> discard
+    header: "%" "%" -> as_list
+          | "%" annotation ("," annotation)* "%" -> as_list
+    annotation: identifier [":" identifier] ["@" identifier] -> as_tuple
 
-    value: number
-         | pitch
-         | "%" CNAME -> cname_value
+    fx: "/" values [header soup]
+    values: value+ -> as_list
 
-    euclidean_rhythm: "euclidean" number number number?
-    step_rhythm: /[01]+/
-    west_rhythm: element+
+    soup: () -> as_list
+        | expr ("," expr)* -> as_list
 
-    element: note
-           | rest
-           | tuplet
+    expr: duration [style] group -> note
+        | "$"                    -> placeholder
+        | duration "[" soup fx* "]" -> tuplet
+        | "(" soup fx* ")" -> listlet
 
-    tuplet: duration "[" element+ "]"
-    note: duration style? DYNAMIC?
-    rest: duration "~"
+    style: T_OR_S -> as_str
+    T_OR_S: "s" | "t"
 
-    style: "'" -> staccato
-         | "_" -> tenuto
+    duration: "|" number "|" dot* -> duration
+            | DLETTER dot*        -> duration_s
 
-    duration: NOTE_TYPE modifier*
-    modifier: "." -> dot
+    group: cellet (":" cellet)* -> as_list
+         | "~" -> as_list
 
-    DYNAMIC: "ppp" | "pp" | "p" | "mp" | "mf" | "f"  | "ff" | "fff"
-    NOTE_TYPE: "x" | "w" | "h" | "q" | "e" | "s" | "t" | "u" | "v"
+    cellet: value* attr* -> as_list
+    attr: identifier "=" value
 
-    int: INT
-    signed_int: SIGNED_INT
+    dot: "."
+    DLETTER: /[xwhqestuv]/
+
+    coordinates: "(" number "," number ")" -> as_tuple
+
+    synths: "@" "synths" synth+ -> as_list
+    synth: coordinates identifier identifier [multi] [type_param] "{" [properties] "}"
+    multi: "multi" -> as_true
+         | ()      -> as_false
+    type_param: "[" identifier "]" -> as_it
+ 
+    connections: "@" "connections" connection ("," connection)* -> as_list
+    connection: port port -> as_tuple
+    port: identifier ":" identifier -> as_tuple
+ 
+    properties: property+ -> as_dict
+    property: identifier "=" value ";" -> as_tuple
+
+    value: "&" identifier -> ref
+         | number -> as_it
+         | identifier -> special
+ 
+    identifier: CNAME -> as_str
+    number: SIGNED_NUMBER
 
     %import common.CNAME
-
     %import common.INT
     %import common.SIGNED_INT
-
-    number: SIGNED_NUMBER
     %import common.SIGNED_NUMBER
 
-    pitch: PIANOLETTER accidental? signed_int
-    PIANOLETTER: "c" | "d" | "e" | "f" | "g" | "a" | "b"
-    accidental: flat+
-              | sharp+
-    flat: "b"
-    sharp: "s"
-    
     %import common.WS
     %ignore WS
-
-    cmd: "cont" -> previous
-       | "&" CNAME -> by_name
-       | SIGNED_NUMBER "," SIGNED_NUMBER ";" -> by_coords
-       | cmd "." SIGNED_INT -> by_index
-       | cmd "." CNAME      -> attribute
-       | cmd "=" "from" cmd -> assign
-       | cmd "=" value -> assign
-       | cmd "=" component -> assign
-       | cmd "=" entity -> assign
-       | cmd "clip" -> make_clip
-       | cmd "eval" -> make_eval
-       | cmd "before" value -> before
-       | cmd "before" entity -> before
-       | cmd "before" "from" cmd -> before
-       | cmd "after" value -> after
-       | cmd "after" entity -> after
-       | cmd "after" "from" cmd -> after
-       | cmd "[" SIGNED_INT "]" -> select_range
-       | cmd "[" SIGNED_INT ":" SIGNED_INT "]" -> select_range
-       | cmd "west" element* -> replace_selection
-       | cmd "up"            -> climb_selection
-       | cmd "stack" component -> stack
-       | cmd "fill" CNAME group+ -> fill
-
 """
 
 @v_args(inline=True)
-class DataModelTransformer(Transformer):
+class ModelTransformer(Transformer):
+    def file(self, declarations, synths, connections):
+        return Document(
+            declarations or [],
+            synths or [],
+            set(connections or []))
+ 
+    def cont(self):
+        return Cont()
+ 
+    def mk(self, name):
+        return Mk(name)
+
+    def by_name(self, name):
+        return ByName(name)
+
+    def attr_of(self, sel, a):
+        return AttrOf(sel, a)
+
+    def assign(self, cmd, val):
+        return Assign(cmd, val)
+ 
+    def remove(self, cmd):
+        return Remove(cmd)
+ 
+    def up(self, cmd):
+        return Up(cmd)
+
+    def attach_clip(self, cmd, name):
+        return AttachClip(cmd, name)
+
+    def attach_view(self, cmd, name):
+        return AttachView(cmd, name)
+
+    def attach_brush(self, cmd, header, soup, *fxs):
+        expr = read_soup(header, soup, fxs)
+        return AttachBrush(cmd, header, expr)
+
+    def write_soup(self, cmd, soup, *fxs):
+        return WriteSoup(cmd, soup, fxs)
+ 
+    def by_coords(self, cmd, xy):
+        return ByCoords(cmd, *xy)
+
+    def search_coords(self, cmd, xy):
+        return SearchCoords(cmd, *xy)
+
+    def index_of(self, cmd, i):
+        return IndexOf(cmd, i)
+
+    def range_of(self, cmd, i, j):
+        return RangeOf(cmd, i, j)
+
+    def lhs_of(self, cmd):
+        return LhsOf(cmd)
+
+    def rhs_of(self, cmd):
+        return RhsOf(cmd)
+
+    def rename(self, cmd, name):
+        return Rename(cmd, name)
+
+    def connect(self, cmd, connection):
+        return SetConnection(cmd, connection, True)
+
+    def disconnect(self, cmd, connection):
+        return SetConnection(cmd, connection, False)
+
+    def select_synth(self, cmd, name):
+        return SelectSynth(name)
+
+    def set_synth(self, cmd, xy, synth):
+        return SetSynth(cmd, xy, synth)
+
+    def toggle_multi(self, cmd):
+        return ToggleMulti(cmd)
+
+    def set_type_param(self, cmd, type_param):
+        return SetTypeParam(cmd, type_param)
+
+    @v_args(inline=True)
+    def _eval_(self, cmd):
+        return Eval(cmd)
+
+    def clipdef(self, name, entities, properties):
+        return ClipDef(name, entities or [], properties or {})
+
+    def with_properties(self, entity, properties):
+        entity.properties.update(properties)
+        return entity
+
+    def clip(self, coordinates, name):
+        shift, lane = coordinates
+        return ClipEntity(shift, lane, {}, name)
+
+    def view(self, coordinates, name):
+        shift, lane = coordinates
+        return ViewEntity(shift, lane, {}, name)
+
+    def brush(self, coordinates, header, soup, *fxs):
+        shift, lane = coordinates
+        elements = read_soup(header, soup, fxs)
+        return BrushEntity(shift, lane, {}, header, elements)
+
+    def fx(self, args, header=None, soup=None):
+        return FxProto(args, header or [], soup or [])
+
+    def listlet(self, soup, *fxs):
+        return ListletProto(soup, fxs)
+
+    def tuplet(self, duration, soup, *fxs):
+        return TupletProto(duration, soup, fxs)
+
+    def attr(self, name, value):
+        return AttrProto(name, value)
+
+    def note(self, duration, style, group):
+        return NoteProto(duration, style, group)
+
+    def placeholder(self):
+        return Placeholder()
+ 
+    def tuplet(self, duration, soup, *fxs):
+        return TupletProto(duration, soup, fxs)
+
+    def listlet(self, soup, *fxs):
+        return ListletProto(soup, fxs)
+
+    def duration(self, note, *dots):
+        return Duration(note, len(dots))
+
+    def duration_s(self, note, *dots):
+        return Duration(str(note), len(dots))
+ 
+    def synth(self, xy, name, synth, multi, type_param, params):
+        return Synth(xy, name, synth, multi, type_param, params or {})
+ 
+    def special(self, s):
+        _ACCIDENTALS = {"bb": -2, "b": -1, "n": 0, None: 0, "s": 1, "ss": 2}
+        if g := _NOTE.match(s):
+            pc = "cdefgab".index(g.group(1).lower())
+            acc    = _ACCIDENTALS[g.group(2)]
+            octave = int(g.group(3))
+            return music.Pitch(pc + octave*7, acc)
+        if s in dynamics_to_dbfs:
+            return Dynamic(s)
+        return Unk(s)
+ 
+    def number(self, value):
+        if value.count(".") == 0:
+            return int(value)
+        return float(value)
+ 
+    def as_tuple(self, *sequence):
+        return sequence
+
     @v_args(inline=False)
-    def start(self, group):
-        connections  = group[-1]
-        synths       = group[-2]
-        declarations = group[:-2]
-        return Document(declarations, synths, connections)
-
-    def component_decl(self, name, component):
-        return CompDecl(str(name), component)
-
-    def clip_decl(self, name, *clip):
-        return ClipDecl(str(name), list(clip))
-
-    def gate_entity(self, shift, lane, instrument, component):
-        return CommandEntity(shift, lane, "gate", instrument, component)
-
-    def quadratic_entity(self, shift, lane, instrument, component):
-        return CommandEntity(shift, lane, "quadratic", instrument, component)
-
-    def once_entity(self, shift, lane, instrument, component):
-        return CommandEntity(shift, lane, "once", instrument, component)
-
-    def slide_entity(self, shift, lane, instrument, component):
-        return CommandEntity(shift, lane, "slide", instrument, component)
-
-    def clip_entity(self, shift, lane, name):
-        return ClipEntity(shift, lane, name)
-
-    def pianoroll_entity(self, shift, end, lane, name, bot, top):
-        duration = end - shift
-        return PianorollEntity(shift, lane, duration, str(name), bot, top)
-
-    def staves_entity(self, shift, end, lane, name, pattern, key):
-        duration = end - shift
-        above, count, below = pattern
-        return StavesEntity(shift, lane, duration, str(name), above, count, below, key)
-
-    def staves(self, pattern):
-        count = str(pattern).count(".")
-        above, below = map(len, str(pattern).split("."*count))
-        return above, count, below
+    def as_list(self, sequence):
+        return sequence
 
     @v_args(inline=False)
-    def synths(self, synths):
-        return list(synths)
+    def as_dict(self, sequence):
+        return dict(sequence)
 
-    def m_synth(self, name, synth, x, y, type_param, params):
-        return Synth(str(name), str(synth), (x,y), True, type_param, params)
+    def as_str(self, value):
+        return str(value)
 
-    def s_synth(self, name, synth, x, y, type_param, params):
-        return Synth(str(name), str(synth), (x,y), False, type_param, params)
+    def as_it(self, value):
+        return value
 
-    def type_param(self, name=None):
-        if name is not None:
-            return str(name)
-
-    @v_args(inline=False)
-    def synth_body(self, params):
-        return dict(params)
-
-    def synth_param(self, name, value):
-        return str(name), value
-
-    @v_args(inline=False)
-    def connections(self, cons):
-        return set(cons)
-
-    def connection(self, srcname, srcport, dstname, dstport):
-        return ((str(srcname), str(srcport)), (str(dstname), str(dstport)))
-
-    def component(self, rh):
-        return rh
-
-    def overlay(self, obj, *group):
-        name, dtype, view = group[-1]
-        return Overlay(obj, list(group[:-1]), name, dtype, view)
-
-    def renamed(self, obj, src, dst):
-        return Renamed(obj, str(src), str(dst))
-
-    def repeated(self, obj, num):
-        return Repeated(obj, num)
-
-    def durated(self, obj, num):
-        return Durated(obj, num)
-
-    def gate_command(self):
-        return "gate"
-
-    def rhythm_ref(self, name):
-        return Ref(name)
-
-    def badge(self, x, y, z):
-        return str(x), str(y), str(z)
-
-    def group(self, *data):
-        return list(data)
-
-    def discard(self):
-        return []
-
-    def base_rhythm(self, something):
-        return something
-
-    def west_rhythm(self, *elements):
-        return WestRhythm(list(elements))
-
-    def step_rhythm(self, sequence):
-        return StepRhythm(list(map(int,sequence)))
-
-    def euclidean_rhythm(self, pulses, steps, rotation=0):
-        return EuclideanRhythm(pulses, steps, rotation)
-
-    def element(self, something):
-        return something
-
-    def value(self, something):
-        return something
-
-    def duration(self, note_type, *args):
-        duration = str(note_type)
-        dots     = 0
-        for arg in args:
-            match arg:
-                case "dot":
-                    dots += 1
-        return Duration(duration, dots)
-
-    def tuplet(self, duration, *elements):
-        return Tuplet(duration, list(elements))
-
-    def note(self, duration, *args):
-        style = None
-        dynamic = None
-        for arg in args:
-            if arg == 'tenuto':
-                style = 'tenuto'
-            elif arg == 'staccato':
-                style = 'staccato'
-            else:
-                dynamic = str(arg)
-        return Note(duration, style, dynamic)
-
-    def rest(self, duration):
-        return Rest(duration)
-
-    def dot(self, *_):
-        return 'dot'
-
-    def staccato(self, *_):
-        return 'staccato'
-
-    def tenuto(self, *_):
-        return 'tenuto'
-
-    def number(self, n):
-        if n.count(".") == 0:
-            return int(n)
-        return float(n)
-
-    def int(self, n):
-        return int(n)
-
-    def signed_int(self, n):
-        return int(n)
-
-    def pitch(self, cls, *args):
-        cls = "cdefgab".index(cls.lower())
-        if len(args) == 2:
-            accidental = args[0]
-        else:
-            accidental = 0
-        octave = args[-1]
-        position = octave*7 + cls
-        return music.Pitch(position, accidental)
-
-    def accidental(self, *n):
-        return sum(n)
-    
-    def sharp(self):
-        return +1
-
-    def flat(self):
-        return -1
-
-    def cname_value(self, name):
-        return CName(name)
-
-data_parser = Lark(grammar, parser="lalr", transformer=DataModelTransformer())
-
+file_parser = Lark(grammar, parser="lalr", start="file", transformer=ModelTransformer())
+command_parser = Lark(grammar, parser="lalr", start="bigcmd", transformer=ModelTransformer())
+ 
 def from_string(source):
-    return data_parser.parse(source)
+    return file_parser.parse(source)
 
 def from_file(pathname):
     with open(pathname, "r", encoding="utf-8") as fd:
         return from_string(fd.read())
-
-@v_args(inline=True)
-class CommandModelTransformer(DataModelTransformer):
-    def cmd(self, cmd):
-        return cmd
-
-    def previous(self):
-        return PreviousSelection()
-
-    def assign(self, attribute, obj):
-        return Assign(attribute, obj)
-
-    def make_clip(self, selection):
-        return MakeClip(selection)
-
-    def make_eval(self, selection):
-        return MakeEval(selection)
-
-    def before(self, cmd, obj):
-        return Before(cmd, obj)
-
-    def after(self, cmd, obj):
-        return After(cmd, obj)
-
-    def select_range(self, cmd, start, stop=None):
-        return SelectRange(cmd, start, stop)
-
-    def replace_selection(self, cmd, *elements):
-        return ReplaceSelection(cmd, list(elements))
-
-    def climb_selection(self, cmd):
-        return ClimbSelection(cmd)
-
-    def stack(self, cmd, component):
-        return Stack(cmd, component)
-
-    def fill(self, cmd, name, *data):
-        return Fill(cmd, name, list(data))
-
-    def by_name(self, name):
-        return ByName(str(name))
-
-    def by_index(self, base, index):
-        return ByIndex(base, int(index))
-
-    def by_coords(self, x, y):
-        return Coordinates(self.number(x), self.number(y))
-
-    def attribute(self, base, name):
-        return AttributeOf(base, str(name))
-
-command_parser = Lark(grammar, parser="lalr", start="cmd", transformer=CommandModelTransformer())
-
+ 
 def command_from_string(source):
     return command_parser.parse(source)
 
-print(command_from_string("&HELLO.5.2.1.foo = 0 0 clip foo"))
-print(command_from_string("&HELLO.5.2.1.foo = 01010101"))
-print(command_from_string("&HELLO.5.2 = 0 5 gate foo euclidean 1 10 repeat 4"))
-print(command_from_string("&HELLO.5.2.bar = c4 "))
-print(command_from_string("&HELLO.5.2.bar = q q e e "))
-print(command_from_string("&HELLO clip "))
-print(command_from_string("&HELLO = from &FOOBAR "))
-print(command_from_string("&HELLO [5:2] "))
-print(command_from_string("&HELLO [5:2] west q q q up"))
-print(command_from_string("&HELLO stack &self / 1 [guux:pitch:_]"))
-print(command_from_string("&HELLO fill foo 1 2 3"))
-print(command_from_string("4, 6; fill foo 1 2 3"))
+stuff = """
+oscillseq aqua
+
+moin {
+    (0, 0) %note:pitch, foo:int% q c3, |1| 59, q t 32, q s 70 stuf=9 ;
+    (0, 1) %note:pitch, foo:int% (q c3, |1| 59), q t 32, q s 70 stuf=9 ;
+    (0, 2) %note:pitch, foo:int% (q c3, |1| 59 / foobar %% w, w), q t 32, q s 70 stuf=9 ;
+    (0, 3) %note:pitch, foo:int% |4| [q c3, |1| 59 / ksk 5], q t 32, q s 70 stuf=9 ;
+}
+"""
+ 
+if __name__=="__main__":
+    document = from_string(stuff)
+    cont = None
+    cont, detail,_ = command_from_string("mk main").apply(document, cont, document)
+    cont, detail,_ = command_from_string("cont.foo").apply(document, cont, document)
+    cont, detail,_ = command_from_string("cont = c4").apply(document, cont, document)
+    cont, detail,_ = command_from_string("cont").apply(document, cont, document)
+    cont, detail,_ = command_from_string("cont up").apply(document, cont, document)
+    cont, detail,_ = command_from_string("mk baaz").apply(document, cont, document)
+    cont, detail,_ = command_from_string("cont (1, 0) &main").apply(document, cont, document)
+    cont, detail,_ = command_from_string("mk guux").apply(document, cont, document)
+    cont, detail,_ = command_from_string("cont (1, 4) &baaz").apply(document, cont, document)
+    cont, detail,_ = command_from_string(":guux ... (2, 6) remove &raaz").apply(document, cont, document)
+    cont, detail,_ = command_from_string(":guux remove").apply(document, cont, document)
+    cont, detail,_ = command_from_string(":baaz remove").apply(document, cont, document)
+    cont, detail,_ = command_from_string(":main (0, 5) @hmmm").apply(document, cont, document)
+    cont, detail,_ = command_from_string(":main (0, 6) %% q, q, q ").apply(document, cont, document)
+    cont, detail,_ = command_from_string(":main (0, 6) [1:3]").apply(document, cont, document)
+    cont, detail,_ = command_from_string(":moin (0, 2) [0] [0:1]").apply(document, cont, document)
+    cont, detail,_ = command_from_string(":moin (0, 2) [0] < [0:5]").apply(document, cont, document)
+    cont, detail, hdr = command_from_string(":moin (0, 2) [0] < [0:2] := q, q, q / fakka").apply(document, cont, document)
+    cont, detail, hdr = command_from_string(":moin (0, 2) [0] < > := q").apply(document, cont, document)
+    cont, detail, hdr = command_from_string(":moin (0, 2) [0] < > := q").apply(document, cont, document)
+
+    print(document)
+    if cont is not None:
+        print(">>> " + str(cont))
+    if isinstance(detail, Expr):
+        print("is: " + pformat_doc(detail.formatted(hdr, False), 80))
+    elif detail is not None:
+        print("is: " + str(detail))
+
+# print(from_string("""oscillseq aqua
+# 
+# main {
+#     kak=c4;
+# }
+# 
+# @synths
+#   banana musical 0 0 multi {
+#     synth=5.6;
+#     santh=5.6;
+#   }
+# 
+# @connections
+#   hello:output system:out,
+#   hello2:output system:out
+# """))
+# 
+# print(command_from_string("cont"))
+# print(command_from_string(":foo"))
+# print(command_from_string(":foo < :bar"))
+# print(command_from_string(":foo.xaa rm"))
+# print(command_from_string(":foo[5][2][3] mk"))
+# print(command_from_string(":foo[5][2][3] eval"))
+# print(command_from_string(":foo[5][2][3] / ostinato {foo,bar} 4 5:3 2, 3, 6"))
+# print(command_from_string(":foo / rotate 4 / retrograde / repeat 3"))
+# print(command_from_string("(5, 3) / repeat 3"))
+# print(command_from_string("(5, 3) < q 3, w 4, n [a, c] / retrograde / repeat 4"))
+# print(command_from_string("(5, 3) < q 3, w 4, n [a -1 mf, c c5 10] / retrograde / repeat 4"))
+# print(command_from_string("(5, 3) before 0 0 gate foo q 3 / repeat 4 ; "))
+# print(command_from_string("(5, 3) after 0 0 gate bar q 3 / repeat 4 ;"))
+# print(command_from_string("(5, 3) after 0 to 0 4 pianoroll xx c4 c5 ;"))
+# print(command_from_string("(5, 3) replace 0 to 0 4 staves foo 0 1 0 0 ;"))
+# 
+# #print(command_from_string("HELLO.5.2.1.foo = 0 0 clip foo"))
+# #print(command_from_string("HELLO.5.2.1.foo = step 01010101"))
+# #print(command_from_string("HELLO.5.2 = 0 5 gate foo euclidean 1 10 / repeat 4"))
+# #print(command_from_string("HELLO.5.2.bar = c4 "))
+# #print(command_from_string("HELLO.5.2.bar = q q e e "))
+# #print(command_from_string("HELLO clip "))
+# #print(command_from_string("HELLO = from FOOBAR "))
+# #print(command_from_string("HELLO [5:2] "))
+# #print(command_from_string("HELLO [5:2] = q q q up"))
+# #print(command_from_string("HELLO [5:2] = q q q c4 up"))
+# #print(command_from_string("HELLO / ostinato {guux:pitch} 1, 4 !"))
+# #print(command_from_string("HELLO / ostinato {guux:pitch,baax} skip 3 (foo=1, bar=4), c3 4"))
+# #print(command_from_string("HELLO = q q q "))
+# #print(command_from_string("(4, 6) = q c4 q q"))
