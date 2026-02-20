@@ -46,20 +46,27 @@ main {
     (1,0) &drums;
     (2,0) &drums;
     (3,0) &drums;
-    (0,5) %%
+    (0,5) %note:pitch@a%
       q, e, e, q, e, e,
       q, q, q, e, e,
       q, q, q, s, s, s, s,
       q, q, q, q
-      / ostinato %note:pitch@b%
+      / ostinato %note:pitch%
         * c6, * e6, * d6, * f6, * e6, * c6, * e6, * d6, * f6, * c6, * c6
     {
         synth=tone;
     }
-    (0,6) %%
+    (0,6) %note:pitch@b%
         |4| [e, s, s, e, s, s, s, s, s, s, s, s, s, s / repeat 4]
         / ostinato %note:pitch% * c4, * g3, * d4, * e4, * c5, * b4, * f4 {
         synth=tone;
+    }
+    (0,7) @a {
+        above=1;
+        below=1;
+    }
+    (0,12) @b {
+        view=pianoroll;
     }
 }
 
@@ -132,15 +139,15 @@ class DocumentProcessing:
                 mode = unwrap(config.get('view', Unk('staves')))
                 d = min(d, config.get('duration', d))
                 if mode == "pianoroll":
-                    top = config.get('top', 79)
-                    bot = config.get('bot', 59)
+                    top = config.get('top', 69 + 12)
+                    bot = config.get('bot', 69 - 12)
                     h = math.ceil((int(top) - int(bot) + 1) / 3)
                 else:
                     above = config.get('above', 0)
                     count = config.get('count', 1)
                     below = config.get('below', 0)
                     h = 2*(above + count + below)
-                self.dimensions[key + (i,)] = d, 1, config, None, None
+                self.dimensions[key + (i,)] = d, h, config, None, None
                 height   = max(height, l+h)
         self.dimensions[key] = duration, height, this_config, None, None
         return duration, height
@@ -424,11 +431,8 @@ class Editor:
                             )):
                             self.selected = key
                             self.stack_index = None
-                    #    for name, dtype, vw in pat.views:
-                    #        try:
-                    #            views[vw].append((name, dtype, pat, ix, e))
-                    #        except KeyError:
-                    #            views[vw] = [(name, dtype, pat, ix, e)]
+                        for name, dtype, vw in e.header:
+                            views.setdefault(vw,[]).append((name, dtype, data, ix, e))
                     elif isinstance(e, ClipEntity):
                         sdecl = self.proc.declarations[e.name]
                         if ui.widget(Lane(e.name,
@@ -437,33 +441,39 @@ class Editor:
                             self.selected = key
                             self.stack_index = None
                         subviews = traverse_decl(sdecl, ix, iy, key, d+1)
-                    #    for vw, g in subviews.items():
-                    #        try:
-                    #            views[vw].extend(g)
-                    #        except KeyError:
-                    #            views[vw] = list(g)
-                #for i, e in enumerate(decl.entities):
-                #    ix = x + e.shift
-                #    iy = y + e.lane
-                #    w, h, pat = self.proc.dimensions[decl.name, i]
-                #    if isinstance(e, PianorollEntity):
-                #        if ui.widget(e := PianorollWidget(
-                #            main_grid(ix, iy, ix+w, iy+h),
-                #            int(e.bot), int(e.top),
-                #            views.get(e.name, []), main_grid,
-                #            kv + (i,))):
-                #            self.selected = kv + (i,)
-                #            self.stack_index = None
-                #        edit_widgets.append(e)
-                #    elif isinstance(e, StavesEntity):
-                #        if ui.widget(e := StavesWidget(
-                #            main_grid(ix, iy, ix+w, iy+h),
-                #            e.above, e.count, e.below, e.key,
-                #            views.get(e.name, []), main_grid,
-                #            kv + (i,))):
-                #            self.selected = kv + (i,)
-                #            self.stack_index = None
-                #        edit_widgets.append(e)
+                        for vw, g in subviews.items():
+                            views.setdefault(vw,[]).extend(g)
+                for i, e in enumerate(decl.entities):
+                    if not isinstance(e, ViewEntity):
+                        continue
+                    ix = x + e.shift
+                    iy = y + e.lane
+                    key = kv + (i,)
+                    w, h, config, expr, data = self.proc.dimensions[key]
+                    mode = unwrap(config.get("view", Unk("staves")))
+                    if mode == "pianoroll":
+                        top = config.get('top', 69 + 12)
+                        bot = config.get('bot', 69 - 12)
+                        if ui.widget(e := PianorollWidget(
+                            main_grid(ix, iy, ix+w, iy+h),
+                            int(bot), int(top),
+                            views.get(e.name, []), main_grid,
+                            key)):
+                            self.selected = key
+                            self.stack_index = None
+                    else:
+                        above = config.get('above', 0)
+                        count = config.get('count', 1)
+                        below = config.get('below', 0)
+                        key = config.get('key', 0)
+                        if ui.widget(e := StavesWidget(
+                            main_grid(ix, iy, ix+w, iy+h),
+                            above, count, below, key,
+                            views.get(e.name, []), main_grid,
+                            key)):
+                            self.selected = key
+                            self.stack_index = None
+                    edit_widgets.append(e)
                 return views
 
             main_decl = self.proc.declarations['main']
@@ -1064,7 +1074,7 @@ class Editing:
             note_edited = music.Pitch.from_midi(note_pos)
         if note_edited is not None:
             if ui.mouse_just_pressed:
-                for name, dtype, pat, x, e in self.widget.pats:
+                for name, dtype, pat, x, e in self.widget.data:
                     if self.top is e:
                         for (s,d), vg, m in zip(pat.events, pat.values, pat.meta):
                             a = self.widget.grid.point(s + x, 0)[0]
@@ -1085,13 +1095,13 @@ class Editing:
         pass
 
 class StavesWidget:
-    def __init__(self, rect, above, count, below, key, pats, grid, widget_id):
+    def __init__(self, rect, above, count, below, key, data, grid, widget_id):
         self.rect = rect
         self.above = above
         self.count = count
         self.below = below
         self.key = key
-        self.pats = pats
+        self.data = data
         self.grid = grid
         self.widget_id = widget_id
 
@@ -1112,20 +1122,18 @@ class StavesWidget:
             y += k
         screen.set_clip(rect)
         colors = [(0,0,128), (0,0,255), (255,128,0), (255, 0, 0), (128,0,0)]
-        for name, dtype, pat, x, _ in self.pats:
-            for (s,d), vg in zip(pat.events, pat.values):
+        for name, dtype, data, x, _ in self.data:
+            for s,d, vg in data:
                 a = self.grid.point(s + x, 0)[0]
                 b = self.grid.point(s + x + d, 0)[0]
-                for v in vg:
-                    if isinstance(v[name], int):
-                        note = music.Pitch.from_midi(v[name])
-                    else:
-                        note = v[name]
-                    color = colors[note.accidental+2]
+                for tone in vg.get(name,()):
+                    if isinstance(tone, int):
+                        tone = music.Pitch.from_midi(tone)
+                    color = colors[tone.accidental+2]
                     acci = music.accidentals(self.key)
-                    if note.accidental == acci[note.position % 7]:
+                    if tone.accidental == acci[tone.position % 7]:
                         color = (255,255,255)
-                    py = rect.top + self.above*k + (40 - note.position) * k / 12
+                    py = rect.top + self.above*k + (40 - tone.position) * k / 12
                     rc = pygame.Rect(a, py - k / 24, b-a, k / 12)
                     pygame.draw.rect(screen, color, rc, 1, 2)
         screen.set_clip(None)
@@ -1133,11 +1141,11 @@ class StavesWidget:
         pygame.draw.rect(screen, (200,200,200), rect, 1, 3)
 
 class PianorollWidget:
-    def __init__(self, rect, bot, top, pats, grid, widget_id):
+    def __init__(self, rect, bot, top, data, grid, widget_id):
         self.rect = rect
         self.bot  = bot
         self.top  = top
-        self.pats = pats
+        self.data = data
         self.grid = grid
         self.widget_id = widget_id
 
@@ -1167,13 +1175,13 @@ class PianorollWidget:
             else:
                 pygame.draw.line(screen, (50, 50, 50), (x, py), (rc.right, py))
         screen.set_clip(rect)
-        for name, dtype, pat, x, e in self.pats:
-            for (s,d), vg in zip(pat.events, pat.values):
+        for name, dtype, data, x, e in self.data:
+            for s,d, vg in data:
                 a = self.grid.point(s + x, 0)[0]
                 b = self.grid.point(s + x + d, 0)[0]
-                for v in vg:
-                    note = int(v[name])
-                    py = y - k*(note - bot)
+                for v in vg.get(name,()):
+                    tone = int(v)
+                    py = y - k*(tone - bot)
                     rc = pygame.Rect(a, py-k, b-a, k)
                     pygame.draw.rect(screen, (255, 255, 255), rc, 1, 2)
         screen.set_clip(None)
