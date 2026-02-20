@@ -65,7 +65,7 @@ main {
 
 @synths
   (-122, -39) tone musical multi {
-    amplitude=0.1454;
+    volume=-6;
   }
 
   (71, -151) kick bd multi {
@@ -105,37 +105,44 @@ class DocumentProcessing:
         for declaration in doc.declarations:
             self.declarations[declaration.name] = declaration
 
-    # TODO: Think how to remove rhythm config from here.
-    # or think how to compute this properly...
-    def get_dimensions(self, decl, rhythm_config):
-        if decl.name in self.dimensions:
-            return self.dimensions[decl.name]
+    def get_dimensions(self, decl, rhythm_config, key):
         duration = 1
-        height   = 1
+        height = 1
+        this_config = rhythm_config | decl.properties
         for i, e in enumerate(decl.entities):
             s = e.shift
             l = e.lane
+            config = this_config | e.properties
             if isinstance(e, ClipEntity):
-                d, h = self.get_dimensions(self.declarations[e.name], rhythm_config)
-                self.dimensions[decl.name, i] = d, h, None
+                d, h = self.get_dimensions(self.declarations[e.name], config, key + (i,))
                 duration = max(duration, d+s)
                 height   = max(height, l+h)
-            #elif isinstance(e, CommandEntity):
-            #    d = self.process_component(e.component, rhythm_config)
-            #    self.dimensions[decl.name, i] = d.duration, 1, d
-            #    duration = max(duration, d.duration+s)
-            #    height   = max(height, l + 1)
-            #elif isinstance(e, PianorollEntity):
-            #    h = math.ceil((int(e.top) - int(e.bot) + 1) / 3)
-            #    self.dimensions[decl.name, i] = e.duration, h, None
-            #    duration = max(duration, e.duration+s)
-            #    height   = max(height, l+h)
-            #elif isinstance(e, StavesEntity):
-            #    h = 2*(e.above + e.count + e.below)
-            #    self.dimensions[decl.name, i] = e.duration, h, None
-            #    duration = max(duration, e.duration+s)
-            #    height   = max(height, l+h)
-        self.dimensions[decl.name] = duration, height
+            elif isinstance(e, BrushEntity):
+                expr = evaluate_all(config, e.expr)
+                data, d = self.compute_pattern(expr, config)
+                self.dimensions[key + (i,)] = d, 1, config, expr, data
+                duration = max(duration, d+s)
+                height   = max(height, l + 1)
+        for i, e in enumerate(decl.entities):
+            s = e.shift
+            l = e.lane
+            d = duration - e.shift
+            config = this_config | e.properties
+            if isinstance(e, ViewEntity):
+                mode = unwrap(config.get('view', Unk('staves')))
+                d = min(d, config.get('duration', d))
+                if mode == "pianoroll":
+                    top = config.get('top', 79)
+                    bot = config.get('bot', 59)
+                    h = math.ceil((int(top) - int(bot) + 1) / 3)
+                else:
+                    above = config.get('above', 0)
+                    count = config.get('count', 1)
+                    below = config.get('below', 0)
+                    h = 2*(above + count + below)
+                self.dimensions[key + (i,)] = d, 1, config, None, None
+                height   = max(height, l+h)
+        self.dimensions[key] = duration, height, this_config, None, None
         return duration, height
 
     def construct(self, sb, decl, shift, key, rhythm_config):
@@ -181,15 +188,6 @@ class DocumentProcessing:
                 dot /= 2
             return float(duration)
 
-        def resolve_value(v):
-            if isinstance(v, Dynamic):
-                return dynamics_to_dbfs.get(v.name, None)
-            if isinstance(v, Ref):
-                return None
-            if isinstance(v, Unk):
-                return None
-            return v
-
         def compute_note(t, note, duration):
             if isinstance(note, Note):
                 match note.style:
@@ -199,15 +197,8 @@ class DocumentProcessing:
                         d = duration * config['tenuto']
                     case None:
                         d = duration * config['normal']
-                group = []
-                for data in note.group:
-                    out = {}
-                    for n, v in data.items():
-                        v = resolve_value(v)
-                        if v is not None:
-                            out[n] = v
-                    group.append(out)
-                events.append((t,d,group))
+                assert isinstance(note.group, Dict), str(note.group)
+                events.append((t,d,note.group))
             elif isinstance(note, Tuplet):
                 s = t
                 subrate = duration / sum(resolve(n.duration) for n in note.mhs)
@@ -223,80 +214,97 @@ class DocumentProcessing:
             t += duration
         return events, t
 
-    def process_component(self, component, rhythm_config):
-        if isinstance(component, FromRhythm):
-            decl = self.declarations[component.name]
-            return self.process_component(decl.component, rhythm_config)
-        elif isinstance(component, Overlay):
-            pattern = self.process_component(component.base, rhythm_config)
-            values = component.to_values()
-            return pattern.overlay(values, (component.name, component.dtype, component.view))
-        elif isinstance(component, Renamed):
-            pattern = self.process_component(component.base, rhythm_config)
-            for vv in pattern.values:
-                for v in vv:
-                    if component.src in v:
-                        v[component.dst] = v.pop(component.src)
-            return pattern
-        elif isinstance(component, Repeated):
-            pattern = self.process_component(component.base, rhythm_config)
-            events = []
-            values = pattern.values * component.count
-            meta = pattern.meta * component.count
-            for i in range(component.count):
-                for s, d in pattern.events:
-                    events.append((s + pattern.duration*i, d))
-            return Pattern(events, values, pattern.duration*component.count, pattern.views, meta)
-        elif isinstance(component, Durated):
-            pattern = self.process_component(component.base, rhythm_config)
-            events = []
-            values = pattern.values
-            meta = pattern.meta
-            p = component.duration / pattern.duration
-            for s, d in pattern.events:
-                events.append((s * p, d * p))
-            return Pattern(events, values, component.duration, [], meta)
-        elif isinstance(component, WestRhythm):
-            return component.to_pattern(rhythm_config)
-        elif isinstance(component, StepRhythm):
-            return component.to_west().to_pattern(rhythm_config)
-        elif isinstance(component, EuclideanRhythm):
-            return component.to_west().to_pattern(rhythm_config)
-        else:
-            assert False
+    #def process_component(self, component, rhythm_config):
+    #    if isinstance(component, FromRhythm):
+    #        decl = self.declarations[component.name]
+    #        return self.process_component(decl.component, rhythm_config)
+    #    elif isinstance(component, Overlay):
+    #        pattern = self.process_component(component.base, rhythm_config)
+    #        values = component.to_values()
+    #        return pattern.overlay(values, (component.name, component.dtype, component.view))
+    #    elif isinstance(component, Renamed):
+    #        pattern = self.process_component(component.base, rhythm_config)
+    #        for vv in pattern.values:
+    #            for v in vv:
+    #                if component.src in v:
+    #                    v[component.dst] = v.pop(component.src)
+    #        return pattern
+    #    elif isinstance(component, Repeated):
+    #        pattern = self.process_component(component.base, rhythm_config)
+    #        events = []
+    #        values = pattern.values * component.count
+    #        meta = pattern.meta * component.count
+    #        for i in range(component.count):
+    #            for s, d in pattern.events:
+    #                events.append((s + pattern.duration*i, d))
+    #        return Pattern(events, values, pattern.duration*component.count, pattern.views, meta)
+    #    elif isinstance(component, Durated):
+    #        pattern = self.process_component(component.base, rhythm_config)
+    #        events = []
+    #        values = pattern.values
+    #        meta = pattern.meta
+    #        p = component.duration / pattern.duration
+    #        for s, d in pattern.events:
+    #            events.append((s * p, d * p))
+    #        return Pattern(events, values, component.duration, [], meta)
+    #    elif isinstance(component, WestRhythm):
+    #        return component.to_pattern(rhythm_config)
+    #    elif isinstance(component, StepRhythm):
+    #        return component.to_west().to_pattern(rhythm_config)
+    #    elif isinstance(component, EuclideanRhythm):
+    #        return component.to_west().to_pattern(rhythm_config)
+    #    else:
+    #        assert False
 
     def construct_gate(self, sb, config, pattern, shift, key):
         tag = config["synth"]
-        for i, (start, duration, values) in enumerate(pattern):
-            for j, v in enumerate(values):
+        for i, (start, duration, group) in enumerate(pattern):
+            for j, v in enumerate(self.cartesian(group)):
                 sb.note(unwrap(tag), shift+start, duration, key + (i,j,), v)
 
     def construct_once(self, sb, config, pattern, shift, key):
         tag = config["synth"]
-        for i, (start, duration, values) in enumerate(pattern):
-            for j, v in enumerate(values):
+        for i, (start, duration, group) in enumerate(pattern):
+            for j, v in enumerate(self.cartesian(group)):
                 sb.once(shift+start, unwrap(tag), v)
 
     def construct_slide(self, sb, config, pattern, shift, key):
         tag = config["synth"]
         i = None
-        for i, (start, duration, values) in enumerate(pattern):
-            for j, v in enumerate(values):
+        for i, (start, duration, group) in enumerate(pattern):
+            for j, v in enumerate(self.cartesian(group)):
                 sb.gate(shift+start, unwrap(tag), key, v)
         if i is not None:
             sb.gate(shift+start+duration, tag, key, v)
 
     def construct_quadratic(self, sb, config, pattern, shift, key):
         tag = config["synth"]
-        for i, (start, duration, values) in enumerate(pattern):
-            for j, v in enumerate(values):
+        for i, (start, duration, group) in enumerate(pattern):
+            for j, v in enumerate(self.cartesian(group)):
                 sb.quadratic(shift+start, unwrap(tag), bool(v.get("transition", False)), v["value"])
 
     def construct_control(self, sb, config, pattern, shift, key):
         tag = config["synth"]
-        for i, (start, duration, values) in enumerate(pattern):
-            for j, v in enumerate(values):
+        for i, (start, duration, group) in enumerate(pattern):
+            for j, v in enumerate(self.cartesian(group)):
                 sb.control(shift+start, unwrap(tag), v)
+
+    def cartesian(self, group):
+        def resolve(v):
+            if isinstance(v, Dynamic):
+                return dynamics_to_dbfs.get(v.name, None)
+            if isinstance(v, Ref):
+                return None
+            if isinstance(v, Unk):
+                return None
+            return v
+        out = [{}]
+        for name, values in group.items():
+            out = [
+                xs | {name: resolve(v)}
+                for v in values
+                for xs in out]
+        return out
 
 def unwrap(value):
     return value.name if isinstance(value, (Unk,Ref)) else value
@@ -399,34 +407,36 @@ class Editor:
             def traverse_decl(decl, x, y, kv, d=1):
                 nonlocal trackline
                 views = {}
-                #for i, e in enumerate(decl.entities):
-                #    ix = x + e.shift
-                #    iy = y + e.lane
-                #    w, h, pat = self.proc.dimensions[decl.name, i]
-                #    key = kv + (i,)
-                    #if isinstance(e, CommandEntity):
+                for i, e in enumerate(decl.entities):
+                    ix = x + e.shift
+                    iy = y + e.lane
+                    key = kv + (i,)
+                    w, h, config, expr, data = self.proc.dimensions[key]
+                    if isinstance(e, BrushEntity):
                     #    if self.selected == key and self.stack_index is not None:
                     #        trackline = main_grid(ix, iy, ix+w, iy+h)
-                    #    if ui.widget(PatLane(f"{e.flavor} {e.instrument}",
-                    #        main_grid(ix, iy, ix+w, iy+h),
-                    #        kv + (i,),
-                    #        pat, main_grid.offset(ix,iy)
-                    #        )):
-                    #        self.selected = kv + (i,)
-                    #        self.stack_index = None
+                        brush = config["brush"]
+                        synth = config["synth"]
+                        if ui.widget(PatLane(f"{brush} {synth}",
+                            main_grid(ix, iy, ix+w, iy+h),
+                            key,
+                            config, expr, data, main_grid.offset(ix,iy)
+                            )):
+                            self.selected = key
+                            self.stack_index = None
                     #    for name, dtype, vw in pat.views:
                     #        try:
                     #            views[vw].append((name, dtype, pat, ix, e))
                     #        except KeyError:
                     #            views[vw] = [(name, dtype, pat, ix, e)]
-                    #elif isinstance(e, ClipEntity):
-                    #    sdecl = self.proc.declarations[e.name]
-                    #    if ui.widget(Lane(e.name,
-                    #        main_grid(ix, iy, ix+w, iy+h),
-                    #        kv + (i,))):
-                    #        self.selected = kv + (i,)
-                    #        self.stack_index = None
-                    #    subviews = traverse_decl(sdecl, ix, iy, kv + (i,), d+1)
+                    elif isinstance(e, ClipEntity):
+                        sdecl = self.proc.declarations[e.name]
+                        if ui.widget(Lane(e.name,
+                            main_grid(ix, iy, ix+w, iy+h),
+                            key)):
+                            self.selected = key
+                            self.stack_index = None
+                        subviews = traverse_decl(sdecl, ix, iy, key, d+1)
                     #    for vw, g in subviews.items():
                     #        try:
                     #            views[vw].extend(g)
@@ -457,7 +467,7 @@ class Editor:
                 return views
 
             main_decl = self.proc.declarations['main']
-            w, h = self.proc.get_dimensions(main_decl, default_rhythm_config)
+            w, h = self.proc.get_dimensions(main_decl, default_rhythm_config, ("main",))
             ui.widget(Lane("main", main_grid(0,0,w,h), "main"))
             traverse_decl(main_decl, 0, 0, ("main",))
             
@@ -1011,13 +1021,18 @@ class Lane:
         
 @dataclass
 class PatLane(Lane):
-    pat : Any #Pattern
+    config : Dict[str, Value]
+    expr : SequenceNode
+    data : List[Tuple[float, float, List[Dict[str, Value]]]]
     grid : Grid
 
     def draw(self, ui, screen):
         rect = self.rect
         pygame.draw.rect(screen, (50, 50, 50), rect, 0, 4)
-        for start,duration in self.pat.events:
+
+        for start,duration,g in self.data:
+            if any(len(vs) == 0 for vs in g.values()):
+                continue
             rc = self.grid(start, 0.6, start+duration, 0.9)
             pygame.draw.rect(screen, (150, 50, 150), rc, 0, 2)
             pygame.draw.rect(screen, (250, 150, 250), rc, 1, 2)

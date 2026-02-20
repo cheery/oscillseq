@@ -81,7 +81,7 @@ class Duration(Object):
         return text(self.symbol + "."*self.dots)
 
 ## EXPRESSIONS (ANNOTATED)
-Cell = Dict[str, Value]
+Cell = Dict[str, List[Value]]
 
 def formatted(header, seq, inside):
     inside = seq.length > 1 or inside
@@ -97,6 +97,18 @@ def evaluate_all(config, exprs):
         expr = expr.evaluate(config)
         out = out.insert(out.length, expr)
     return out
+
+def combine_headers(a, b):
+    a = list(a)
+    cols = dict((x[0],i) for i, x in enumerate(a))
+    for name, dtype, view in b:
+        if name in cols:
+            name, dtype2, view2 = a[cols[name]]
+            a[cols[name]] = name, dtype or dtype2, view or view2
+        else:
+            cols[name] = len(a)
+            a.append((name, dtype, view))
+    return a
 
 @dataclass(eq=False, repr=False)
 class Fx(SequenceNode):
@@ -134,9 +146,9 @@ class Fx(SequenceNode):
             out = empty
             for x in bjorklund(pulses, steps):
                 if x > 0:
-                    note = Note.mk(Duration(1,0), None, [{}])
+                    note = Note.mk(Duration(1,0), None, {})
                 else:
-                    note = Note.mk(Duration(1,0), None, [])
+                    note = Note.mk(Duration(1,0), None, {"":[]})
                 out = out.insert(out.length, note)
             return out
         if self.args[0].name == "repeat" and len(self.args) == 2:
@@ -172,10 +184,9 @@ class Fx(SequenceNode):
                     if isinstance(x, Note):
                         o = ostinato[k % len(ostinato)]
                         k += 1
-                        gg = []
-                        for g in x.group:
-                            for q in o.group:
-                                gg.append(g | q)
+                        gg = x.group.copy()
+                        for name, values in o.group.items():
+                            gg[name] = gg.get(name,[]) + values
                         x = Note.mk(o.duration or x.duration,
                             x.style or o.style,
                             gg)
@@ -187,9 +198,9 @@ class Fx(SequenceNode):
         out = empty
         for x in self.args[0].name:
             if x == "T":
-                note = Note.mk(Duration(1,0), None, [{}])
+                note = Note.mk(Duration(1,0), None, {})
             else:
-                note = Note.mk(Duration(1,0), None, [])
+                note = Note.mk(Duration(1,0), None, {"":[]})
             out = out.insert(out.length, note)
         return out
 
@@ -197,7 +208,7 @@ class Fx(SequenceNode):
 class Note(SequenceNode):
     duration : Duration | None
     style : str | None
-    group : List[Cell]
+    group : Cell
 
     def retain(self, left, right):
         return Note(left, right, self.duration, self.style, self.group)
@@ -586,7 +597,7 @@ class SearchCoords(Command):
                 asel, obj, x, y = unvisited.pop()
                 for entity in obj.entities:
                     if entity.shift <= x and entity.lane <= y:
-                        dist = (entity.lane-y, entity.shift-x)
+                        dist = (y-entity.lane, x-entity.shift)
                         if cd := non_leaf(entity, doc):
                             bsel = ByCoords(asel, entity.shift, entity.lane)
                             unvisited.append((bsel, cd, x - entity.shift, y - entity.lane))
@@ -902,9 +913,25 @@ def format_annotations(a):
     return text("%") + text(", ").join(format_annotation(*x) for x in a) + text("%") + sp
 
 def format_group(group, header):
-    if len(group) == 0:
-        return text("~")
-    return text(":").join(format_cell(c, header) for c in group)
+    group = group.copy()
+    sequence = []
+    for name, _, _ in header:
+        items = group.pop(name, [])
+        if len(items) == 0:
+            sequence.append(text("~"))
+        else:
+            sequence.append(text(":").join(items))
+    for name, value in group.items():
+        if name == "":
+            continue
+        items = group.pop(name, [])
+        if len(items) == 0:
+            sequence.append(text(name + "=~"))
+        else:
+            sequence.append(text(name + "=") + text(":").join(items))
+    if "" in group:
+        sequence.append(text("~"))
+    return sp.join(sequence)
 
 def format_cell(cell, header):
     c = cell.copy()
@@ -956,13 +983,15 @@ class Placeholder:
     pass
 
 def read_soup(header, soup, fxs, selection=None):
-    def process(xs):
+    def process(group):
         out = {}
-        for i, x in enumerate(xs):
-            if isinstance(x, AttrProto):
-                out[x.name] = x.value
+        for i, (name, attrs) in enumerate(group):
+            if name is not None:
+                out[name] = attrs
             elif i < len(header):
-                out[header[i][0]] = x
+                out[header[i][0]] = attrs
+            elif len(attrs) == 0:
+                out[""] = []
             else:
                 assert False, "TODO: a parse error?" + str((i, x))
         return out
@@ -972,7 +1001,7 @@ def read_soup(header, soup, fxs, selection=None):
         out = out.insert(out.length, item)
     for expr in soup:
         if isinstance(expr, NoteProto):
-            gs = [process(xs) for xs in expr.group]
+            gs = process(expr.group)
             add(Note.mk(expr.duration, expr.style, gs))
         elif isinstance(expr, ListletProto):
             add(read_soup(header, expr.soup, expr.fxs))

@@ -77,11 +77,11 @@ grammar = r"""
             | DLETTER dot*        -> duration_s
             | "*"                 -> duration_nope
 
-    group: cellet (":" cellet)* -> as_list
-         | "~" -> as_list
+    group: cellet* -> as_list
 
-    cellet: value* attr* -> as_list
-    attr: identifier "=" value
+    cellet: [identifier "="] value_cell -> as_tuple
+    value_cell: value (":" value)* -> as_list
+              | "~"                -> as_list
 
     dot: "."
     DLETTER: /[xwhqestuv]/
