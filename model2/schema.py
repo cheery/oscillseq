@@ -75,17 +75,6 @@ class Duration(Object):
     symbol   : str | int
     dots     : int = 0
 
-#     def __float__(self):
-#         if isinstance(self.symbol, int):
-#             duration = self.symbol
-#         else:
-#             duration = note_durations[self.symbol]
-#         dot      = duration / 2
-#         for _ in range(self.dots):
-#             duration += dot
-#             dot /= 2
-#         return float(duration)
-
     def __pretty__(self):
         if isinstance(self.symbol, int):
             return text("|" + str(self.symbol) + "|" + "."*self.dots)
@@ -101,6 +90,13 @@ def formatted(header, seq, inside):
 def formatted_range(header, seq, inside, start, stop):
     inside = seq.length > 1 or inside
     return text(", ").join(item.formatted(header, inside) for item in seq.sequence(start, stop))
+
+def evaluate_all(config, exprs):
+    out = empty
+    for expr in exprs:
+        expr = expr.evaluate(config)
+        out = out.insert(out.length, expr)
+    return out
 
 @dataclass(eq=False, repr=False)
 class Fx(SequenceNode):
@@ -128,6 +124,75 @@ class Fx(SequenceNode):
     def __str__(self):
         return pformat_doc(formatted([], self, True), 80)
 
+    def evaluate(self, config):
+        lhs = evaluate_all(config, self.lhs)
+        rhs = evaluate_all(config, self.rhs)
+        assert self.args
+        if self.args[0].name == "euclidean" and len(self.args) == 3:
+            pulses = self.args[1]
+            steps = self.args[2]
+            out = empty
+            for x in bjorklund(pulses, steps):
+                if x > 0:
+                    note = Note.mk(Duration(1,0), None, [{}])
+                else:
+                    note = Note.mk(Duration(1,0), None, [])
+                out = out.insert(out.length, note)
+            return out
+        if self.args[0].name == "repeat" and len(self.args) == 2:
+            count = self.args[1]
+            out = empty
+            for i in range(count):
+                for x in lhs:
+                    out = out.insert(out.length, x.retain(empty, empty))
+            return out
+        if self.args[0].name == "rotate" and len(self.args) == 2:
+            amount = self.args[1]
+            out = empty
+            for x in rotate(list(lhs), amount):
+                out = out.insert(out.length, x.retain(empty, empty))
+            return out
+        if self.args[0].name == "retrograde" and len(self.args) == 2:
+            amount = self.args[1]
+            def reverse_all(xs):
+                out = empty
+                for x in reversed(list(lhs)):
+                    if isinstance(x, Tuplet):
+                        x = Tuplet.mk(x.duration, reverse_all(x.mhs))
+                    out = out.insert(out.length, x.retain(empty, empty))
+                return out
+            return reverse_all(lhs)
+        if self.args[0].name == "ostinato":
+            ostinato = list(rhs)
+            k = 0
+            def apply_ostinato(xs):
+                nonlocal k
+                out = empty
+                for x in list(xs):
+                    if isinstance(x, Note):
+                        o = ostinato[k % len(ostinato)]
+                        k += 1
+                        gg = []
+                        for g in x.group:
+                            for q in o.group:
+                                gg.append(g | q)
+                        x = Note.mk(o.duration or x.duration,
+                            x.style or o.style,
+                            gg)
+                    if isinstance(x, Tuplet):
+                        x = Tuplet.mk(x.duration, apply_ostinato(x.mhs))
+                    out = out.insert(out.length, x.retain(empty, empty))
+                return out
+            return apply_ostinato(lhs)
+        out = empty
+        for x in self.args[0].name:
+            if x == "T":
+                note = Note.mk(Duration(1,0), None, [{}])
+            else:
+                note = Note.mk(Duration(1,0), None, [])
+            out = out.insert(out.length, note)
+        return out
+
 @dataclass(eq=False, repr=False)
 class Note(SequenceNode):
     duration : Duration | None
@@ -154,6 +219,9 @@ class Note(SequenceNode):
     def __str__(self):
         return pformat_doc(formatted([], self, True), 80)
 
+    def evaluate(self, config):
+        return self.retain(empty, empty)
+
 @dataclass(eq=False, repr=False)
 class Tuplet(SequenceNode):
     duration : Duration | None
@@ -172,6 +240,10 @@ class Tuplet(SequenceNode):
 
     def __str__(self):
         return pformat_doc(formatted([], self, True), 80)
+
+    def evaluate(self, config):
+        mhs = evaluate_all(config, self.mhs)
+        return Tuplet.mk(self.duration, mhs)
 
 ## FABRIC
 Connection = Tuple[Tuple[str, str], Tuple[str, str]]
@@ -239,7 +311,7 @@ def format_entity_properties(e):
         return text(";")
     else:
         properties = [nl + pretty(n) + text("=") + pretty(p) + text(";")
-            for n, p in self.properties.items()]
+            for n, p in e.properties.items()]
         return text(" {") + text("").join(properties).nest(2) + nl + text("}")
 
 ## COMMANDS
@@ -298,7 +370,7 @@ class AttrOf(Command):
 
     def apply(self, target, cont, doc):
         sel, obj, hdr = self.command.apply(target, cont, doc)
-        if isinstance(obj, ClipDef):
+        if isinstance(obj, (ClipDef, Entity)):
             val = obj.properties.get(self.name, Unk("none"))
             return AttrOf(sel, self.name), val, hdr
         else:
@@ -306,7 +378,7 @@ class AttrOf(Command):
 
     def assign(self, target, value, doc):
         sel, obj, hdr = self.command.apply(target, None, doc)
-        if isinstance(obj, ClipDef):
+        if isinstance(obj, (ClipDef,Entity)):
             obj.properties[self.name] = value
             return AttrOf(sel, self.name), value, hdr
         else:
@@ -596,7 +668,6 @@ class IndexOf(Command):
 
     def write(self, target, doc, soup, fxs):
         sel, obj, hdr = self.command.apply(target, None, doc)
-        assert False
         if isinstance(obj, BrushEntity):
             hdr = obj.header
             obj = RootFinger(obj, obj.expr)
@@ -605,7 +676,10 @@ class IndexOf(Command):
             nodes = read_soup(hdr, soup, fxs, selection)
             obj.tree = obj.tree.erase(self.index, self.index+1).insert(self.index, nodes)
             obj.writeback()
-            return RangeOf(sel, self.index, self.index+nodes.length), Indexer(obj, self.index, self.index+nodes.length), hdr
+            if nodes.length == 1:
+                return IndexOf(sel, self.index), Indexer(obj, self.index, self.index+nodes.length), hdr
+            else:
+                return RangeOf(sel, self.index, self.index+nodes.length), Indexer(obj, self.index, self.index+nodes.length), hdr
         assert False, "TODO: something wrong"
 
 @dataclass(eq=False, repr=False)
@@ -662,7 +736,7 @@ class LhsOf(Command):
             if isinstance(obj.tree, Fx):
                 obj = RootFinger(Side(obj, False), obj.tree.lhs)
                 return LhsOf(sel), obj, hdr
-        raise Exception("selection not an FX: " + str(self.sel))
+        raise Exception("selection not an FX: " + str(sel))
 
     def write(self, target, doc, soup, fxs):
         sel, obj, hdr = self.command.apply(target, None, doc)
@@ -676,7 +750,7 @@ class LhsOf(Command):
                 o = Side(obj, False)
                 o.writeback(nodes)
                 return LhsOf(sel), o, hdr
-        raise Exception("selection not an FX: " + str(self.sel))
+        raise Exception("selection not an FX: " + str(sel))
 
 @dataclass(eq=False, repr=False)
 class RhsOf(Command):
@@ -694,7 +768,7 @@ class RhsOf(Command):
             if isinstance(obj.tree, Fx):
                 o = RootFinger(Side(obj, True), obj.tree.rhs)
                 return RhsOf(sel), o, obj.tree.header
-        raise Exception("selection not an FX: " + str(self.sel))
+        raise Exception("selection not an FX: " + str(sel))
 
     def write(self, target, doc, soup, fxs):
         sel, obj, hdr = self.command.apply(target, None, doc)
@@ -708,7 +782,7 @@ class RhsOf(Command):
                 o = Side(obj, True)
                 o.writeback(nodes)
                 return RhsOf(sel), o, obj.tree.header
-        raise Exception("selection not an FX: " + str(self.sel))
+        raise Exception("selection not an FX: " + str(sel))
 
 @dataclass(eq=False, repr=False)
 class SetConnection(Command):
@@ -1005,14 +1079,6 @@ class Listlet(Expr):
 #         return annotation + text(", ").join(self.elements)
 # 
 # @dataclass(eq=False, repr=False)
-# class EuclideanRhythm(Expr):
-#     pulses : int
-#     steps : int
-# 
-#     def __pretty__(self):
-#         return text(f"euclidean {self.pulses} {self.steps}")
-# 
-# @dataclass(eq=False, repr=False)
 # class StepRhythm(Expr):
 #     sequence : List[int]
 # 
@@ -1054,10 +1120,19 @@ dynamics_to_dbfs = {
     'fff': 0
 }
 
-#     def to_step_rhythm(self):
-#         table = bjorklund(self.pulses, self.steps)
-#         return StepRhythm(table)
-# 
+RhythmConfig = Dict[str, int | float | music.Pitch | Ref | Unk]
+
+default_rhythm_config = {
+    'beats_per_measure': 4,
+    'beat_division': 4,
+    'volume': -6.0,
+    'staccato': 0.25,
+    'normal': 0.85,
+    'tenuto': 1.00,
+    'synth': Unk("default"),
+    'brush': Unk("gate"),
+}
+
 # @dataclass
 # class Pattern:
 #     events : List[Tuple[float, float]]
@@ -1162,105 +1237,37 @@ dynamics_to_dbfs = {
 # #        return base + sp + body
 # 
 # @dataclass(repr=False, eq=False)
-# class Rotate(Action):
-#     rotation : int
-# 
-#     def __pretty__(self):
-#         return text(f"rotate {self.rotation}")
-# 
-# @dataclass(repr=False, eq=False)
 # class Retrograde(Action):
 #     def __pretty__(self):
 #         return text("retrograde")
-# 
-# @dataclass(repr=False, eq=False)
-# class Repeat(Action):
-#     count : int
-# 
-#     def __pretty__(self):
-#         return text(f"repeat {self.count}")
-#  
-# 
-# RhythmConfig = Dict[str, int | float | music.Pitch | CName]
-# 
-# default_rhythm_config = {
-#     'beats_per_measure': 4,
-#     'beat_division': 4,
-#     'volume': -6.0,
-#     'staccato': 0.25,
-#     'normal': 0.85,
-#     'tenuto': 1.00,
-# }
-# 
-# # @dataclass(repr=False)
-# # class WestRhythm(Rhythm):
-# #     sequence : List[Element]
-# # 
-# #     def to_pattern(self, config : RhythmConfig):
-# #         events = []
-# #         values = []
-# #         meta = []
-# #         def process_note(t, note, duration):
-# #             if isinstance(note, Note):
-# #                 volume = dynamics_to_dbfs.get(note.dynamic, config['volume'])
-# #                 match note.style:
-# #                     case "staccato":
-# #                         d = duration * config['staccato']
-# #                     case "tenuto":
-# #                         d = duration * config['tenuto']
-# #                     case None:
-# #                         d = duration * config['normal']
-# #                 v = {"volume": volume}
-# #                 events.append((t,d))
-# #                 values.append([v])
-# #                 meta.append({})
-# #             elif isinstance(note, Tuplet):
-# #                 subt = t
-# #                 subrate = duration / sum(float(n.duration) for n in note.elements)
-# #                 for subnote in note.elements:
-# #                     subduration = float(subnote.duration) * subrate
-# #                     process_note(subt, subnote, subduration)
-# #                     subt += subduration
-# #             elif isinstance(note, Rest):
-# #                 pass
-# #         t = 0.0
-# #         rate = config['beats_per_measure'] / config['beat_division']
-# #         for note in self.sequence:
-# #             duration = float(note.duration) * rate
-# #             process_note(t, note, duration)
-# #             t += duration
-# #         return Pattern(events, values, duration=t, views=[], meta=meta)
-# # 
-# #     def __pretty__(self):
-# #         return sp.join(self.sequence)
-# 
-# def bjorklund(pulses: int, steps: int) -> list[int]:
-#     """
-#     Generate a Euclidean rhythm pattern using the Bjorklund algorithm.
-#     Returns a list of 1s (onsets) and 0s (rests).
-#     """
-#     if pulses <= 0:
-#         return [0] * steps
-#     if pulses >= steps:
-#         return [1] * steps
-#     # Initialize
-#     pattern = [[1] for _ in range(pulses)] + [[0] for _ in range(steps - pulses)]
-#     # Repeatedly distribute
-#     while True:
-#         # Stop when grouping is no longer possible
-#         if len(pattern) <= 1:
-#             break
-#         # Partition into two parts: first group, rest
-#         first, rest = pattern[:pulses], pattern[pulses:]
-#         if not rest:
-#             break
-#         # Append each element of rest into first, one by one
-#         for i in range(min(len(rest), len(first))):
-#             first[i] += rest[i]
-#         # Rebuild pattern
-#         pattern = first + rest[min(len(first), len(rest)):]
-#     # Flatten
-#     return list(itertools.chain.from_iterable(pattern))
-# 
-# def rotate(l, n):
-#     return l[n:] + l[:n]
+ 
+def bjorklund(pulses: int, steps: int) -> list[int]:
+    """
+    Generate a Euclidean rhythm pattern using the Bjorklund algorithm.
+    Returns a list of 1s (onsets) and 0s (rests).
+    """
+    if pulses <= 0:
+        return [0] * steps
+    if pulses >= steps:
+        return [1] * steps
+    # Initialize
+    pattern = [[1] for _ in range(pulses)] + [[0] for _ in range(steps - pulses)]
+    # Repeatedly distribute
+    while True:
+        # Stop when grouping is no longer possible
+        if len(pattern) <= 1:
+            break
+        # Partition into two parts: first group, rest
+        first, rest = pattern[:pulses], pattern[pulses:]
+        if not rest:
+            break
+        # Append each element of rest into first, one by one
+        for i in range(min(len(rest), len(first))):
+            first[i] += rest[i]
+        # Rebuild pattern
+        pattern = first + rest[min(len(first), len(rest)):]
+    # Flatten
+    return list(itertools.chain.from_iterable(pattern))
+
+def rotate(l, n):
+    return l[n:] + l[:n]

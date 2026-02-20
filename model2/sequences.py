@@ -57,7 +57,8 @@ class SequenceNode(Sequence):
         if start < ledge:
             sequence = self.left.sequence(start, min(ledge, stop), sequence)
         if ledge < stop:
-            sequence.append(self)
+            if start < redge:
+                sequence.append(self)
             sequence = self.right.sequence(max(start - redge, 0), stop - redge, sequence)
         return sequence
 

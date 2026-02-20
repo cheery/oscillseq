@@ -75,6 +75,7 @@ grammar = r"""
 
     duration: "|" number "|" dot* -> duration
             | DLETTER dot*        -> duration_s
+            | "*"                 -> duration_nope
 
     group: cellet (":" cellet)* -> as_list
          | "~" -> as_list
@@ -250,6 +251,9 @@ class ModelTransformer(Transformer):
 
     def duration_s(self, note, *dots):
         return Duration(str(note), len(dots))
+
+    def duration_nope(self):
+        return None
  
     def synth(self, xy, name, synth, multi, type_param, params):
         return Synth(xy, name, synth, multi, type_param, params or {})
@@ -287,6 +291,12 @@ class ModelTransformer(Transformer):
     def as_it(self, value):
         return value
 
+    def as_true(self, *_):
+        return True
+
+    def as_false(self, *_):
+        return True
+
 file_parser = Lark(grammar, parser="lalr", start="file", transformer=ModelTransformer())
 command_parser = Lark(grammar, parser="lalr", start="bigcmd", transformer=ModelTransformer())
  
@@ -314,23 +324,23 @@ moin {
 if __name__=="__main__":
     document = from_string(stuff)
     cont = None
-    cont, detail,_ = command_from_string("mk main").apply(document, cont, document)
-    cont, detail,_ = command_from_string("cont.foo").apply(document, cont, document)
-    cont, detail,_ = command_from_string("cont = c4").apply(document, cont, document)
-    cont, detail,_ = command_from_string("cont").apply(document, cont, document)
-    cont, detail,_ = command_from_string("cont up").apply(document, cont, document)
-    cont, detail,_ = command_from_string("mk baaz").apply(document, cont, document)
-    cont, detail,_ = command_from_string("cont (1, 0) &main").apply(document, cont, document)
-    cont, detail,_ = command_from_string("mk guux").apply(document, cont, document)
-    cont, detail,_ = command_from_string("cont (1, 4) &baaz").apply(document, cont, document)
-    cont, detail,_ = command_from_string(":guux ... (2, 6) remove &raaz").apply(document, cont, document)
-    cont, detail,_ = command_from_string(":guux remove").apply(document, cont, document)
-    cont, detail,_ = command_from_string(":baaz remove").apply(document, cont, document)
-    cont, detail,_ = command_from_string(":main (0, 5) @hmmm").apply(document, cont, document)
-    cont, detail,_ = command_from_string(":main (0, 6) %% q, q, q ").apply(document, cont, document)
-    cont, detail,_ = command_from_string(":main (0, 6) [1:3]").apply(document, cont, document)
-    cont, detail,_ = command_from_string(":moin (0, 2) [0] [0:1]").apply(document, cont, document)
-    cont, detail,_ = command_from_string(":moin (0, 2) [0] < [0:5]").apply(document, cont, document)
+    cont, detail, _ = command_from_string("mk main").apply(document, cont, document)
+    cont, detail, _ = command_from_string("cont.foo").apply(document, cont, document)
+    cont, detail, _ = command_from_string("cont = c4").apply(document, cont, document)
+    cont, detail, _ = command_from_string("cont").apply(document, cont, document)
+    cont, detail, _ = command_from_string("cont up").apply(document, cont, document)
+    cont, detail, _ = command_from_string("mk baaz").apply(document, cont, document)
+    cont, detail, _ = command_from_string("cont (1, 0) &main").apply(document, cont, document)
+    cont, detail, _ = command_from_string("mk guux").apply(document, cont, document)
+    cont, detail, _ = command_from_string("cont (1, 4) &baaz").apply(document, cont, document)
+    cont, detail, _ = command_from_string(":guux ... (2, 6) remove &raaz").apply(document, cont, document)
+    cont, detail, _ = command_from_string(":guux remove").apply(document, cont, document)
+    cont, detail, _ = command_from_string(":baaz remove").apply(document, cont, document)
+    cont, detail, _ = command_from_string(":main (0, 5) @hmmm").apply(document, cont, document)
+    cont, detail, _ = command_from_string(":main (0, 6) %% q, q, q ").apply(document, cont, document)
+    cont, detail, _ = command_from_string(":main (0, 6) [1:3]").apply(document, cont, document)
+    cont, detail, _ = command_from_string(":moin (0, 2) [0] [0:1]").apply(document, cont, document)
+    cont, detail, _ = command_from_string(":moin (0, 2) [0] < [0:5]").apply(document, cont, document)
     cont, detail, hdr = command_from_string(":moin (0, 2) [0] < [0:2] := q, q, q / fakka").apply(document, cont, document)
     cont, detail, hdr = command_from_string(":moin (0, 2) [0] < > := q").apply(document, cont, document)
     cont, detail, hdr = command_from_string(":moin (0, 2) [0] < > := q").apply(document, cont, document)
@@ -342,51 +352,3 @@ if __name__=="__main__":
         print("is: " + pformat_doc(detail.formatted(hdr, False), 80))
     elif detail is not None:
         print("is: " + str(detail))
-
-# print(from_string("""oscillseq aqua
-# 
-# main {
-#     kak=c4;
-# }
-# 
-# @synths
-#   banana musical 0 0 multi {
-#     synth=5.6;
-#     santh=5.6;
-#   }
-# 
-# @connections
-#   hello:output system:out,
-#   hello2:output system:out
-# """))
-# 
-# print(command_from_string("cont"))
-# print(command_from_string(":foo"))
-# print(command_from_string(":foo < :bar"))
-# print(command_from_string(":foo.xaa rm"))
-# print(command_from_string(":foo[5][2][3] mk"))
-# print(command_from_string(":foo[5][2][3] eval"))
-# print(command_from_string(":foo[5][2][3] / ostinato {foo,bar} 4 5:3 2, 3, 6"))
-# print(command_from_string(":foo / rotate 4 / retrograde / repeat 3"))
-# print(command_from_string("(5, 3) / repeat 3"))
-# print(command_from_string("(5, 3) < q 3, w 4, n [a, c] / retrograde / repeat 4"))
-# print(command_from_string("(5, 3) < q 3, w 4, n [a -1 mf, c c5 10] / retrograde / repeat 4"))
-# print(command_from_string("(5, 3) before 0 0 gate foo q 3 / repeat 4 ; "))
-# print(command_from_string("(5, 3) after 0 0 gate bar q 3 / repeat 4 ;"))
-# print(command_from_string("(5, 3) after 0 to 0 4 pianoroll xx c4 c5 ;"))
-# print(command_from_string("(5, 3) replace 0 to 0 4 staves foo 0 1 0 0 ;"))
-# 
-# #print(command_from_string("HELLO.5.2.1.foo = 0 0 clip foo"))
-# #print(command_from_string("HELLO.5.2.1.foo = step 01010101"))
-# #print(command_from_string("HELLO.5.2 = 0 5 gate foo euclidean 1 10 / repeat 4"))
-# #print(command_from_string("HELLO.5.2.bar = c4 "))
-# #print(command_from_string("HELLO.5.2.bar = q q e e "))
-# #print(command_from_string("HELLO clip "))
-# #print(command_from_string("HELLO = from FOOBAR "))
-# #print(command_from_string("HELLO [5:2] "))
-# #print(command_from_string("HELLO [5:2] = q q q up"))
-# #print(command_from_string("HELLO [5:2] = q q q c4 up"))
-# #print(command_from_string("HELLO / ostinato {guux:pitch} 1, 4 !"))
-# #print(command_from_string("HELLO / ostinato {guux:pitch,baax} skip 3 (foo=1, bar=4), c3 4"))
-# #print(command_from_string("HELLO = q q q "))
-# #print(command_from_string("(4, 6) = q c4 q q"))

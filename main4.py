@@ -19,53 +19,71 @@ import sys
 from simgui import SIMGUI, Grid, Text, Slider
 
 from model2.schema import *
-from model2.parse import from_string, from_file
+from model2.parse import from_string, from_file, command_from_string
 
 demo_seq = """oscillseq aqua
 
 drums {
-    0 0 gate kick 10100111 duration 1;
-    0 1 gate hat  euclidean 5 16 repeat 1 duration 1;
-    0 2 gate mhat euclidean 2 12 repeat 1 duration 1;
-    0 3 gate snare euclidean 4 14 duration 1;
+    (0,0) %% |1| [/ T_T__TTT] {
+       synth=kick;
+    }
+    (0,1) %% |1| [/ euclidean 5 16] {
+       synth=hat;
+    }
+    (0,2) %% |1| [/ euclidean 2 12] {
+       synth=mhat;
+    }
+    (0,3) %% |1| [/ euclidean 4 14] {
+       synth=snare;
+    }
+    (0,4) %note:pitch@b% q c3, q c3, q c3, q c3 {
+       synth=tone;
+    }
 }
 
 main {
-    0 0 clip drums;
-    1 0 clip drums;
-    2 0 clip drums;
-    3 0 clip drums;
-    0 4 gate tone e s s e s s s s s s s s s s repeat 4 duration 4
-      / c4 g3 d4 e4 c5 b4 f4 [note:pitch:a];
-    0 5 gate tone q e e q e e q q q e e q q q s s s s q q q q
-      / c6 e6 d6 f6 e6 c6 e6 d6 f6 c6 c6 [note:pitch:b];
-    0 to 10 7 pianoroll a f3 d5;
-    0 to 10 15 staves b _._ 0;
-    0 6 gate tone q q q q
-      / c3 [note:pitch:b];
+    (0,0) &drums;
+    (1,0) &drums;
+    (2,0) &drums;
+    (3,0) &drums;
+    (0,5) %%
+      q, e, e, q, e, e,
+      q, q, q, e, e,
+      q, q, q, s, s, s, s,
+      q, q, q, q
+      / ostinato %note:pitch@b%
+        * c6, * e6, * d6, * f6, * e6, * c6, * e6, * d6, * f6, * c6, * c6
+    {
+        synth=tone;
+    }
+    (0,6) %%
+        |4| [e, s, s, e, s, s, s, s, s, s, s, s, s, s / repeat 4]
+        / ostinato %note:pitch% * c4, * g3, * d4, * e4, * c5, * b4, * f4 {
+        synth=tone;
+    }
 }
 
 @synths
-  tone musical -122 -39 multi {
-    amplitude=0.1454
+  (-122, -39) tone musical multi {
+    amplitude=0.1454;
   }
 
-  kick bd 71 -151 multi {
-    snappy=0.19,
-    amp2=0.48,
-    tone2=96.23
+  (71, -151) kick bd multi {
+    snappy=0.19;
+    amp2=0.48;
+    tone2=96.23;
   }
 
-  mhat MT 293 162 multi {
+  (293, 162) mhat MT multi {
   }
 
-  hat HT 464 159 multi {
+  (464, 159) hat HT multi {
   }
 
-  snare sn 278 -148 multi {
-    snappy=0.19,
-    amp2=0.1818,
-    tone2=96.23
+  (278, -148) snare sn multi {
+    snappy=0.19;
+    amp2=0.1818;
+    tone2=96.23;
   }
 
 @connections
@@ -75,6 +93,8 @@ main {
   hat:out    system:out,
   snare:out  system:out
 """
+
+
 
 
 class DocumentProcessing:
@@ -100,21 +120,21 @@ class DocumentProcessing:
                 self.dimensions[decl.name, i] = d, h, None
                 duration = max(duration, d+s)
                 height   = max(height, l+h)
-            elif isinstance(e, CommandEntity):
-                d = self.process_component(e.component, rhythm_config)
-                self.dimensions[decl.name, i] = d.duration, 1, d
-                duration = max(duration, d.duration+s)
-                height   = max(height, l + 1)
-            elif isinstance(e, PianorollEntity):
-                h = math.ceil((int(e.top) - int(e.bot) + 1) / 3)
-                self.dimensions[decl.name, i] = e.duration, h, None
-                duration = max(duration, e.duration+s)
-                height   = max(height, l+h)
-            elif isinstance(e, StavesEntity):
-                h = 2*(e.above + e.count + e.below)
-                self.dimensions[decl.name, i] = e.duration, h, None
-                duration = max(duration, e.duration+s)
-                height   = max(height, l+h)
+            #elif isinstance(e, CommandEntity):
+            #    d = self.process_component(e.component, rhythm_config)
+            #    self.dimensions[decl.name, i] = d.duration, 1, d
+            #    duration = max(duration, d.duration+s)
+            #    height   = max(height, l + 1)
+            #elif isinstance(e, PianorollEntity):
+            #    h = math.ceil((int(e.top) - int(e.bot) + 1) / 3)
+            #    self.dimensions[decl.name, i] = e.duration, h, None
+            #    duration = max(duration, e.duration+s)
+            #    height   = max(height, l+h)
+            #elif isinstance(e, StavesEntity):
+            #    h = 2*(e.above + e.count + e.below)
+            #    self.dimensions[decl.name, i] = e.duration, h, None
+            #    duration = max(duration, e.duration+s)
+            #    height   = max(height, l+h)
         self.dimensions[decl.name] = duration, height
         return duration, height
 
@@ -127,30 +147,84 @@ class DocumentProcessing:
                 subdecl = self.declarations[e.name]
                 d = self.construct(sb, subdecl, s, k, rhythm_config)
                 bound = max(bound, s+d)
-            if isinstance(e, CommandEntity) and e.flavor == "gate":
-                pattern = self.process_component(e.component, rhythm_config)
-                d = self.construct_gate(sb,
-                    e.instrument, pattern, s, k)
-                bound = max(bound, s+d)
-            if isinstance(e, CommandEntity) and e.flavor == "once":
-                pattern = self.process_component(e.component, rhythm_config)
-                d = self.construct_once(sb,
-                    e.instrument, pattern, s, k)
-                bound = max(bound, s+d)
-            if isinstance(e, CommandEntity) and e.flavor == "quadratic":
-                pattern = self.process_component(e.component, rhythm_config)
-                d = self.construct_quadratic(sb,
-                    e.instrument, pattern, s, k)
-                bound = max(bound, s+d)
-            if isinstance(e, CommandEntity) and e.flavor == "slide":
-                pattern = self.process_component(e.component, rhythm_config)
-                d = self.construct_slide(sb,
-                    e.instrument, pattern, s, k)
+            if isinstance(e, BrushEntity):
+                config = rhythm_config | e.properties
+                expr       = evaluate_all(config, e.expr)
+                pattern, d = self.compute_pattern(expr, config)
+                match config["brush"]:
+                    case Unk("gate"):
+                        cons = self.construct_gate
+                    case Unk("once"):
+                        cons = self.construct_once
+                    case Unk("quadratic"):
+                        cons = self.construct_quadratic
+                    case Unk("slide"):
+                        cons = self.construct_slide
+                    case Unk("control"):
+                        cons = self.construct_control
+                cons(sb, config, pattern, s, k)
                 bound = max(bound, s+d)
         return bound - shift
 
+    def compute_pattern(self, exprs, config):
+        events = []
+        def resolve(this):
+            if this is None:
+                return 1.0
+            if isinstance(this.symbol, int):
+                duration = this.symbol
+            else:
+                duration = note_durations[this.symbol]
+            dot = duration / 2
+            for _ in range(this.dots):
+                duration += dot
+                dot /= 2
+            return float(duration)
+
+        def resolve_value(v):
+            if isinstance(v, Dynamic):
+                return dynamics_to_dbfs.get(v.name, None)
+            if isinstance(v, Ref):
+                return None
+            if isinstance(v, Unk):
+                return None
+            return v
+
+        def compute_note(t, note, duration):
+            if isinstance(note, Note):
+                match note.style:
+                    case "staccato":
+                        d = duration * config['staccato']
+                    case "tenuto":
+                        d = duration * config['tenuto']
+                    case None:
+                        d = duration * config['normal']
+                group = []
+                for data in note.group:
+                    out = {}
+                    for n, v in data.items():
+                        v = resolve_value(v)
+                        if v is not None:
+                            out[n] = v
+                    group.append(out)
+                events.append((t,d,group))
+            elif isinstance(note, Tuplet):
+                s = t
+                subrate = duration / sum(resolve(n.duration) for n in note.mhs)
+                for subnote in note.mhs:
+                    subduration = resolve(subnote.duration) * subrate
+                    compute_note(s, subnote, subduration)
+                    s += subduration
+        t = 0.0
+        rate = config["beats_per_measure"] / config["beat_division"]
+        for expr in exprs:
+            duration = resolve(expr.duration) * rate
+            compute_note(t, expr, duration)
+            t += duration
+        return events, t
+
     def process_component(self, component, rhythm_config):
-        if isinstance(component, Ref):
+        if isinstance(component, FromRhythm):
             decl = self.declarations[component.name]
             return self.process_component(decl.component, rhythm_config)
         elif isinstance(component, Overlay):
@@ -191,40 +265,41 @@ class DocumentProcessing:
         else:
             assert False
 
-    def construct_gate(self, sb, tag, pattern, shift, key):
-        for i, ((start, duration), values) in enumerate(zip(pattern.events, pattern.values)):
+    def construct_gate(self, sb, config, pattern, shift, key):
+        tag = config["synth"]
+        for i, (start, duration, values) in enumerate(pattern):
             for j, v in enumerate(values):
-                sb.note(tag, shift+start, duration, key + (i,j,), v)
-        return pattern.duration
+                sb.note(unwrap(tag), shift+start, duration, key + (i,j,), v)
 
-    def construct_once(self, sb, tag, pattern, shift, key):
-        for i, ((start, duration), values) in enumerate(zip(pattern.events, pattern.values)):
+    def construct_once(self, sb, config, pattern, shift, key):
+        tag = config["synth"]
+        for i, (start, duration, values) in enumerate(pattern):
             for j, v in enumerate(values):
-                sb.once(shift+start, tag, v)
-        return pattern.duration
+                sb.once(shift+start, unwrap(tag), v)
 
-    def construct_slide(self, sb, tag, pattern, shift, key):
+    def construct_slide(self, sb, config, pattern, shift, key):
+        tag = config["synth"]
         i = None
-        for i, ((start, duration), values) in enumerate(zip(pattern.events, pattern.values)):
+        for i, (start, duration, values) in enumerate(pattern):
             for j, v in enumerate(values):
-                sb.gate(shift+start, tag, key, v)
+                sb.gate(shift+start, unwrap(tag), key, v)
         if i is not None:
             sb.gate(shift+start+duration, tag, key, v)
-        return pattern.duration
 
-    def construct_quadratic(self, sb, tag, pattern, shift, key):
-        for i, ((start, duration), values) in enumerate(zip(pattern.events, pattern.values)):
+    def construct_quadratic(self, sb, config, pattern, shift, key):
+        tag = config["synth"]
+        for i, (start, duration, values) in enumerate(pattern):
             for j, v in enumerate(values):
-                sb.quadratic(shift+start, tag, bool(v.get("transition", False)), v["value"])
-        return pattern.duration
+                sb.quadratic(shift+start, unwrap(tag), bool(v.get("transition", False)), v["value"])
 
-    #def quadratic(self):
-    # if self.tag == "tempo" and self.value <= 0:
-    #     continue
-    # sequencer.quadratic(offset, self.tag, self.transition, self.value)
-        # sb.quadratic(0, "tempo", False, 85)
-        # #sb.control(0, "foo", {})
-        # #sb.once(0, "foo", {})
+    def construct_control(self, sb, config, pattern, shift, key):
+        tag = config["synth"]
+        for i, (start, duration, values) in enumerate(pattern):
+            for j, v in enumerate(values):
+                sb.control(shift+start, unwrap(tag), v)
+
+def unwrap(value):
+    return value.name if isinstance(value, (Unk,Ref)) else value
 
 class Editor:
     screen_width = 1200
@@ -284,6 +359,10 @@ class Editor:
         self.midi_status = False
         self.midi_controllers = []
 
+        self.selection = None
+        self.prompt = Text("", 0, None)
+        self.response = ""
+
     def after_rewrite(self):
         self.proc = DocumentProcessing(self.doc)
         self.transport.refresh(self.proc)
@@ -320,61 +399,61 @@ class Editor:
             def traverse_decl(decl, x, y, kv, d=1):
                 nonlocal trackline
                 views = {}
-                for i, e in enumerate(decl.entities):
-                    ix = x + e.shift
-                    iy = y + e.lane
-                    w, h, pat = self.proc.dimensions[decl.name, i]
-                    key = kv + (i,)
-                    if isinstance(e, CommandEntity):
-                        if self.selected == key and self.stack_index is not None:
-                            trackline = main_grid(ix, iy, ix+w, iy+h)
-                        if ui.widget(PatLane(f"{e.flavor} {e.instrument}",
-                            main_grid(ix, iy, ix+w, iy+h),
-                            kv + (i,),
-                            pat, main_grid.offset(ix,iy)
-                            )):
-                            self.selected = kv + (i,)
-                            self.stack_index = None
-                        for name, dtype, vw in pat.views:
-                            try:
-                                views[vw].append((name, dtype, pat, ix, e))
-                            except KeyError:
-                                views[vw] = [(name, dtype, pat, ix, e)]
-                    elif isinstance(e, ClipEntity):
-                        sdecl = self.proc.declarations[e.name]
-                        if ui.widget(Lane(e.name,
-                            main_grid(ix, iy, ix+w, iy+h),
-                            kv + (i,))):
-                            self.selected = kv + (i,)
-                            self.stack_index = None
-                        subviews = traverse_decl(sdecl, ix, iy, kv + (i,), d+1)
-                        for vw, g in subviews.items():
-                            try:
-                                views[vw].extend(g)
-                            except KeyError:
-                                views[vw] = list(g)
-                for i, e in enumerate(decl.entities):
-                    ix = x + e.shift
-                    iy = y + e.lane
-                    w, h, pat = self.proc.dimensions[decl.name, i]
-                    if isinstance(e, PianorollEntity):
-                        if ui.widget(e := PianorollWidget(
-                            main_grid(ix, iy, ix+w, iy+h),
-                            int(e.bot), int(e.top),
-                            views.get(e.name, []), main_grid,
-                            kv + (i,))):
-                            self.selected = kv + (i,)
-                            self.stack_index = None
-                        edit_widgets.append(e)
-                    elif isinstance(e, StavesEntity):
-                        if ui.widget(e := StavesWidget(
-                            main_grid(ix, iy, ix+w, iy+h),
-                            e.above, e.count, e.below, e.key,
-                            views.get(e.name, []), main_grid,
-                            kv + (i,))):
-                            self.selected = kv + (i,)
-                            self.stack_index = None
-                        edit_widgets.append(e)
+                #for i, e in enumerate(decl.entities):
+                #    ix = x + e.shift
+                #    iy = y + e.lane
+                #    w, h, pat = self.proc.dimensions[decl.name, i]
+                #    key = kv + (i,)
+                    #if isinstance(e, CommandEntity):
+                    #    if self.selected == key and self.stack_index is not None:
+                    #        trackline = main_grid(ix, iy, ix+w, iy+h)
+                    #    if ui.widget(PatLane(f"{e.flavor} {e.instrument}",
+                    #        main_grid(ix, iy, ix+w, iy+h),
+                    #        kv + (i,),
+                    #        pat, main_grid.offset(ix,iy)
+                    #        )):
+                    #        self.selected = kv + (i,)
+                    #        self.stack_index = None
+                    #    for name, dtype, vw in pat.views:
+                    #        try:
+                    #            views[vw].append((name, dtype, pat, ix, e))
+                    #        except KeyError:
+                    #            views[vw] = [(name, dtype, pat, ix, e)]
+                    #elif isinstance(e, ClipEntity):
+                    #    sdecl = self.proc.declarations[e.name]
+                    #    if ui.widget(Lane(e.name,
+                    #        main_grid(ix, iy, ix+w, iy+h),
+                    #        kv + (i,))):
+                    #        self.selected = kv + (i,)
+                    #        self.stack_index = None
+                    #    subviews = traverse_decl(sdecl, ix, iy, kv + (i,), d+1)
+                    #    for vw, g in subviews.items():
+                    #        try:
+                    #            views[vw].extend(g)
+                    #        except KeyError:
+                    #            views[vw] = list(g)
+                #for i, e in enumerate(decl.entities):
+                #    ix = x + e.shift
+                #    iy = y + e.lane
+                #    w, h, pat = self.proc.dimensions[decl.name, i]
+                #    if isinstance(e, PianorollEntity):
+                #        if ui.widget(e := PianorollWidget(
+                #            main_grid(ix, iy, ix+w, iy+h),
+                #            int(e.bot), int(e.top),
+                #            views.get(e.name, []), main_grid,
+                #            kv + (i,))):
+                #            self.selected = kv + (i,)
+                #            self.stack_index = None
+                #        edit_widgets.append(e)
+                #    elif isinstance(e, StavesEntity):
+                #        if ui.widget(e := StavesWidget(
+                #            main_grid(ix, iy, ix+w, iy+h),
+                #            e.above, e.count, e.below, e.key,
+                #            views.get(e.name, []), main_grid,
+                #            kv + (i,))):
+                #            self.selected = kv + (i,)
+                #            self.stack_index = None
+                #        edit_widgets.append(e)
                 return views
 
             main_decl = self.proc.declarations['main']
@@ -425,165 +504,165 @@ class Editor:
                                 self.selected = sel
                                 self.stack_index = None
                 y += 12 + 24
-                if isinstance(top, CommandEntity):
-                    comp = top.component
-                    k = 0
-                    while comp:
-                        kur = "-> " if k == self.stack_index else ""
-                        if isinstance(comp, Ref):
-                            if ui.button(kur + f"{comp.name}",
-                                pygame.Rect(0, y, self.MARGIN, 24), (sel, k)):
-                                self.stack_index = k
-                            comp = None
-                        elif isinstance(comp, Overlay):
-                            if ui.button(kur + f"{comp.name}:{comp.dtype}:{comp.view}",
-                                pygame.Rect(0, y, self.MARGIN, 24), (sel, k)):
-                                self.stack_index = k
-                            comp = comp.base
-                        elif isinstance(comp, Repeated):
-                            if ui.button(kur + f"repeat {comp.count}",
-                                pygame.Rect(0, y, self.MARGIN, 24), (sel, k)):
-                                self.stack_index = k
-                            comp = comp.base
-                        elif isinstance(comp, Renamed):
-                            if ui.button(kur + f"rename {comp.src} to {comp.dst}",
-                                pygame.Rect(0, y, self.MARGIN, 24), (sel, k)):
-                                self.stack_index = k
-                            comp = comp.base
-                        elif isinstance(comp, Durated):
-                            if ui.button(kur + f"duration {comp.duration}",
-                                pygame.Rect(0, y, self.MARGIN, 24), (sel, k)):
-                                self.stack_index = k
-                            comp = comp.base
-                        elif isinstance(comp, WestRhythm):
-                            if ui.button(kur + "rhythm",
-                                pygame.Rect(0, y, self.MARGIN, 24), (sel, k)):
-                                self.stack_index = k
-                            comp = None
-                        elif isinstance(comp, StepRhythm):
-                            if ui.button(kur + "step",
-                                pygame.Rect(0, y, self.MARGIN, 24), (sel, k)):
-                                self.stack_index = k
-                            comp = None
-                        elif isinstance(comp, EuclideanRhythm):
-                            if ui.button(kur + "euclidean",
-                                pygame.Rect(0, y, self.MARGIN, 24), (sel, k)):
-                                self.stack_index = k
-                            comp = None
-                        else:
-                            assert False, comp
-                        y += 24
-                        k += 1
-                    if self.stack_index is not None and trackline is not None:
-                        comp = top.component
-                        for _ in range(self.stack_index):
-                            comp = comp.base
-                        modrect = pygame.Rect(trackline.left, self.screen_height - 24 - self.LANE_HEIGHT * 4, trackline.width, self.LANE_HEIGHT * 4)
-                        u = Grid(self.MARGIN, modrect.top, 24, self.LANE_HEIGHT)
-                        if isinstance(comp, Overlay):
-                            for widget in edit_widgets:
-                                if ui.widget(Editing(widget, top, comp)):
-                                    self.after_rewrite()
-                        elif isinstance(comp, WestRhythm):
-                            W = sum(float(e.duration) for e in comp.sequence)
-                            g = Grid(modrect.left, modrect.top, modrect.width / W, self.LANE_HEIGHT)
-                            t = 0.0
-                            for k, x in enumerate(comp.sequence):
-                                d = float(x.duration)
-                                if ui.button(str(x), g(t, 2, t+d, 3), f"step-{k}"):
-                                    self.rhythm_index = k
-                                t += d
-                            if self.rhythm_index is not None:
-                                X = comp.sequence[self.rhythm_index]
-                                p = comp.sequence[self.rhythm_index].duration.symbol
-                                n = comp.sequence[self.rhythm_index].duration.dots
-                                if ui.button("+|", u(18, 1, 20, 2), "set-left"):
-                                    comp.sequence.insert(self.rhythm_index, Note(Duration("q", 0), None, None))
-                                    self.after_rewrite()
-                                if len(comp.sequence) > 1 and ui.button("DEL", u(20, 1, 22, 2), "set-del"):
-                                    del comp.sequence[self.rhythm_index]
-                                    self.rhythm_index = None
-                                if ui.button("|+", u(22, 1, 24, 2), "set-right"):
-                                    comp.sequence.insert(self.rhythm_index+1, Note(Duration("q", 0), None, None))
-                                    self.rhythm_index += 1
-                                    self.after_rewrite()
-                                if ui.button("'", u(4, 1, 5, 2), "set-stac"):
-                                    if isinstance(X, Rest):
-                                        comp.sequence[self.rhythm_index] = Note(X.duration, None, None)
-                                    comp.sequence[self.rhythm_index].style = "staccato"
-                                    self.after_rewrite()
-                                if ui.button(" ", u(5, 1, 6, 2), "set-normal"):
-                                    if isinstance(X, Rest):
-                                        comp.sequence[self.rhythm_index] = Note(X.duration, None, None)
-                                    comp.sequence[self.rhythm_index].style = None
-                                    self.after_rewrite()
-                                if ui.button("_", u(6, 1, 7, 2), "set-ten"):
-                                    if isinstance(X, Rest):
-                                        comp.sequence[self.rhythm_index] = Note(X.duration, None, None)
-                                    comp.sequence[self.rhythm_index].style = "tenuto"
-                                    self.after_rewrite()
-                                if ui.button("~", u(7, 1, 8, 2), "set-rest"):
-                                    comp.sequence[self.rhythm_index] = Rest(X.duration)
-                                    self.after_rewrite()
-                                for i, dyn in enumerate(dynamics_to_dbfs, 10):
-                                    if ui.button(dyn, u(i, 0, i+1, 1), "set-" + dyn):
-                                        comp.sequence[self.rhythm_index].dynamic = dyn
-                                        self.after_rewrite()
-                                if ui.button("", u(i+1, 0, i+2, 1), "set-nodyn"):
-                                    comp.sequence[self.rhythm_index].dynamic = None
-                                    self.after_rewrite()
-                                for i, m in enumerate("vutseqhwx"):
-                                    if ui.button(m, u(i, 0, i+1, 1), "set-" + m):
-                                        comp.sequence[self.rhythm_index].duration = Duration(m, n)
-                                        self.after_rewrite()
-                                if ui.button(".-", u(0, 1, 1, 2), "less-dots"):
+                #if isinstance(top, CommandEntity):
+                #    comp = top.component
+                #    k = 0
+                #    while comp:
+                #        kur = "-> " if k == self.stack_index else ""
+                #        if isinstance(comp, FromRhythm):
+                #            if ui.button(kur + f"{comp.name}",
+                #                pygame.Rect(0, y, self.MARGIN, 24), (sel, k)):
+                #                self.stack_index = k
+                #            comp = None
+                #        elif isinstance(comp, Overlay):
+                #            if ui.button(kur + f"{comp.name}:{comp.dtype}:{comp.view}",
+                #                pygame.Rect(0, y, self.MARGIN, 24), (sel, k)):
+                #                self.stack_index = k
+                #            comp = comp.base
+                #        elif isinstance(comp, Repeated):
+                #            if ui.button(kur + f"repeat {comp.count}",
+                #                pygame.Rect(0, y, self.MARGIN, 24), (sel, k)):
+                #                self.stack_index = k
+                #            comp = comp.base
+                #        elif isinstance(comp, Renamed):
+                #            if ui.button(kur + f"rename {comp.src} to {comp.dst}",
+                #                pygame.Rect(0, y, self.MARGIN, 24), (sel, k)):
+                #                self.stack_index = k
+                #            comp = comp.base
+                #        elif isinstance(comp, Durated):
+                #            if ui.button(kur + f"duration {comp.duration}",
+                #                pygame.Rect(0, y, self.MARGIN, 24), (sel, k)):
+                #                self.stack_index = k
+                #            comp = comp.base
+                #        elif isinstance(comp, WestRhythm):
+                #            if ui.button(kur + "rhythm",
+                #                pygame.Rect(0, y, self.MARGIN, 24), (sel, k)):
+                #                self.stack_index = k
+                #            comp = None
+                #        elif isinstance(comp, StepRhythm):
+                #            if ui.button(kur + "step",
+                #                pygame.Rect(0, y, self.MARGIN, 24), (sel, k)):
+                #                self.stack_index = k
+                #            comp = None
+                #        elif isinstance(comp, EuclideanRhythm):
+                #            if ui.button(kur + "euclidean",
+                #                pygame.Rect(0, y, self.MARGIN, 24), (sel, k)):
+                #                self.stack_index = k
+                #            comp = None
+                #        else:
+                #            assert False, comp
+                #        y += 24
+                #        k += 1
+                #    if self.stack_index is not None and trackline is not None:
+                #        comp = top.component
+                #        for _ in range(self.stack_index):
+                #            comp = comp.base
+                #        modrect = pygame.Rect(trackline.left, self.screen_height - 24 - self.LANE_HEIGHT * 4, trackline.width, self.LANE_HEIGHT * 4)
+                #        u = Grid(self.MARGIN, modrect.top, 24, self.LANE_HEIGHT)
+                #        if isinstance(comp, Overlay):
+                #            for widget in edit_widgets:
+                #                if ui.widget(Editing(widget, top, comp)):
+                #                    self.after_rewrite()
+                #        elif isinstance(comp, WestRhythm):
+                #            W = sum(float(e.duration) for e in comp.sequence)
+                #            g = Grid(modrect.left, modrect.top, modrect.width / W, self.LANE_HEIGHT)
+                #            t = 0.0
+                #            for k, x in enumerate(comp.sequence):
+                #                d = float(x.duration)
+                #                if ui.button(str(x), g(t, 2, t+d, 3), f"step-{k}"):
+                #                    self.rhythm_index = k
+                #                t += d
+                #            if self.rhythm_index is not None:
+                #                X = comp.sequence[self.rhythm_index]
+                #                p = comp.sequence[self.rhythm_index].duration.symbol
+                #                n = comp.sequence[self.rhythm_index].duration.dots
+                #                if ui.button("+|", u(18, 1, 20, 2), "set-left"):
+                #                    comp.sequence.insert(self.rhythm_index, Note(Duration("q", 0), None, None))
+                #                    self.after_rewrite()
+                #                if len(comp.sequence) > 1 and ui.button("DEL", u(20, 1, 22, 2), "set-del"):
+                #                    del comp.sequence[self.rhythm_index]
+                #                    self.rhythm_index = None
+                #                if ui.button("|+", u(22, 1, 24, 2), "set-right"):
+                #                    comp.sequence.insert(self.rhythm_index+1, Note(Duration("q", 0), None, None))
+                #                    self.rhythm_index += 1
+                #                    self.after_rewrite()
+                #                if ui.button("'", u(4, 1, 5, 2), "set-stac"):
+                #                    if isinstance(X, Rest):
+                #                        comp.sequence[self.rhythm_index] = Note(X.duration, None, None)
+                #                    comp.sequence[self.rhythm_index].style = "staccato"
+                #                    self.after_rewrite()
+                #                if ui.button(" ", u(5, 1, 6, 2), "set-normal"):
+                #                    if isinstance(X, Rest):
+                #                        comp.sequence[self.rhythm_index] = Note(X.duration, None, None)
+                #                    comp.sequence[self.rhythm_index].style = None
+                #                    self.after_rewrite()
+                #                if ui.button("_", u(6, 1, 7, 2), "set-ten"):
+                #                    if isinstance(X, Rest):
+                #                        comp.sequence[self.rhythm_index] = Note(X.duration, None, None)
+                #                    comp.sequence[self.rhythm_index].style = "tenuto"
+                #                    self.after_rewrite()
+                #                if ui.button("~", u(7, 1, 8, 2), "set-rest"):
+                #                    comp.sequence[self.rhythm_index] = Rest(X.duration)
+                #                    self.after_rewrite()
+                #                for i, dyn in enumerate(dynamics_to_dbfs, 10):
+                #                    if ui.button(dyn, u(i, 0, i+1, 1), "set-" + dyn):
+                #                        comp.sequence[self.rhythm_index].dynamic = dyn
+                #                        self.after_rewrite()
+                #                if ui.button("", u(i+1, 0, i+2, 1), "set-nodyn"):
+                #                    comp.sequence[self.rhythm_index].dynamic = None
+                #                    self.after_rewrite()
+                #                for i, m in enumerate("vutseqhwx"):
+                #                    if ui.button(m, u(i, 0, i+1, 1), "set-" + m):
+                #                        comp.sequence[self.rhythm_index].duration = Duration(m, n)
+                #                        self.after_rewrite()
+                #                if ui.button(".-", u(0, 1, 1, 2), "less-dots"):
 
-                                    n = max(0, n-1)
-                                    comp.sequence[self.rhythm_index].duration = Duration(p, n)
-                                    self.after_rewrite()
-                                if ui.button(".+", u(1, 1, 2, 2), "more-dots"):
+                #                    n = max(0, n-1)
+                #                    comp.sequence[self.rhythm_index].duration = Duration(p, n)
+                #                    self.after_rewrite()
+                #                if ui.button(".+", u(1, 1, 2, 2), "more-dots"):
 
-                                    n = n+1
-                                    comp.sequence[self.rhythm_index].duration = Duration(p, n)
-                                    self.after_rewrite()
-                            
-                        elif isinstance(comp, StepRhythm):
-                            g = Grid(modrect.left, modrect.top, modrect.width / len(comp.sequence), self.LANE_HEIGHT)
-                            if ui.button("+", u(1, 0, 2, 1), "more-rhythm"):
-                                comp.sequence.append(0)
-                                self.after_rewrite()
-                            if ui.button("-", u(0, 0, 1, 1), "less-rhythm"):
-                                if len(comp.sequence) > 1:
-                                    comp.sequence.pop()
-                                self.after_rewrite()
-                            for k, x in enumerate(comp.sequence):
-                                if ui.button(str(x), g(k, 1, k+1, 2), f"step-{k}"):
-                                    comp.sequence[k] = 1 - x
-                                    self.after_rewrite()
-                        elif isinstance(comp, EuclideanRhythm):
-                            if ui.button("P+", u(1, 0, 2, 1), "more-pulses"):
-                                comp.pulses = min(comp.steps, comp.pulses+1)
-                                self.after_rewrite()
-                            if ui.button("P-", u(0, 0, 1, 1), "less-pulses"):
-                                comp.pulses = max(0, comp.pulses - 1)
-                                self.after_rewrite()
-                            if ui.button("S+", u(3, 0, 4, 1), "more-steps"):
-                                comp.steps = comp.steps + 1
-                                self.after_rewrite()
-                            if ui.button("S-", u(2, 0, 3, 1), "less-steps"):
-                                comp.steps = max(1, comp.steps - 1)
-                                comp.pulses = min(comp.pulses, comp.steps)
-                                self.after_rewrite()
-                            if ui.button("<-", u(4, 0, 5, 1), "rot-left"):
-                                comp.rotation = comp.rotation + 1
-                                self.after_rewrite()
-                            if ui.button("->", u(5, 0, 6, 1), "rot-right"):
-                                comp.rotation = comp.rotation - 1
-                                self.after_rewrite()
-                            ui.label(f"{comp.pulses} {comp.steps} {comp.rotation}", u(0, 1, 10, 2))
-                        else:   
-                            if ui.button("modify", modrect, "modify-it"):
-                                pass
+                #                    n = n+1
+                #                    comp.sequence[self.rhythm_index].duration = Duration(p, n)
+                #                    self.after_rewrite()
+                #            
+                #        elif isinstance(comp, StepRhythm):
+                #            g = Grid(modrect.left, modrect.top, modrect.width / len(comp.sequence), self.LANE_HEIGHT)
+                #            if ui.button("+", u(1, 0, 2, 1), "more-rhythm"):
+                #                comp.sequence.append(0)
+                #                self.after_rewrite()
+                #            if ui.button("-", u(0, 0, 1, 1), "less-rhythm"):
+                #                if len(comp.sequence) > 1:
+                #                    comp.sequence.pop()
+                #                self.after_rewrite()
+                #            for k, x in enumerate(comp.sequence):
+                #                if ui.button(str(x), g(k, 1, k+1, 2), f"step-{k}"):
+                #                    comp.sequence[k] = 1 - x
+                #                    self.after_rewrite()
+                #        elif isinstance(comp, EuclideanRhythm):
+                #            if ui.button("P+", u(1, 0, 2, 1), "more-pulses"):
+                #                comp.pulses = min(comp.steps, comp.pulses+1)
+                #                self.after_rewrite()
+                #            if ui.button("P-", u(0, 0, 1, 1), "less-pulses"):
+                #                comp.pulses = max(0, comp.pulses - 1)
+                #                self.after_rewrite()
+                #            if ui.button("S+", u(3, 0, 4, 1), "more-steps"):
+                #                comp.steps = comp.steps + 1
+                #                self.after_rewrite()
+                #            if ui.button("S-", u(2, 0, 3, 1), "less-steps"):
+                #                comp.steps = max(1, comp.steps - 1)
+                #                comp.pulses = min(comp.pulses, comp.steps)
+                #                self.after_rewrite()
+                #            if ui.button("<-", u(4, 0, 5, 1), "rot-left"):
+                #                comp.rotation = comp.rotation + 1
+                #                self.after_rewrite()
+                #            if ui.button("->", u(5, 0, 6, 1), "rot-right"):
+                #                comp.rotation = comp.rotation - 1
+                #                self.after_rewrite()
+                #            ui.label(f"{comp.pulses} {comp.steps} {comp.rotation}", u(0, 1, 10, 2))
+                #        else:   
+                #            if ui.button("modify", modrect, "modify-it"):
+                #                pass
 
         if self.mode == "synth":
             ui.widget(self.transport.get_spectroscope())
@@ -598,8 +677,25 @@ class Editor:
             self.mode = "file"
         elif ui.tab_button(self.mode, "track", bot_grid(5, 0, 10, 1),  "track-tab", allow_focus=False):
             self.mode = "track"
-        elif ui.tab_button(self.mode, "cell", bot_grid(15, 0, 20, 1),  "cell-tab", allow_focus=False):
+        elif ui.tab_button(self.mode, "cell", bot_grid(10, 0, 15, 1),  "cell-tab", allow_focus=False):
             self.mode = "synth"
+        ui.label(self.response, bot_grid(0, -1, 50, 0))
+        if ui.textbox(self.prompt, bot_grid(15, 0, 50, 1), "prompt"):
+            if self.prompt.return_pressed:
+                try:
+                    com = command_from_string(self.prompt.text)
+                    self.selection, detail, hdr = com.apply(self.doc, self.selection, self.doc)
+                    self.response = ""
+                except Exception as e:
+                    import traceback
+                    traceback.print_exc()
+                    self.response = repr(e)
+                else:
+                    self.prompt = Text("", 0, None)
+                    self.after_rewrite()
+                    self.response = str(self.selection)
+                    if detail is not None:
+                        self.response += str(" >>> ") + str(detail).replace("\n", " ")
 
         self.transport_bar(ui, top_grid)
 
@@ -915,7 +1011,7 @@ class Lane:
         
 @dataclass
 class PatLane(Lane):
-    pat : Pattern
+    pat : Any #Pattern
     grid : Grid
 
     def draw(self, ui, screen):

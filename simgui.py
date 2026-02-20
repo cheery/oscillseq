@@ -273,6 +273,7 @@ class Text:
     text : str
     cursor : int
     selection : int
+    return_pressed : bool = False
 
 @dataclass(eq=False)
 class TextboxWidget:
@@ -288,6 +289,7 @@ class TextboxWidget:
         text = self.state.text
         cursor = self.state.cursor
         selection = self.state.selection
+        return_pressed = False
         
         if ui.mouse_just_pressed and ui.hot_id == self.widget_id:
             cursor = self._pos_from_mouse(ui, text)
@@ -373,6 +375,10 @@ class TextboxWidget:
                 elif cursor < len(text):
                     text = text[:cursor] + text[cursor+1:]
                 text_changed = True
+
+            elif ui.keyboard_key == pygame.K_RETURN:
+                return_pressed = True
+                text_changed = True
             
             if ui.keyboard_text:
                 if selection is not None:
@@ -389,6 +395,7 @@ class TextboxWidget:
         self.state.text = text
         self.state.cursor = cursor
         self.state.selection = selection
+        self.state.return_pressed = return_pressed
         return text_changed
     
     def _pos_from_mouse(self, ui, text):
