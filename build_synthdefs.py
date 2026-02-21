@@ -152,3 +152,33 @@ save(freeverb,
     damping = unipolar,
     mix = unipolar,
     room_size = unipolar)
+
+@synthdef()
+def fm(out=0, note=96, gate=1, a=0.5, b=0.1):#, c=0.5, d=0.1):
+    freq = note.midi_to_hz()
+    #c = SinOsc.kr(frequency=25.0 * d)*0.5
+    sig = SinOsc.ar(frequency=freq + SinOsc.ar(frequency=freq*a)*b*250.0)
+    sig *= EnvGen.kr(envelope=Envelope.adsr(), gate=gate, done_action=2)
+    Out.ar(bus=out, source=(sig,sig))
+save(fm,
+    out = bus("ar", "out", 2),
+    note = pitch,
+    a = unipolar,
+    b = unipolar)
+    #c = unipolar,
+    #d = unipolar)
+
+if True:
+    import supriya, time, os
+    if "SC_JACK_DEFAULT_INPUTS" not in os.environ:
+        os.environ["SC_JACK_DEFAULT_INPUTS"] = "system"
+    if "SC_JACK_DEFAULT_OUTPUTS" not in os.environ:
+        os.environ["SC_JACK_DEFAULT_OUTPUTS"] = "system"
+    
+    s = supriya.Server().boot()
+    s.add_synthdefs(fm)
+    s.sync()
+    s.add_synth(fm, gate=1)
+    time.sleep(2)
+    
+    s.quit()

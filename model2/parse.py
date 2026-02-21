@@ -28,6 +28,7 @@ grammar = r"""
        | cmd "&" identifier -> attach_clip
        | cmd "@" identifier -> attach_view
        | cmd coordinates -> by_coords
+       | cmd "move" coordinates -> move_to
        | cmd "..." coordinates -> search_coords
        | bigcmd ">>" -> as_it
        | cmd "[" value "]" -> index_of
@@ -81,6 +82,7 @@ grammar = r"""
 
     cellet: [identifier "="] value_cell -> as_tuple
     value_cell: value (":" value)* -> as_list
+              | "_"                -> as_none
               | "~"                -> as_list
 
     dot: "."
@@ -161,6 +163,9 @@ class ModelTransformer(Transformer):
  
     def by_coords(self, cmd, xy):
         return ByCoords(cmd, *xy)
+
+    def move_to(self, cmd, xy):
+        return MoveTo(cmd, *xy)
 
     def search_coords(self, cmd, xy):
         return SearchCoords(cmd, *xy)
@@ -296,6 +301,9 @@ class ModelTransformer(Transformer):
 
     def as_false(self, *_):
         return True
+
+    def as_none(self, *_):
+        return None
 
 file_parser = Lark(grammar, parser="lalr", start="file", transformer=ModelTransformer())
 command_parser = Lark(grammar, parser="lalr", start="bigcmd", transformer=ModelTransformer())

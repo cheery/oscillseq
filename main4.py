@@ -61,18 +61,20 @@ main {
         / ostinato %note:pitch% * c4, * g3, * d4, * e4, * c5, * b4, * f4 {
         synth=tone;
     }
-    (0,7) @a {
+    (0,8) @a {
         above=1;
-        below=1;
     }
-    (0,12) @b {
+    (0,13) @b {
         view=pianoroll;
     }
 }
 
 @synths
-  (-122, -39) tone musical multi {
-    volume=-6;
+  (-122, -39) tone fm multi {
+    volume=-0;
+  }
+  (-122, -89) musi musical multi {
+    volume=-0;
   }
 
   (71, -151) kick bd multi {
@@ -93,8 +95,12 @@ main {
     tone2=96.23;
   }
 
+  (0, 100) comb comb_l {
+  }
+
 @connections
   tone:out   system:out,
+  musi:out   system:out,
   kick:out   system:out,
   mhat:out   system:out,
   hat:out    system:out,
@@ -102,7 +108,17 @@ main {
 """
 
 
-
+def compute_view_height(config):
+    mode = unwrap(config.get('view', Unk('staves')))
+    if mode == "pianoroll":
+        top = config.get('top', 69 + 12)
+        bot = config.get('bot', 69 - 12)
+        return math.ceil((int(top) - int(bot) + 1) / 3)
+    else:
+        above = config.get('above', 0)
+        count = config.get('count', 1)
+        below = config.get('below', 0)
+        return 2*(above + count + below)
 
 class DocumentProcessing:
     def __init__(self, doc):
@@ -136,36 +152,30 @@ class DocumentProcessing:
             d = duration - e.shift
             config = this_config | e.properties
             if isinstance(e, ViewEntity):
-                mode = unwrap(config.get('view', Unk('staves')))
+                h = compute_view_height(config)
                 d = min(d, config.get('duration', d))
-                if mode == "pianoroll":
-                    top = config.get('top', 69 + 12)
-                    bot = config.get('bot', 69 - 12)
-                    h = math.ceil((int(top) - int(bot) + 1) / 3)
-                else:
-                    above = config.get('above', 0)
-                    count = config.get('count', 1)
-                    below = config.get('below', 0)
-                    h = 2*(above + count + below)
                 self.dimensions[key + (i,)] = d, h, config, None, None
                 height   = max(height, l+h)
         self.dimensions[key] = duration, height, this_config, None, None
         return duration, height
 
     def construct(self, sb, decl, shift, key, rhythm_config):
+        assert Unk("gate") == default_rhythm_config['brush']
         bound = shift+1
         for i, e in enumerate(decl.entities):
             k = key + (i,)
             s = shift + e.shift
+            config = rhythm_config | e.properties
             if isinstance(e, ClipEntity):
                 subdecl = self.declarations[e.name]
-                d = self.construct(sb, subdecl, s, k, rhythm_config)
+                d = self.construct(sb, subdecl, s, k, config)
                 bound = max(bound, s+d)
             if isinstance(e, BrushEntity):
-                config = rhythm_config | e.properties
                 expr       = evaluate_all(config, e.expr)
                 pattern, d = self.compute_pattern(expr, config)
                 match config["brush"]:
+                    case Unk("hocket"):
+                        cons = self.construct_hocket
                     case Unk("gate"):
                         cons = self.construct_gate
                     case Unk("once"):
@@ -176,7 +186,10 @@ class DocumentProcessing:
                         cons = self.construct_slide
                     case Unk("control"):
                         cons = self.construct_control
-                cons(sb, config, pattern, s, k)
+                    case _:
+                        cons=None
+                if cons:
+                    cons(sb, config, pattern, s, k)
                 bound = max(bound, s+d)
         return bound - shift
 
@@ -263,38 +276,47 @@ class DocumentProcessing:
     #    else:
     #        assert False
 
+    def construct_hocket(self, sb, config, pattern, shift, key):
+        tag_normal = unwrap(config["synth"])
+        for i, (start, duration, group) in enumerate(pattern):
+            for j, v in enumerate(self.cartesian(group)):
+                tag = v.get("synth", tag_normal)
+                sb.note(tag, shift+start, duration, key + (i,j,), prune(v))
+
     def construct_gate(self, sb, config, pattern, shift, key):
         tag = config["synth"]
         for i, (start, duration, group) in enumerate(pattern):
             for j, v in enumerate(self.cartesian(group)):
-                sb.note(unwrap(tag), shift+start, duration, key + (i,j,), v)
+                sb.note(unwrap(tag), shift+start, duration, key + (i,j,), prune(v))
 
     def construct_once(self, sb, config, pattern, shift, key):
         tag = config["synth"]
         for i, (start, duration, group) in enumerate(pattern):
             for j, v in enumerate(self.cartesian(group)):
-                sb.once(shift+start, unwrap(tag), v)
+                sb.once(shift+start, unwrap(tag), prune(v))
 
     def construct_slide(self, sb, config, pattern, shift, key):
         tag = config["synth"]
         i = None
         for i, (start, duration, group) in enumerate(pattern):
             for j, v in enumerate(self.cartesian(group)):
-                sb.gate(shift+start, unwrap(tag), key, v)
+                sb.gate(shift+start, unwrap(tag), key, prune(v))
         if i is not None:
-            sb.gate(shift+start+duration, tag, key, v)
+            sb.gate(shift+start+duration, tag, key, prune(v))
 
     def construct_quadratic(self, sb, config, pattern, shift, key):
         tag = config["synth"]
         for i, (start, duration, group) in enumerate(pattern):
             for j, v in enumerate(self.cartesian(group)):
-                sb.quadratic(shift+start, unwrap(tag), bool(v.get("transition", False)), v["value"])
+                v = prune(v)
+                if "value" in v:
+                    sb.quadratic(shift+start, unwrap(tag), bool(v.get("transition", False)), v["value"])
 
     def construct_control(self, sb, config, pattern, shift, key):
         tag = config["synth"]
         for i, (start, duration, group) in enumerate(pattern):
             for j, v in enumerate(self.cartesian(group)):
-                sb.control(shift+start, unwrap(tag), v)
+                sb.control(shift+start, unwrap(tag), prune(v))
 
     def cartesian(self, group):
         def resolve(v):
@@ -303,7 +325,7 @@ class DocumentProcessing:
             if isinstance(v, Ref):
                 return None
             if isinstance(v, Unk):
-                return None
+                return v.name
             return v
         out = [{}]
         for name, values in group.items():
@@ -315,6 +337,9 @@ class DocumentProcessing:
 
 def unwrap(value):
     return value.name if isinstance(value, (Unk,Ref)) else value
+
+def prune(values):
+    return {key:value for key,value in values.items() if not isinstance(value, str)}
 
 class Editor:
     screen_width = 1200
@@ -363,6 +388,7 @@ class Editor:
 
         self.mode = "track"
         self.cell_view = NodeView(self)
+        # TODO: this stack is going away in favor of selection/prompt/response
         self.selected = "main",
         self.stack_index = None
         self.rhythm_index = None
@@ -375,8 +401,29 @@ class Editor:
         self.midi_controllers = []
 
         self.selection = None
+        self.detail = None
+        self.epath = []
         self.prompt = Text("", 0, None)
         self.response = ""
+
+    def run_command(self, com=None):
+        was_none = com is None
+        try:
+            if was_none:
+                com = command_from_string(self.prompt.text)
+            self.selection, self.detail, self.epath = com.apply(self.doc, self.selection, self.doc)
+            self.response = ""
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            self.response = repr(e)
+        else:
+            if was_none:
+                self.prompt = Text("", 0, None)
+            self.after_rewrite()
+            self.response = str(self.selection)
+            if self.detail is not None:
+                self.response += str(" >>> ") + str(self.detail).replace("\n", " ")
 
     def after_rewrite(self):
         self.proc = DocumentProcessing(self.doc)
@@ -393,7 +440,7 @@ class Editor:
             pygame.display.flip()
 
         self.transport.set_offline()
-#        self.set_midi_off()
+        self.set_midi_off()
         pygame.quit()
         sys.exit()
 
@@ -407,12 +454,38 @@ class Editor:
 
         side_rect = pygame.Rect(0, 24, self.MARGIN, self.screen_height - 48)
 
-        if self.mode == "track":
+        if self.mode == "track" and isinstance(self.detail, (BrushEntity, Finger)):
+            main_grid = Grid(
+                self.MARGIN,
+                24, self.BAR_WIDTH, self.LANE_HEIGHT)
+
+            config = default_rhythm_config.copy()
+            views = {}
+            for e in self.epath:
+                if isinstance(e, (ClipDef, Entity)):
+                    config |= e.properties
+                if isinstance(e, ClipDef):
+                    for ent in e.entities:
+                        if isinstance(ent, ViewEntity):
+                            views[ent.name] = config
+            hdr = header_of(self.detail)
+            brush_entity = topmost(self.detail)
+            ui.label(str(list(views.keys())), top_grid(0,1,10,2))
+            config |= brush_entity.properties
+            ui.widget(TrackEditorWidget(
+                main_grid,
+                main_rect,
+                config,
+                hdr,
+                brush_entity,
+                views,
+                self.detail,
+                "track-editor"))
+            pass
+        elif self.mode == "track":
             ui.widget(GridWidget(self, main_rect, "grid"))
-            trackline = None
             edit_widgets = []
             def traverse_decl(decl, x, y, kv, d=1):
-                nonlocal trackline
                 views = {}
                 for i, e in enumerate(decl.entities):
                     ix = x + e.shift
@@ -483,7 +556,12 @@ class Editor:
             
             ui.widget(TransportVisual(self.transport, main_grid, main_rect,
                 "transport-visual"))
-            ui.widget(Scroller(self, main_rect, "scroller"))
+            if what := ui.widget(Scroller(self, main_rect, main_grid, "scroller")):
+                if what[0] == "pick":
+                    com = SearchCoords(ByName("main"), *what[1])
+                    self.run_command(com)
+                elif what[0] == "scroll":
+                    editor.scroll_x = what[1]
 
             ui.widget(Sidepanel(side_rect, "sidepanel"))
             if self.selected is not None:
@@ -702,20 +780,7 @@ class Editor:
         ui.label(self.response, bot_grid(0, -1, 50, 0))
         if ui.textbox(self.prompt, bot_grid(15, 0, 50, 1), "prompt"):
             if self.prompt.return_pressed:
-                try:
-                    com = command_from_string(self.prompt.text)
-                    self.selection, detail, hdr = com.apply(self.doc, self.selection, self.doc)
-                    self.response = ""
-                except Exception as e:
-                    import traceback
-                    traceback.print_exc()
-                    self.response = repr(e)
-                else:
-                    self.prompt = Text("", 0, None)
-                    self.after_rewrite()
-                    self.response = str(self.selection)
-                    if detail is not None:
-                        self.response += str(" >>> ") + str(detail).replace("\n", " ")
+                self.run_command()
 
         self.transport_bar(ui, top_grid)
 
@@ -732,25 +797,6 @@ class Editor:
         # self.view = "file"
         # #self.layout = TrackLayout(self.doc, offset = 30)
         # self.refresh_layout()
-
-#    def present(self, ui):
-#        if self.view == "cell":
-#        grid = Grid(0, 24, 24, 24)
-#        if self.view == "file":
-#            if ui.button(f"record {os.path.basename(self.wav_filename)!r}",
-#                grid(2, 2, 20, 3), "record"):
-#                self.render_score()
-#            if ui.button(f"save {os.path.basename(self.filename)!r}",
-#                grid(2, 4, 20, 5), "save"):
-#                self.save_file()
-#        elif self.view == "track":
-#            self.track_view.present(ui)
-#        elif self.view == "view":
-#            self.view_view.present(ui)
-#        elif self.view == "cell":
-#        self.transport_bar(ui)
-#        self.view_bar(ui)
-
 
     def transport_bar(self, ui, grid):
         grid = Grid(0, 0, 24, 24)
@@ -776,25 +822,22 @@ class Editor:
             pygame.Rect(self.MARGIN, 0, self.screen_width - self.MARGIN, 24),
             "trackline"))
 
-#    def view_bar(self, ui):
-#        grid = Grid(0, self.screen_height, 24, 24)
-#
-#    def toggle_midi(self):
-#        if self.midi_status:
-#            self.set_midi_off()
-#        else:
-#            self.set_midi_on()
-#
-#    def set_midi_on(self):
-#        if not self.midi_status:
-#            self.midi_controllers = quick_connect(self)
-#            self.midi_status = True
-#
-#    def set_midi_off(self):
-#        self.midi_status = False
-#        for controller in self.midi_controllers:
-#            controller.close()
-#        self.midi_controllers.clear()
+    def toggle_midi(self):
+        if self.midi_status:
+            self.set_midi_off()
+        else:
+            self.set_midi_on()
+
+    def set_midi_on(self):
+        if not self.midi_status:
+            self.midi_controllers = quick_connect(self)
+            self.midi_status = True
+
+    def set_midi_off(self):
+        self.midi_status = False
+        for controller in self.midi_controllers:
+            controller.close()
+        self.midi_controllers.clear()
 
     def save_file(self):
         with open(self.filename, "w", encoding='utf-8') as fd:
@@ -987,6 +1030,108 @@ class Spectroscope:
         self.s1.close()
         self.s2.close()
 
+@dataclass
+class TrackEditorWidget:
+    grid : Grid
+    rect : pygame.Rect
+    config : Dict[str, Value]
+    header : List[Annotation]
+    brush : BrushEntity
+    views : Dict[str, Dict[str, Value]]
+    detail : Finger | BrushEntity
+    widget_id : Any
+
+    def behavior(self, ui):
+        return None
+
+    def draw(self, ui, screen):
+        k = 0
+        def draw_header(header, t):
+            nonlocal k
+            i = t
+            surf = ui.font16.render("rhythm", True, (200, 200, 200))
+            rect = surf.get_rect(center=self.grid(k/4,i,(k+1)/4,i+1).center)
+            screen.blit(surf, rect)
+            i += 1
+            for name, dtype, view in header:
+                if view == "+":
+                    name = "(" + name + ")"
+                surf = ui.font16.render(name, True, (200, 200, 200))
+                rect = surf.get_rect(center=self.grid(k/4,i,(k+1)/4,i+1).center)
+                screen.blit(surf, rect)
+                i += 1
+            k += 1
+            return i
+        def decorate_header(headset, exprs):
+            for node in exprs:
+                if isinstance(node, Note):
+                    headset.update(node.group)
+                elif isinstance(node, Tuplet):
+                    decorate_header(headset, node.mhs)
+                elif isinstance(node, Fx):
+                    decorate_header(headset, node.lhs)
+            return headset
+        def decorated_header(header, exprs):
+            headset = decorate_header(set(), exprs)
+            for name, _, _ in header:
+                headset.discard(name)
+            return header + [(name, None, "+") for name in sorted(headset)]
+        def draw_notes(exprs, t, header):
+            nonlocal k
+            h = t
+            for node in exprs:
+                if isinstance(node, Note):
+                    i = t
+                    surf = ui.font16.render(str(node.duration) if node.duration else "*", True, (200, 200, 200))
+                    rect = surf.get_rect(center=self.grid(k/4,i,(k+1)/4,i+1).center)
+                    screen.blit(surf, rect)
+                    i += 1
+                    for name, dtype, view in header:
+                        data = node.group.get(name, None)
+                        if data is None:
+                            data = "_"
+                        else:
+                            data = ":".join(str(x) for x in data)
+                        surf = ui.font16.render(data, True, (200, 200, 200))
+                        rect = surf.get_rect(center=self.grid(k/4,i,(k+1)/4,i+1).center)
+                        screen.blit(surf, rect)
+                        i += 1
+                    k += 1
+                    h = max(h,i)
+                elif isinstance(node, Tuplet):
+                    s = k
+                    i = draw_notes(node.mhs, t, header)
+                    e = k = max(k,s+2)
+                    g=self.grid(s/4,i,(k)/4,i+1)
+                    pygame.draw.rect(screen, (200, 200, 200), g)
+                    surf = ui.font16.render(str(node.duration) if node.duration else "*", True, (30,30,30))
+                    rect = surf.get_rect(center=g.center)
+                    screen.blit(surf, rect)
+                    h = max(h,i+1)
+                    k = e
+                elif isinstance(node, Fx):
+                    s = k
+                    i = draw_notes(node.lhs, t, header)
+                    e = k = max(k,s+2)
+                    g = self.grid(s/4,i,(k)/4,i+1)
+                    pygame.draw.rect(screen, (100, 200, 100), g)
+                    surf = ui.font16.render("/ " + " ".join(str(a) for a in node.args), True, (30,30,30))
+                    rect = surf.get_rect(center=g.center)
+                    screen.blit(surf, rect)
+                    k = s
+                    if node.rhs != empty:
+                        hdr = decorated_header(node.header, node.rhs)
+                        p = draw_notes(node.rhs, i+1, hdr)
+                        q = draw_header(hdr, i+1)
+                        h = max(h,p,q)
+                    else:
+                        h = max(h,i+1)
+                    k = max(k,e)
+            return h
+
+        hdr = decorated_header(self.header, self.brush.expr)
+        draw_header(hdr, 0)
+        draw_notes(self.brush.expr, 0, hdr)
 
 @dataclass
 class GridWidget:
@@ -1208,17 +1353,25 @@ class TransportVisual:
 class Scroller:
     editor : Editor
     rect : pygame.Rect
+    grid : Grid
     widget_id : Any
 
     def behavior(self, ui):
         if self.rect.collidepoint(ui.mouse_pos):
+            if ui.mouse_just_pressed and ui.active_id is None:
+                ui.active_id = self.widget_id
             if ui.r_mouse_just_pressed and ui.r_active_id is None:
                 ui.r_active_id = self.widget_id
                 editor.scroll_ox = ui.mouse_pos[0], editor.scroll_x
+        if ui.mouse_just_released and ui.active_id == self.widget_id:
+            mx, my = ui.mouse_pos
+            x = (mx - self.grid.x) // self.grid.w
+            y = (my - self.grid.y) // self.grid.h
+            return ("pick", (x, y))
         if ui.r_mouse_pressed and ui.r_active_id == self.widget_id:
             x, orig = editor.scroll_ox
             editor.scroll_x = orig - round((ui.mouse_pos[0]-x) / self.editor.BAR_WIDTH)
-            return editor.scroll_x
+            return ("scroll", editor.scroll_x)
         return None
 
     def draw(self, ui, screen):

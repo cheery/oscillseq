@@ -110,6 +110,9 @@ def combine_headers(a, b):
             a.append((name, dtype, view))
     return a
 
+def is_rest(group):
+    return any(len(v)==0 for v in group.values())
+
 @dataclass(eq=False, repr=False)
 class Fx(SequenceNode):
     lhs : SequenceNode
@@ -181,7 +184,7 @@ class Fx(SequenceNode):
                 nonlocal k
                 out = empty
                 for x in list(xs):
-                    if isinstance(x, Note):
+                    if isinstance(x, Note) and not is_rest(x.group):
                         o = ostinato[k % len(ostinato)]
                         k += 1
                         gg = x.group.copy()
@@ -345,7 +348,7 @@ class Mk(Command):
 
     def apply(self, target, cont, doc):
         target.declarations.append(clip := ClipDef(self.name, [], {}))
-        return ByName(self.name), clip, None
+        return ByName(self.name), clip, []
 
 @dataclass(eq=False, repr=False)
 class ByName(Command):
@@ -356,7 +359,7 @@ class ByName(Command):
     def apply(self, target, cont, doc):
         for declaration in target.declarations:
             if declaration.name == self.name:
-                return self, declaration, None
+                return self, declaration, []
         else:
             raise Exception("not present: " + str(self))
 
@@ -380,27 +383,29 @@ class AttrOf(Command):
         return pretty(self.command) + text(f".{self.name}")
 
     def apply(self, target, cont, doc):
-        sel, obj, hdr = self.command.apply(target, cont, doc)
+        sel, obj, epath = self.command.apply(target, cont, doc)
+        epath.append(obj)
         if isinstance(obj, (ClipDef, Entity)):
             val = obj.properties.get(self.name, Unk("none"))
-            return AttrOf(sel, self.name), val, hdr
+            return AttrOf(sel, self.name), val, epath
         else:
             raise Exception("no attributes on: " + str(self.command))
 
     def assign(self, target, value, doc):
-        sel, obj, hdr = self.command.apply(target, None, doc)
+        sel, obj, epath = self.command.apply(target, None, doc)
+        epath.append(obj)
         if isinstance(obj, (ClipDef,Entity)):
             obj.properties[self.name] = value
-            return AttrOf(sel, self.name), value, hdr
+            return AttrOf(sel, self.name), value, epath
         else:
             raise Exception("no attributes on: " + str(self.command))
 
     def remove(self, target, doc):
-        sel, obj, hdr = self.command.apply(target, None, doc)
-        if isinstance(obj, ClipDef):
+        sel, obj, epath = self.command.apply(target, None, doc)
+        if isinstance(obj, (ClipDef,Entity)):
             if self.name in obj.properties:
                 obj.properties.pop(self.name)
-                return sel, obj, hdr
+                return sel, obj, epath
             else:
                 raise Exception("no such attribute: " + str(self))
         else:
@@ -412,7 +417,7 @@ class Assign(Command):
     value : Value
 
     def apply(self, target, cont, doc):
-        sel, obj, hdr = self.command.apply(target, cont, doc)
+        sel, obj, epath = self.command.apply(target, cont, doc)
         if isinstance(self.value, Unk) and self.value.name == "none":
             return sel.remove(target)
         return sel.assign(target, self.value, doc)
@@ -428,7 +433,7 @@ class Remove(Command):
         return pretty(self.command) + text(" remove")
 
     def apply(self, target, cont, doc):
-        sel, obj, hdr = self.command.apply(target, cont, doc)
+        sel, obj, epath = self.command.apply(target, cont, doc)
         return sel.remove(target, doc)
 
 @dataclass(eq=False, repr=False)
@@ -439,7 +444,7 @@ class Up(Command):
         return pretty(self.command) + text(" up")
 
     def apply(self, target, cont, doc):
-        sel, obj, hdr = self.command.apply(target, cont, doc)
+        sel, obj, epath = self.command.apply(target, cont, doc)
         if hasattr(sel, "command"):
             return sel.command.apply(target, None, doc)
         raise Exception("cannot ascend from: " + str(sel))
@@ -452,7 +457,7 @@ class AttachClip(Command):
         return pretty(self.command) + text(f" &{self.name}")
 
     def apply(self, target, cont, doc):
-        sel, obj, hdr = self.command.apply(target, cont, doc)
+        sel, obj, epath = self.command.apply(target, cont, doc)
         if hasattr(sel, "attach"):
             return sel.attach(target, doc, ClipEntity, self.name)
         raise Exception("cannot attach entity at: " + str(self.command))
@@ -465,7 +470,7 @@ class AttachView(Command):
         return pretty(self.command) + text(f" @{self.name}")
 
     def apply(self, target, cont, doc):
-        sel, obj, hdr = self.command.apply(target, cont, doc)
+        sel, obj, epath = self.command.apply(target, cont, doc)
         if hasattr(sel, "attach"):
             return sel.attach(target, doc, ViewEntity, self.name)
         raise Exception("cannot attach entity at: " + str(self.command))
@@ -483,7 +488,7 @@ class AttachBrush(Command):
         return out
 
     def apply(self, target, cont, doc):
-        sel, obj, hdr = self.command.apply(target, cont, doc)
+        sel, obj, epath = self.command.apply(target, cont, doc)
         if hasattr(sel, "attach"):
             return sel.attach(target, doc, BrushEntity, self.header, self.expr)
         raise Exception("cannot attach entity at: " + str(self.command))
@@ -495,20 +500,21 @@ class WriteSoup(Command):
     fxs  : List[Any]
 
     def apply(self, target, cont, doc):
-        sel, obj, hdr = self.command.apply(target, cont, doc)
+        sel, obj, epath = self.command.apply(target, cont, doc)
         if hasattr(sel, "write"):
             return sel.write(target, doc, self.soup, self.fxs)
         raise Exception("cannot write to: " + str(sel))
 
 def deep_apply(command, target, cont, doc):
-    sel, obj, hdr = command.apply(target, cont, doc)
+    sel, obj, epath = command.apply(target, cont, doc)
     if isinstance(obj, ClipEntity):
+        epath.append(obj)
         for clip in doc.declarations:
             if clip.name == obj.name:
-                return sel, clip, hdr
+                return sel, clip, epath
         else:
             raise Exception("clip not present at: " + str(self.command))
-    return sel, obj, hdr
+    return sel, obj, epath
 
 @dataclass(eq=False, repr=False)
 class ByCoords(Command):
@@ -519,24 +525,26 @@ class ByCoords(Command):
         return pretty(self.command) + sp + format_coordinates(self.x, self.y)
 
     def apply(self, target, cont, doc):
-        sel, obj, hdr = deep_apply(self.command, target, cont, doc)
+        sel, obj, epath = deep_apply(self.command, target, cont, doc)
+        epath.append(obj)
         if isinstance(obj, ClipDef):
             for entity in sorted(obj.entities, key=lambda x: x.shift):
                 if entity.shift <= self.x and entity.lane == self.y:
-                    return ByCoords(sel, entity.shift, entity.lane), entity, hdr
+                    return ByCoords(sel, entity.shift, entity.lane), entity, epath
             else:
-                return ByCoords(sel, self.x, self.y), None, hdr
+                return ByCoords(sel, self.x, self.y), None, epath
         else:
             raise Exception("not canvaic at: " + str(self.command))
 
     def attach(self, target, doc, cls, *args):
-        sel, obj, hdr = deep_apply(self.command, target, None, doc)
+        sel, obj, epath = deep_apply(self.command, target, None, doc)
+        epath.append(obj)
         if isinstance(obj, ClipDef):
             ent = cls(self.x, self.y, {}, *args)
             if check_cycles(ent, doc, obj.name):
                 raise Exception("creation of (" + str(ent) + ") would cause cycle issues into: " + str(self.command))
             obj.entities.append(ent)
-            return ByCoords(sel, self.x, self.y), ent, hdr
+            return ByCoords(sel, self.x, self.y), ent, epath
         else:
             raise Exception("not canvaic at: " + str(self.command))
 
@@ -544,7 +552,8 @@ class ByCoords(Command):
         raise Exception("cannot assign at coordinates")
 
     def remove(self, target, doc):
-        sel, obj, hdr = self.command.apply(target, None, doc)
+        sel, obj, epath = self.command.apply(target, None, doc)
+        epath.append(obj)
         if isinstance(obj, ClipEntity):
             for clip in doc.declarations:
                 if clip.name == obj.name:
@@ -556,7 +565,7 @@ class ByCoords(Command):
             for entity in sorted(obj.entities, key=lambda x: x.shift):
                 if entity.shift <= self.x and entity.lane == self.y:
                     obj.entities.remove(entity)
-                    return ByCoords(sel, entity.shift, entity.lane), None, hdr
+                    return ByCoords(sel, entity.shift, entity.lane), None, epath
             else:
                 raise Exception("nothing to remove: " + str(self))
         else:
@@ -580,6 +589,26 @@ def non_leaf(entity, doc):
     return None
 
 @dataclass(eq=False, repr=False)
+class MoveTo(Command):
+    command : Command
+    x : int | float
+    y : int
+    def __pretty__(self):
+        return pretty(self.command) + text(" ... ") + format_coordinates(self.x, self.y)
+
+    def apply(self, target, cont, doc):
+        sel, obj, epath = self.command.apply(target, cont, doc)
+        epath.append(obj)
+        if isinstance(obj, Entity):
+            obj.shift = self.x
+            obj.lane = self.y
+            if isinstance(sel, ByCoords):
+                sel.x = self.x
+                sel.y = self.y
+            return sel, obj, epath
+        raise Exception("not supporting movement of: " + str(obj))
+
+@dataclass(eq=False, repr=False)
 class SearchCoords(Command):
     command : Command
     x : int | float
@@ -588,31 +617,51 @@ class SearchCoords(Command):
         return pretty(self.command) + text(" ... ") + format_coordinates(self.x, self.y)
 
     def apply(self, target, cont, doc):
-        sel, obj, hdr = deep_apply(self.command, target, None, doc)
+        sel, obj, epath = deep_apply(self.command, target, None, doc)
+        epath.append(obj)
         if isinstance(obj, ClipDef):
-            unvisited = [(sel, obj, self.x, self.y)]
+            unvisited = [(sel, obj, self.x, self.y, epath)]
             best = None
             this = None
             while unvisited:
-                asel, obj, x, y = unvisited.pop()
+                asel, obj, x, y, epath = unvisited.pop()
+                epath = epath + [obj]
                 for entity in obj.entities:
                     if entity.shift <= x and entity.lane <= y:
                         dist = (y-entity.lane, x-entity.shift)
                         if cd := non_leaf(entity, doc):
                             bsel = ByCoords(asel, entity.shift, entity.lane)
-                            unvisited.append((bsel, cd, x - entity.shift, y - entity.lane))
+                            unvisited.append((bsel, cd, x - entity.shift, y - entity.lane, epath))
                         elif best is None or dist < best:
                             best = dist
-                            this = ByCoords(asel, entity.shift, entity.lane), entity, hdr
+                            this = ByCoords(asel, entity.shift, entity.lane), entity, epath
             if this is not None:
                 return this
             else:
                 raise Exception("the clip at this location is empty: " + str(self))
 
 @dataclass(eq=False, repr=False)
-class RootFinger:
+class Finger:
+    pass
+
+def header_of(thing):
+    while isinstance(thing, Finger):
+        if isinstance(thing, Side) and thing.side:
+            return thing.top.tree.header
+        thing = thing.top
+    return thing.header
+
+def topmost(thing):
+    while isinstance(thing, Finger):
+        thing = thing.top
+    return thing
+
+@dataclass(eq=False, repr=False)
+class RootFinger(Finger):
     top : Any
     tree : SequenceNode
+    def __post_init(self):
+        assert isinstance(tree, SequenceNode)
 
     def writeback(self):
         if isinstance(self.top, BrushEntity):
@@ -625,7 +674,7 @@ class RootFinger:
         return pformat_doc(p, 80)
 
 @dataclass(eq=False, repr=False)
-class Indexer:
+class Indexer(Finger):
     top : RootFinger
     start : int
     stop : int
@@ -641,7 +690,7 @@ class Indexer:
         return pformat_doc(p, 80)
 
 @dataclass(eq=False, repr=False)
-class Side:
+class Side(Finger):
     top : RootFinger
     side : bool
 
@@ -661,6 +710,22 @@ class Side:
         return pformat_doc(p, 80)
 
 @dataclass(eq=False, repr=False)
+class Middle(Finger):
+    top : RootFinger
+
+    def writeback(self, tree):
+        tuplet = self.top.tree
+        self.top.tree = Tuplet.mk(tuplet.duration, tree)
+        self.top.writeback()
+
+    def __str__(self):
+        if self.side:
+            p = formatted([], self.top.tree.mhs, False)
+        else:
+            p = formatted([], self.top.tree.lhs, False)
+        return pformat_doc(p, 80)
+
+@dataclass(eq=False, repr=False)
 class IndexOf(Command):
     command : Command
     index : int
@@ -668,29 +733,29 @@ class IndexOf(Command):
         return pretty(self.command) + text(f" [{self.index}]")
 
     def apply(self, target, cont, doc):
-        sel, obj, hdr = self.command.apply(target, cont, doc)
+        sel, obj, epath = self.command.apply(target, cont, doc)
+        epath.append(obj)
         if isinstance(obj, BrushEntity):
-            hdr = obj.header
             obj = RootFinger(obj, obj.expr)
         if isinstance(obj, RootFinger):
             obj = RootFinger(Indexer(obj, self.index, self.index+1), obj.tree.pick(self.index))
-            return IndexOf(sel, self.index), obj, hdr
+            return IndexOf(sel, self.index), obj, epath
         assert False, "TODO: something wrong"
 
     def write(self, target, doc, soup, fxs):
-        sel, obj, hdr = self.command.apply(target, None, doc)
+        sel, obj, epath = self.command.apply(target, None, doc)
+        epath.append(obj)
         if isinstance(obj, BrushEntity):
-            hdr = obj.header
             obj = RootFinger(obj, obj.expr)
         if isinstance(obj, RootFinger):
             selection = obj.tree.pick(self.index).retain(empty, empty)
-            nodes = read_soup(hdr, soup, fxs, selection)
+            nodes = read_soup(header_of(obj), soup, fxs, selection)
             obj.tree = obj.tree.erase(self.index, self.index+1).insert(self.index, nodes)
             obj.writeback()
             if nodes.length == 1:
-                return IndexOf(sel, self.index), Indexer(obj, self.index, self.index+nodes.length), hdr
+                return IndexOf(sel, self.index), Indexer(obj, self.index, self.index+nodes.length), epath
             else:
-                return RangeOf(sel, self.index, self.index+nodes.length), Indexer(obj, self.index, self.index+nodes.length), hdr
+                return RangeOf(sel, self.index, self.index+nodes.length), Indexer(obj, self.index, self.index+nodes.length), epath
         assert False, "TODO: something wrong"
 
 @dataclass(eq=False, repr=False)
@@ -703,32 +768,32 @@ class RangeOf(Command):
         return pretty(self.command) + text(f" [{self.start}:{self.stop}]")
 
     def apply(self, target, cont, doc):
-        sel, obj, hdr = self.command.apply(target, cont, doc)
+        sel, obj, epath = self.command.apply(target, cont, doc)
+        epath.append(obj)
         if isinstance(obj, BrushEntity):
-            hdr = obj.header
             obj = RootFinger(obj, obj.expr)
         if isinstance(obj, RootFinger):
             if self.stop - self.start == 1:
                 obj = RootFinger(Indexer(obj, self.start, self.stop), obj.tree.pick(self.start))
             else:
                 obj = Indexer(obj, self.start, self.stop)
-            return RangeOf(sel, self.start, self.stop), obj, hdr
+            return RangeOf(sel, self.start, self.stop), obj, epath
         assert False, "TODO: something wrong"
 
     def write(self, target, doc, soup, fxs):
-        sel, obj, hdr = self.command.apply(target, None, doc)
+        sel, obj, epath = self.command.apply(target, None, doc)
+        epath.append(obj)
         if isinstance(obj, BrushEntity):
-            hdr = obj.header
             obj = RootFinger(obj, obj.expr)
         if isinstance(obj, RootFinger):
             selection = empty
             for n in obj.tree.sequence(self.start, self.stop):
                 selection = selection.insert(selection.length, n.retain(empty, empty))
             count = selection.length
-            nodes = read_soup(hdr, soup, fxs, selection)
+            nodes = read_soup(header_of(obj), soup, fxs, selection)
             obj.tree = obj.tree.erase(self.start, self.stop).insert(self.start, nodes)
             obj.writeback()
-            return RangeOf(sel, self.start, self.start+nodes.length), Indexer(obj, self.start, self.start+nodes.length), hdr
+            return RangeOf(sel, self.start, self.start+nodes.length), Indexer(obj, self.start, self.start+nodes.length), epath
         assert False, "TODO: something wrong"
 
 @dataclass(eq=False, repr=False)
@@ -739,28 +804,28 @@ class LhsOf(Command):
         return pretty(self.command) + text(f" <")
 
     def apply(self, target, cont, doc):
-        sel, obj, hdr = self.command.apply(target, cont, doc)
+        sel, obj, epath = self.command.apply(target, cont, doc)
+        epath.append(obj)
         if isinstance(obj, BrushEntity):
-            hdr = obj.header
             obj = RootFinger(obj, obj.expr)
         if isinstance(obj, RootFinger):
             if isinstance(obj.tree, Fx):
                 obj = RootFinger(Side(obj, False), obj.tree.lhs)
-                return LhsOf(sel), obj, hdr
+                return LhsOf(sel), obj, epath
         raise Exception("selection not an FX: " + str(sel))
 
     def write(self, target, doc, soup, fxs):
-        sel, obj, hdr = self.command.apply(target, None, doc)
+        sel, obj, epath = self.command.apply(target, None, doc)
+        epath.append(obj)
         if isinstance(obj, BrushEntity):
-            hdr = obj.header
             obj = RootFinger(obj, obj.expr)
         if isinstance(obj, RootFinger):
             selection = obj.tree.lhs
-            nodes = read_soup(hdr, soup, fxs, selection)
+            nodes = read_soup(header_of(obj), soup, fxs, selection)
             if isinstance(obj.tree, Fx):
                 o = Side(obj, False)
                 o.writeback(nodes)
-                return LhsOf(sel), o, hdr
+                return LhsOf(sel), o, epath
         raise Exception("selection not an FX: " + str(sel))
 
 @dataclass(eq=False, repr=False)
@@ -771,24 +836,31 @@ class RhsOf(Command):
         return pretty(self.command) + text(f" >")
 
     def apply(self, target, cont, doc):
-        sel, obj, hdr = self.command.apply(target, cont, doc)
+        sel, obj, epath = self.command.apply(target, cont, doc)
+        epath.append(obj)
         if isinstance(obj, BrushEntity):
-            hdr = obj.header
             obj = RootFinger(obj, obj.expr)
         if isinstance(obj, RootFinger):
+            if isinstance(obj.tree, Tuplet):
+                o = RootFinger(Middle(obj), obj.tree.mhs)
+                return RhsOf(sel), o, epath
             if isinstance(obj.tree, Fx):
                 o = RootFinger(Side(obj, True), obj.tree.rhs)
                 return RhsOf(sel), o, obj.tree.header
         raise Exception("selection not an FX: " + str(sel))
 
     def write(self, target, doc, soup, fxs):
-        sel, obj, hdr = self.command.apply(target, None, doc)
+        sel, obj, epath = self.command.apply(target, None, doc)
+        epath.append(obj)
         if isinstance(obj, BrushEntity):
-            hdr = obj.header
             obj = RootFinger(obj, obj.expr)
         if isinstance(obj, RootFinger):
             selection = obj.tree.lhs
-            nodes = read_soup(hdr, soup, fxs, selection)
+            nodes = read_soup(header_of(obj), soup, fxs, selection)
+            if isinstance(obj.tree, Tuplet):
+                o = Middle(obj)
+                o.writeback(nodes)
+                return RhsOf(sel), o, epath
             if isinstance(obj.tree, Fx):
                 o = Side(obj, True)
                 o.writeback(nodes)
@@ -805,12 +877,13 @@ class SetConnection(Command):
         return pretty(self.command) + text(f" >")
 
     def apply(self, target, cont, doc):
-        sel, obj, hdr = self.command.apply(target, cont, doc)
+        sel, obj, epath = self.command.apply(target, cont, doc)
+        epath.append(obj)
         if self.connect:
             doc.connections.add(self.connection)
         else:
             doc.connections.discard(self.connection)
-        return sel, obj, hdr
+        return sel, obj, epath
 
 @dataclass(eq=False, repr=False)
 class SelectSynth(Command):
@@ -916,15 +989,17 @@ def format_group(group, header):
     group = group.copy()
     sequence = []
     for name, _, _ in header:
-        items = group.pop(name, [])
-        if len(items) == 0:
+        items = group.pop(name, None)
+        if items is None:
+            if group:
+                sequence.append(text("_"))
+        elif len(items) == 0:
             sequence.append(text("~"))
         else:
             sequence.append(text(":").join(items))
-    for name, value in group.items():
+    for name, items in group.items():
         if name == "":
             continue
-        items = group.pop(name, [])
         if len(items) == 0:
             sequence.append(text(name + "=~"))
         else:
@@ -986,6 +1061,8 @@ def read_soup(header, soup, fxs, selection=None):
     def process(group):
         out = {}
         for i, (name, attrs) in enumerate(group):
+            if attrs is None:
+                continue
             if name is not None:
                 out[name] = attrs
             elif i < len(header):
