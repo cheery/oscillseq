@@ -119,6 +119,7 @@ class Fx(SequenceNode):
     args : List[Value]
     header : List[Annotation]
     rhs : SequenceNode
+
     def retain(self, left, right):
         return Fx(left, right, self.lhs, self.args, self.header, self.rhs)
 
@@ -761,11 +762,19 @@ class IndexOf(Command):
 @dataclass(eq=False, repr=False)
 class RangeOf(Command):
     command : Command
-    start : int
-    stop : int
+    head : int
+    tail : int
+
+    @property
+    def start(self):
+        return min(self.head, self.tail)
+
+    @property
+    def stop(self):
+        return max(self.head, self.tail)
 
     def __pretty__(self):
-        return pretty(self.command) + text(f" [{self.start}:{self.stop}]")
+        return pretty(self.command) + text(f" [{self.head}:{self.tail}]")
 
     def apply(self, target, cont, doc):
         sel, obj, epath = self.command.apply(target, cont, doc)
@@ -809,6 +818,9 @@ class LhsOf(Command):
         if isinstance(obj, BrushEntity):
             obj = RootFinger(obj, obj.expr)
         if isinstance(obj, RootFinger):
+            if isinstance(obj.tree, Tuplet):
+                o = RootFinger(Middle(obj), obj.tree.mhs)
+                return LhsOf(sel), o, epath
             if isinstance(obj.tree, Fx):
                 obj = RootFinger(Side(obj, False), obj.tree.lhs)
                 return LhsOf(sel), obj, epath
@@ -822,6 +834,10 @@ class LhsOf(Command):
         if isinstance(obj, RootFinger):
             selection = obj.tree.lhs
             nodes = read_soup(header_of(obj), soup, fxs, selection)
+            if isinstance(obj.tree, Tuplet):
+                o = Middle(obj)
+                o.writeback(nodes)
+                return LhsOf(sel), o, epath
             if isinstance(obj.tree, Fx):
                 o = Side(obj, False)
                 o.writeback(nodes)
@@ -846,7 +862,7 @@ class RhsOf(Command):
                 return RhsOf(sel), o, epath
             if isinstance(obj.tree, Fx):
                 o = RootFinger(Side(obj, True), obj.tree.rhs)
-                return RhsOf(sel), o, obj.tree.header
+                return RhsOf(sel), o, epath
         raise Exception("selection not an FX: " + str(sel))
 
     def write(self, target, doc, soup, fxs):
@@ -864,7 +880,7 @@ class RhsOf(Command):
             if isinstance(obj.tree, Fx):
                 o = Side(obj, True)
                 o.writeback(nodes)
-                return RhsOf(sel), o, obj.tree.header
+                return RhsOf(sel), o, epath
         raise Exception("selection not an FX: " + str(sel))
 
 @dataclass(eq=False, repr=False)

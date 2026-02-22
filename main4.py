@@ -36,7 +36,7 @@ drums {
     (0,3) %% |1| [/ euclidean 4 14] {
        synth=snare;
     }
-    (0,4) %note:pitch@b% q c3, q c3, q c3, q c3 {
+    (0,4) %note:pitch% q c3, q c3, q c3, q c3 {
        synth=tone;
     }
 }
@@ -51,14 +51,14 @@ main {
       q, q, q, e, e,
       q, q, q, s, s, s, s,
       q, q, q, q
-      / ostinato %note:pitch%
+      / ostinato %note:pitch@a%
         * c6, * e6, * d6, * f6, * e6, * c6, * e6, * d6, * f6, * c6, * c6
     {
         synth=tone;
     }
     (0,6) %note:pitch@b%
         |4| [e, s, s, e, s, s, s, s, s, s, s, s, s, s / repeat 4]
-        / ostinato %note:pitch% * c4, * g3, * d4, * e4, * c5, * b4, * f4 {
+        / ostinato %note:pitch@b% * c4, * g3, * d4, * e4, * c5, * b4, * f4 {
         synth=tone;
     }
     (0,8) @a {
@@ -396,6 +396,7 @@ class Editor:
         self.scroll_ox = None
         self.scroll_x = 0
         self.timeline = TimelineControl()
+        self.track_scroll = (0,0)
 
         self.midi_status = False
         self.midi_controllers = []
@@ -456,8 +457,8 @@ class Editor:
 
         if self.mode == "track" and isinstance(self.detail, (BrushEntity, Finger)):
             main_grid = Grid(
-                self.MARGIN,
-                24, self.BAR_WIDTH, self.LANE_HEIGHT)
+                self.MARGIN - self.track_scroll[0] * self.BAR_WIDTH / 4,
+                24 - self.track_scroll[1] * self.LANE_HEIGHT, self.BAR_WIDTH / 4, self.LANE_HEIGHT)
 
             config = default_rhythm_config.copy()
             views = {}
@@ -467,8 +468,7 @@ class Editor:
                 if isinstance(e, ClipDef):
                     for ent in e.entities:
                         if isinstance(ent, ViewEntity):
-                            views[ent.name] = config
-            hdr = header_of(self.detail)
+                            views[ent.name] = config | ent.properties
             brush_entity = topmost(self.detail)
             ui.label(str(list(views.keys())), top_grid(0,1,10,2))
             config |= brush_entity.properties
@@ -476,12 +476,10 @@ class Editor:
                 main_grid,
                 main_rect,
                 config,
-                hdr,
                 brush_entity,
                 views,
                 self.detail,
                 "track-editor"))
-            pass
         elif self.mode == "track":
             ui.widget(GridWidget(self, main_rect, "grid"))
             edit_widgets = []
@@ -523,30 +521,13 @@ class Editor:
                     iy = y + e.lane
                     key = kv + (i,)
                     w, h, config, expr, data = self.proc.dimensions[key]
-                    mode = unwrap(config.get("view", Unk("staves")))
-                    if mode == "pianoroll":
-                        top = config.get('top', 69 + 12)
-                        bot = config.get('bot', 69 - 12)
-                        if ui.widget(e := PianorollWidget(
-                            main_grid(ix, iy, ix+w, iy+h),
-                            int(bot), int(top),
-                            views.get(e.name, []), main_grid,
-                            key)):
-                            self.selected = key
-                            self.stack_index = None
-                    else:
-                        above = config.get('above', 0)
-                        count = config.get('count', 1)
-                        below = config.get('below', 0)
-                        key = config.get('key', 0)
-                        if ui.widget(e := StavesWidget(
-                            main_grid(ix, iy, ix+w, iy+h),
-                            above, count, below, key,
-                            views.get(e.name, []), main_grid,
-                            key)):
-                            self.selected = key
-                            self.stack_index = None
-                    edit_widgets.append(e)
+                    ui.widget(ViewWidget(
+                        config,
+                        main_grid(ix, iy, ix+w, iy+h),
+                        views.get(e.name, []),
+                        main_grid,
+                        key))
+                    #edit_widgets.append(e)
                 return views
 
             main_decl = self.proc.declarations['main']
@@ -1035,74 +1016,169 @@ class TrackEditorWidget:
     grid : Grid
     rect : pygame.Rect
     config : Dict[str, Value]
-    header : List[Annotation]
     brush : BrushEntity
     views : Dict[str, Dict[str, Value]]
     detail : Finger | BrushEntity
     widget_id : Any
 
     def behavior(self, ui):
+        if self.rect.collidepoint(ui.mouse_pos):
+            if ui.mouse_just_pressed and ui.active_id is None:
+                ui.active_id = self.widget_id
+            if ui.r_mouse_just_pressed and ui.r_active_id is None:
+                ui.r_active_id = self.widget_id
+                editor.scroll_ox = ui.mouse_pos, editor.track_scroll
+        #f ui.mouse_just_released and ui.active_id == self.widget_id:
+        #   mx, my = ui.mouse_pos
+        #   x = (mx - self.grid.x) // self.grid.w
+        #   y = (my - self.grid.y) // self.grid.h
+        #    return ("pick", (x, y))
+        if ui.r_mouse_pressed and ui.r_active_id == self.widget_id:
+            (mx, my), (ox, oy) = editor.scroll_ox
+            editor.track_scroll = (
+                ox - round((ui.mouse_pos[0]-mx) / self.grid.w),
+                oy - round((ui.mouse_pos[1]-my) / self.grid.h))
+            return ("scroll", editor.track_scroll)
+
+        k = 0
+        def point_header(header, t):
+            nonlocal k
+            i = t
+            rect = self.grid(k,i,(k+1),i+1)
+            i += 1
+            for name, dtype, view in header:
+                rect = self.grid(k,i,(k+1),i+1)
+                i += 1
+            k += 1
+            return i
+        def point_notes(exprs, t, header):
+            nonlocal k
+            h = t
+            for node in exprs:
+                if isinstance(node, Note):
+                    i = t
+                    rect = self.grid(k,i,(k+1),i+1)
+                    i += 1
+                    for name, dtype, view in header:
+                        data = node.group.get(name, None)
+                        if view is not None and view != "+" and view in self.views:
+                            config = self.views[view]
+                            H = compute_view_height(config)
+                            rect = self.grid(k,i,(k+1),i+H)
+                            pitch = point_view(config, rect, ui.mouse_pos)
+                            i += H
+                        else:
+                            rect = self.grid(k,i,(k+1),i+1)
+                            i += 1
+                    k += 1
+                    h = max(h,i)
+                elif isinstance(node, Tuplet):
+                    s = k
+                    i = point_notes(node.mhs, t, header)
+                    e = k = max(k,s+2)
+                    g=self.grid(s,i,(k),i+1)
+                    h = max(h,i+1)
+                    k = e
+                elif isinstance(node, Fx):
+                    s = k
+                    i = point_notes(node.lhs, t, header)
+                    e = k = max(k,s+2)
+                    g = self.grid(s,i,(k),i+1)
+                    k = s
+                    if node.rhs != empty:
+                        hdr = decorated_header(node.header, node.rhs)
+                        p = point_notes(node.rhs, i+1, hdr)
+                        q = point_header(hdr, i+1)
+                        h = max(h,p,q)
+                    else:
+                        h = max(h,i+1)
+                    k = max(k,e)
+            return h
+
+        hdr = decorated_header(self.brush.header, self.brush.expr)
+        point_header(hdr, 0)
+        point_notes(self.brush.expr, 0, hdr)
+
         return None
 
     def draw(self, ui, screen):
+        sel = self.brush.expr
+        sel_start = 0
+        sel_stop  = sel.length
+        if isinstance(self.detail, RootFinger):
+            if isinstance(self.detail.top, Indexer):
+                sel = self.detail.top.top.tree
+                sel_start = self.detail.top.start
+                sel_stop  = self.detail.top.stop
+            if isinstance(self.detail.top, (Side, Middle)):
+                sel = self.detail.tree
+                sel_start = 0
+                sel_stop  = sel.length
+        elif isinstance(self.detail, Indexer):
+            sel = self.detail.top.tree
+            sel_start = self.detail.start
+            sel_stop  = self.detail.stop
+
         k = 0
         def draw_header(header, t):
             nonlocal k
             i = t
             surf = ui.font16.render("rhythm", True, (200, 200, 200))
-            rect = surf.get_rect(center=self.grid(k/4,i,(k+1)/4,i+1).center)
+            rect = surf.get_rect(center=self.grid(k,i,(k+1),i+1).center)
             screen.blit(surf, rect)
             i += 1
             for name, dtype, view in header:
                 if view == "+":
                     name = "(" + name + ")"
                 surf = ui.font16.render(name, True, (200, 200, 200))
-                rect = surf.get_rect(center=self.grid(k/4,i,(k+1)/4,i+1).center)
+                rect = surf.get_rect(center=self.grid(k,i,(k+1),i+1).center)
                 screen.blit(surf, rect)
                 i += 1
             k += 1
             return i
-        def decorate_header(headset, exprs):
-            for node in exprs:
-                if isinstance(node, Note):
-                    headset.update(node.group)
-                elif isinstance(node, Tuplet):
-                    decorate_header(headset, node.mhs)
-                elif isinstance(node, Fx):
-                    decorate_header(headset, node.lhs)
-            return headset
-        def decorated_header(header, exprs):
-            headset = decorate_header(set(), exprs)
-            for name, _, _ in header:
-                headset.discard(name)
-            return header + [(name, None, "+") for name in sorted(headset)]
         def draw_notes(exprs, t, header):
             nonlocal k
             h = t
-            for node in exprs:
+            if exprs == empty:
+                k += 4
+                return t+1
+            sel_start_k = k
+            sel_stop_k = k
+            for pos, node in enumerate(exprs):
                 if isinstance(node, Note):
                     i = t
-                    surf = ui.font16.render(str(node.duration) if node.duration else "*", True, (200, 200, 200))
-                    rect = surf.get_rect(center=self.grid(k/4,i,(k+1)/4,i+1).center)
+                    D = str(node.duration) if node.duration else "*"
+                    if node.style:
+                        D = " " + node.style
+                    surf = ui.font16.render(D, True, (200, 200, 200))
+                    rect = surf.get_rect(center=self.grid(k,i,(k+1),i+1).center)
                     screen.blit(surf, rect)
                     i += 1
                     for name, dtype, view in header:
                         data = node.group.get(name, None)
-                        if data is None:
-                            data = "_"
+                        if view is not None and view != "+" and view in self.views:
+                            config = self.views[view]
+                            H = compute_view_height(config)
+                            G = self.grid(k,i,(k+1),i+H).inflate((-4, 0))
+                            draw_view(screen, config, G)
+                            draw_view_note(screen, config, G, data)
+                            i += H
                         else:
-                            data = ":".join(str(x) for x in data)
-                        surf = ui.font16.render(data, True, (200, 200, 200))
-                        rect = surf.get_rect(center=self.grid(k/4,i,(k+1)/4,i+1).center)
-                        screen.blit(surf, rect)
-                        i += 1
+                            if data is None:
+                                data = "_"
+                            else:
+                                data = ":".join(str(x) for x in data)
+                            surf = ui.font16.render(data, True, (200, 200, 200))
+                            rect = surf.get_rect(center=self.grid(k,i,(k+1),i+1).center)
+                            screen.blit(surf, rect)
+                            i += 1
                     k += 1
                     h = max(h,i)
                 elif isinstance(node, Tuplet):
                     s = k
                     i = draw_notes(node.mhs, t, header)
                     e = k = max(k,s+2)
-                    g=self.grid(s/4,i,(k)/4,i+1)
+                    g=self.grid(s,i,(k),i+1)
                     pygame.draw.rect(screen, (200, 200, 200), g)
                     surf = ui.font16.render(str(node.duration) if node.duration else "*", True, (30,30,30))
                     rect = surf.get_rect(center=g.center)
@@ -1113,7 +1189,7 @@ class TrackEditorWidget:
                     s = k
                     i = draw_notes(node.lhs, t, header)
                     e = k = max(k,s+2)
-                    g = self.grid(s/4,i,(k)/4,i+1)
+                    g = self.grid(s,i,(k),i+1)
                     pygame.draw.rect(screen, (100, 200, 100), g)
                     surf = ui.font16.render("/ " + " ".join(str(a) for a in node.args), True, (30,30,30))
                     rect = surf.get_rect(center=g.center)
@@ -1127,11 +1203,33 @@ class TrackEditorWidget:
                     else:
                         h = max(h,i+1)
                     k = max(k,e)
+                if sel is exprs and sel_start == pos+1:
+                    sel_start_k = k
+                if sel is exprs and sel_stop == pos+1:
+                    sel_stop_k = k
+            if sel is exprs:
+                g = self.grid(sel_start_k - 0.1, t, sel_stop_k + 0.1, h)
+                pygame.draw.rect(screen, (100, 100, 200), g, 4, 3)
             return h
 
-        hdr = decorated_header(self.header, self.brush.expr)
+        hdr = decorated_header(self.brush.header, self.brush.expr)
         draw_header(hdr, 0)
         draw_notes(self.brush.expr, 0, hdr)
+
+def decorated_header(header, exprs):
+    def decorate_header(headset, exprs):
+        for node in exprs:
+            if isinstance(node, Note):
+                headset.update(node.group)
+            elif isinstance(node, Tuplet):
+                decorate_header(headset, node.mhs)
+            elif isinstance(node, Fx):
+                decorate_header(headset, node.lhs)
+        return headset
+    headset = decorate_header(set(), exprs)
+    for name, x, y in header:
+        headset.discard(name)
+    return header + [(name, None, "+") for name in sorted(headset)]
 
 @dataclass
 class GridWidget:
@@ -1239,70 +1337,28 @@ class Editing:
     def draw(self, ui, screen):
         pass
 
-class StavesWidget:
-    def __init__(self, rect, above, count, below, key, data, grid, widget_id):
-        self.rect = rect
-        self.above = above
-        self.count = count
-        self.below = below
-        self.key = key
-        self.data = data
-        self.grid = grid
-        self.widget_id = widget_id
+@dataclass(eq=False)
+class ViewWidget:
+    config : Dict[str, Value]
+    rect : pygame.Rect
+    data : Any
+    grid : Grid
+    widget_id : Any
 
     def behavior(self, ui):
-        ui.grab_active(self)
-        return ui.was_clicked(self)
+        return None
 
     def draw(self, ui, screen):
-        rect = self.rect
+        draw_view(screen, self.config, self.rect)
+        draw_view_data(screen, self.config, self.rect, self.data, self.grid)
+        pygame.draw.rect(screen, (200,200,200), self.rect, 1, 3)
+
+def draw_view(screen, config, rect):
+    mode = unwrap(config.get("view", Unk("staves")))
+    if mode == "pianoroll":
+        top = int(config.get('top', 69 + 12))
+        bot = int(config.get('bot', 69 - 12))
         pygame.draw.rect(screen, (0,0,0), rect, 0, 3)
-        x, y = rect.topleft
-        w = rect.width
-        k = rect.height / (self.count + self.above + self.below)
-        y += self.above * k
-        for _ in range(self.count):
-            for p in range(2, 12, 2):
-                pygame.draw.line(screen, (70, 70, 70), (x, y+p*k/12), (x+w, y+p*k/12))
-            y += k
-        screen.set_clip(rect)
-        colors = [(0,0,128), (0,0,255), (255,128,0), (255, 0, 0), (128,0,0)]
-        for name, dtype, data, x, _ in self.data:
-            for s,d, vg in data:
-                a = self.grid.point(s + x, 0)[0]
-                b = self.grid.point(s + x + d, 0)[0]
-                for tone in vg.get(name,()):
-                    if isinstance(tone, int):
-                        tone = music.Pitch.from_midi(tone)
-                    color = colors[tone.accidental+2]
-                    acci = music.accidentals(self.key)
-                    if tone.accidental == acci[tone.position % 7]:
-                        color = (255,255,255)
-                    py = rect.top + self.above*k + (40 - tone.position) * k / 12
-                    rc = pygame.Rect(a, py - k / 24, b-a, k / 12)
-                    pygame.draw.rect(screen, color, rc, 1, 2)
-        screen.set_clip(None)
-        pygame.draw.rect(screen, (200,200,200), rect, 1, 3)
-        pygame.draw.rect(screen, (200,200,200), rect, 1, 3)
-
-class PianorollWidget:
-    def __init__(self, rect, bot, top, data, grid, widget_id):
-        self.rect = rect
-        self.bot  = bot
-        self.top  = top
-        self.data = data
-        self.grid = grid
-        self.widget_id = widget_id
-
-    def behavior(self, ui):
-        ui.grab_active(self)
-        return ui.was_clicked(self)
-
-    def draw(self, ui, screen):
-        rect = self.rect
-        pygame.draw.rect(screen, (0,0,0), rect, 0, 3)
-        top = self.top
-        bot = self.bot
         x, y = rect.bottomleft
         w = rect.width
         k = rect.height / (top - bot + 1)
@@ -1319,18 +1375,127 @@ class PianorollWidget:
                 pygame.draw.line(screen, (70, 70, 70), (x, py), (rc.right, py))
             else:
                 pygame.draw.line(screen, (50, 50, 50), (x, py), (rc.right, py))
+    else:
+        above = int(config.get('above', 0))
+        count = int(config.get('count', 1))
+        below = int(config.get('below', 0))
+        key = int(config.get('key', 0))
+        pygame.draw.rect(screen, (0,0,0), rect, 0, 3)
+        x, y = rect.topleft
+        w = rect.width
+        k = rect.height / (count + above + below)
+        y += above * k
+        for _ in range(count):
+            for p in range(2, 12, 2):
+                pygame.draw.line(screen, (70, 70, 70), (x, y+p*k/12), (x+w, y+p*k/12))
+            y += k
+
+def draw_view_note(screen, config, rect, data):
+    mode = unwrap(config.get("view", Unk("staves")))
+    if data is None:
+        pygame.draw.line(screen, (200,200,200), rect.topleft, rect.bottomright)
+    elif mode == "pianoroll":
+        top = int(config.get('top', 69 + 12))
+        bot = int(config.get('bot', 69 - 12))
+        x, y = rect.bottomleft
+        w = rect.width
+        k = rect.height / (top - bot + 1)
         screen.set_clip(rect)
-        for name, dtype, data, x, e in self.data:
+        a = rect.left + 10
+        b = rect.right - 10
+        for v in data:
+            tone = int(v)
+            py = y - k*(tone - bot)
+            rc = pygame.Rect(a, py-k, b-a, k)
+            pygame.draw.rect(screen, (255, 255, 255), rc, 1, 2)
+        screen.set_clip(None)
+    else:
+        above = int(config.get('above', 0))
+        count = int(config.get('count', 1))
+        below = int(config.get('below', 0))
+        key = int(config.get('key', 0))
+        screen.set_clip(rect)
+        colors = [(0,0,128), (0,0,255), (255,128,0), (255, 0, 0), (128,0,0)]
+        k = rect.height / (count + above + below)
+        a = rect.left + 10
+        b = rect.right - 10
+        for tone in data:
+            if isinstance(tone, int):
+                tone = music.Pitch.from_midi(tone)
+            color = colors[tone.accidental+2]
+            acci = music.accidentals(key)
+            if tone.accidental == acci[tone.position % 7]:
+                color = (255,255,255)
+            py = rect.top + above*k + (40 - tone.position) * k / 12
+            rc = pygame.Rect(a, py - k / 24, b-a, k / 12)
+            pygame.draw.rect(screen, color, rc, 1, 2)
+        screen.set_clip(None)
+
+def draw_view_data(screen, config, rect, data, grid):
+    mode = unwrap(config.get("view", Unk("staves")))
+    if mode == "pianoroll":
+        top = int(config.get('top', 69 + 12))
+        bot = int(config.get('bot', 69 - 12))
+        x, y = rect.bottomleft
+        w = rect.width
+        k = rect.height / (top - bot + 1)
+        screen.set_clip(rect)
+        for name, dtype, data, x, e in data:
             for s,d, vg in data:
-                a = self.grid.point(s + x, 0)[0]
-                b = self.grid.point(s + x + d, 0)[0]
+                a = grid.point(s + x, 0)[0]
+                b = grid.point(s + x + d, 0)[0]
                 for v in vg.get(name,()):
                     tone = int(v)
                     py = y - k*(tone - bot)
                     rc = pygame.Rect(a, py-k, b-a, k)
                     pygame.draw.rect(screen, (255, 255, 255), rc, 1, 2)
         screen.set_clip(None)
-        pygame.draw.rect(screen, (200,200,200), rect, 1, 3)
+    else:
+        above = int(config.get('above', 0))
+        count = int(config.get('count', 1))
+        below = int(config.get('below', 0))
+        key = int(config.get('key', 0))
+        screen.set_clip(rect)
+        colors = [(0,0,128), (0,0,255), (255,128,0), (255, 0, 0), (128,0,0)]
+        k = rect.height / (count + above + below)
+        for name, dtype, data, x, _ in data:
+            for s,d, vg in data:
+                a = grid.point(s + x, 0)[0]
+                b = grid.point(s + x + d, 0)[0]
+                for tone in vg.get(name,()):
+                    if isinstance(tone, int):
+                        tone = music.Pitch.from_midi(tone)
+                    color = colors[tone.accidental+2]
+                    acci = music.accidentals(key)
+                    if tone.accidental == acci[tone.position % 7]:
+                        color = (255,255,255)
+                    py = rect.top + above*k + (40 - tone.position) * k / 12
+                    rc = pygame.Rect(a, py - k / 24, b-a, k / 12)
+                    pygame.draw.rect(screen, color, rc, 1, 2)
+        screen.set_clip(None)
+
+def point_view(config, rect, mouse_pos):
+    mode = unwrap(config.get("view", Unk("staves")))
+    if not rect.collidepoint(mouse_pos):
+        return None
+    if mode == "pianoroll":
+        top = int(config.get('top', 69 + 12))
+        bot = int(config.get('bot', 69 - 12))
+        x, y = rect.bottomleft
+        w = rect.width
+        k = rect.height / (top - bot + 1)
+        note_pos = int(round((rect.bottom - mouse_pos[1])/k)) + bot
+        note_edited = music.Pitch.from_midi(note_pos)
+    else:
+        above = int(config.get('above', 0))
+        count = int(config.get('count', 1))
+        below = int(config.get('below', 0))
+        key = int(config.get('key', 0))
+        ox, oy = rect.topleft
+        k = rect.height / (count + above + below)
+        note_pos = int(round((oy + above*k - mouse_pos[1]) / (k / 12) + 40))
+        note_edited = music.Pitch(note_pos, 0)
+    return note_edited
 
 @dataclass
 class TransportVisual:
