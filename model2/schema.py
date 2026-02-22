@@ -229,7 +229,7 @@ class Note(SequenceNode):
         d = text("*") if self.duration is None else pretty(self.duration)
         if not self.style:
             return d + text(" ") + format_group(self.group, header)
-        return d + text(f" {self.style} ") + format_group(self.group, header)
+        return d + text(f"@{self.style} ") + format_group(self.group, header)
 
     def __str__(self):
         return pformat_doc(formatted([], self, True), 80)
@@ -720,10 +720,7 @@ class Middle(Finger):
         self.top.writeback()
 
     def __str__(self):
-        if self.side:
-            p = formatted([], self.top.tree.mhs, False)
-        else:
-            p = formatted([], self.top.tree.lhs, False)
+        p = formatted([], self.top.tree.mhs, False)
         return pformat_doc(p, 80)
 
 @dataclass(eq=False, repr=False)
@@ -785,8 +782,8 @@ class RangeOf(Command):
             if self.stop - self.start == 1:
                 obj = RootFinger(Indexer(obj, self.start, self.stop), obj.tree.pick(self.start))
             else:
-                obj = Indexer(obj, self.start, self.stop)
-            return RangeOf(sel, self.start, self.stop), obj, epath
+                obj = Indexer(obj, self.head, self.tail)
+            return RangeOf(sel, self.head, self.tail), obj, epath
         assert False, "TODO: something wrong"
 
     def write(self, target, doc, soup, fxs):
@@ -832,13 +829,15 @@ class LhsOf(Command):
         if isinstance(obj, BrushEntity):
             obj = RootFinger(obj, obj.expr)
         if isinstance(obj, RootFinger):
-            selection = obj.tree.lhs
-            nodes = read_soup(header_of(obj), soup, fxs, selection)
             if isinstance(obj.tree, Tuplet):
+                selection = obj.tree.mhs
+                nodes = read_soup(header_of(obj), soup, fxs, selection)
                 o = Middle(obj)
                 o.writeback(nodes)
                 return LhsOf(sel), o, epath
             if isinstance(obj.tree, Fx):
+                selection = obj.tree.lhs
+                nodes = read_soup(header_of(obj), soup, fxs, selection)
                 o = Side(obj, False)
                 o.writeback(nodes)
                 return LhsOf(sel), o, epath
@@ -871,13 +870,15 @@ class RhsOf(Command):
         if isinstance(obj, BrushEntity):
             obj = RootFinger(obj, obj.expr)
         if isinstance(obj, RootFinger):
-            selection = obj.tree.lhs
-            nodes = read_soup(header_of(obj), soup, fxs, selection)
             if isinstance(obj.tree, Tuplet):
+                selection = obj.tree.mhs
+                nodes = read_soup(header_of(obj), soup, fxs, selection)
                 o = Middle(obj)
                 o.writeback(nodes)
                 return RhsOf(sel), o, epath
             if isinstance(obj.tree, Fx):
+                selection = obj.tree.rhs
+                nodes = read_soup(header_of(obj), soup, fxs, selection)
                 o = Side(obj, True)
                 o.writeback(nodes)
                 return RhsOf(sel), o, epath

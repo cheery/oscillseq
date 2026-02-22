@@ -66,13 +66,13 @@ grammar = r"""
     soup: () -> as_list
         | expr ("," expr)* -> as_list
 
-    expr: duration [style] group -> note
+    expr: duration ["@" style] group -> note
         | "$"                    -> placeholder
         | duration "[" soup fx* "]" -> tuplet
         | "(" soup fx* ")" -> listlet
 
-    style: T_OR_S -> as_str
-    T_OR_S: "s" | "t"
+    style: T_OR_S_OR_G -> as_str
+    T_OR_S_OR_G: "s" | "t" | "g"
 
     duration: "|" number "|" dot* -> duration
             | DLETTER dot*        -> duration_s

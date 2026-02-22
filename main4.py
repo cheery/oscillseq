@@ -41,12 +41,8 @@ drums {
     }
 }
 
-main {
-    (0,0) &drums;
-    (1,0) &drums;
-    (2,0) &drums;
-    (3,0) &drums;
-    (0,5) %note:pitch@a%
+theme2 {
+    (0,0) %note:pitch@a%
       q, e, e, q, e, e,
       q, q, q, e, e,
       q, q, q, s, s, s, s,
@@ -56,24 +52,50 @@ main {
     {
         synth=tone;
     }
+    (0,1) @a {
+        above=1;
+    }
+}
+
+theme {
+    (0,0) &drums;
+    (1,0) &drums;
+    (2,0) &drums;
+    (3,0) &drums;
     (0,6) %note:pitch@b%
         |4| [e, s, s, e, s, s, s, s, s, s, s, s, s, s / repeat 4]
         / ostinato %note:pitch@b% * c4, * g3, * d4, * e4, * c5, * b4, * f4 {
         synth=tone;
-    }
-    (0,8) @a {
-        above=1;
     }
     (0,13) @b {
         view=pianoroll;
     }
 }
 
+full {
+    (0,0) &theme;
+    (4,0) &theme;
+    (4,8) &theme2;
+    (8,0) &theme;
+    (8,8) &theme2;
+    (8,16) %note:pitch% e c5, e e5, q c5, e b4, e c5, q c4 / repeat 4 { synth=saw; }
+    (12,0) &theme;
+    (12,8) &theme2;
+    (12,16) %note:pitch% e c5, e e5, q g5, e b4, e c5, q c4 / repeat 4 { synth=saw; }
+}
+
+main {
+    (0,0) &full;
+    (16,0) &full;
+    (32,0) &full;
+    (32,16) %note:pitch% e c5, e e5, q g5, e b4, e c5, q c4 / repeat 4 { synth=saw; }
+}
+
 @synths
   (-122, -39) tone fm multi {
     volume=-0;
   }
-  (-122, -89) musi musical multi {
+  (-122, -89) saw saw multi {
     volume=-0;
   }
 
@@ -100,7 +122,7 @@ main {
 
 @connections
   tone:out   system:out,
-  musi:out   system:out,
+  saw:out   system:out,
   kick:out   system:out,
   mhat:out   system:out,
   hat:out    system:out,
@@ -195,6 +217,8 @@ class DocumentProcessing:
 
     def compute_pattern(self, exprs, config):
         events = []
+        def is_grace(this):
+            return isinstance(this, Note) and this.style == "g"
         def resolve(this):
             if this is None:
                 return 1.0
@@ -207,74 +231,48 @@ class DocumentProcessing:
                 duration += dot
                 dot /= 2
             return float(duration)
-
         def compute_note(t, note, duration):
             if isinstance(note, Note):
                 match note.style:
-                    case "staccato":
+                    case "s":
                         d = duration * config['staccato']
-                    case "tenuto":
+                    case "t":
                         d = duration * config['tenuto']
+                    case "g":
+                        d = duration * config['normal']
                     case None:
                         d = duration * config['normal']
                 assert isinstance(note.group, Dict), str(note.group)
                 events.append((t,d,note.group))
             elif isinstance(note, Tuplet):
                 s = t
-                subrate = duration / sum(resolve(n.duration) for n in note.mhs)
+                grace = 0.0
+                total = sum(resolve(n.duration) for n in note.mhs if not is_grace(n))
+                subrate = duration / total if total != 0 else duration
                 for subnote in note.mhs:
                     subduration = resolve(subnote.duration) * subrate
-                    compute_note(s, subnote, subduration)
-                    s += subduration
+                    if is_grace(subnote):
+                        compute_note(s, subnote, subduration)
+                        grace += subduration
+                    else:
+                        subduration = max(subduration - grace, 0.0)
+                        grace    = 0
+                        compute_note(s, subnote, subduration)
+                        s += subduration
         t = 0.0
+        grace = 0.0
         rate = config["beats_per_measure"] / config["beat_division"]
         for expr in exprs:
             duration = resolve(expr.duration) * rate
-            compute_note(t, expr, duration)
-            t += duration
+            if is_grace(expr):
+                compute_note(t, expr, duration)
+                grace += duration
+            else:
+                duration = max(duration - grace, 0.0)
+                grace    = 0
+                compute_note(t, expr, duration)
+                t += duration
         return events, t
-
-    #def process_component(self, component, rhythm_config):
-    #    if isinstance(component, FromRhythm):
-    #        decl = self.declarations[component.name]
-    #        return self.process_component(decl.component, rhythm_config)
-    #    elif isinstance(component, Overlay):
-    #        pattern = self.process_component(component.base, rhythm_config)
-    #        values = component.to_values()
-    #        return pattern.overlay(values, (component.name, component.dtype, component.view))
-    #    elif isinstance(component, Renamed):
-    #        pattern = self.process_component(component.base, rhythm_config)
-    #        for vv in pattern.values:
-    #            for v in vv:
-    #                if component.src in v:
-    #                    v[component.dst] = v.pop(component.src)
-    #        return pattern
-    #    elif isinstance(component, Repeated):
-    #        pattern = self.process_component(component.base, rhythm_config)
-    #        events = []
-    #        values = pattern.values * component.count
-    #        meta = pattern.meta * component.count
-    #        for i in range(component.count):
-    #            for s, d in pattern.events:
-    #                events.append((s + pattern.duration*i, d))
-    #        return Pattern(events, values, pattern.duration*component.count, pattern.views, meta)
-    #    elif isinstance(component, Durated):
-    #        pattern = self.process_component(component.base, rhythm_config)
-    #        events = []
-    #        values = pattern.values
-    #        meta = pattern.meta
-    #        p = component.duration / pattern.duration
-    #        for s, d in pattern.events:
-    #            events.append((s * p, d * p))
-    #        return Pattern(events, values, component.duration, [], meta)
-    #    elif isinstance(component, WestRhythm):
-    #        return component.to_pattern(rhythm_config)
-    #    elif isinstance(component, StepRhythm):
-    #        return component.to_west().to_pattern(rhythm_config)
-    #    elif isinstance(component, EuclideanRhythm):
-    #        return component.to_west().to_pattern(rhythm_config)
-    #    else:
-    #        assert False
 
     def construct_hocket(self, sb, config, pattern, shift, key):
         tag_normal = unwrap(config["synth"])
@@ -473,12 +471,14 @@ class Editor:
             ui.label(str(list(views.keys())), top_grid(0,1,10,2))
             config |= brush_entity.properties
             ui.widget(TrackEditorWidget(
+                self,
                 main_grid,
                 main_rect,
                 config,
                 brush_entity,
                 views,
                 self.detail,
+                self.selection,
                 "track-editor"))
         elif self.mode == "track":
             ui.widget(GridWidget(self, main_rect, "grid"))
@@ -1013,15 +1013,18 @@ class Spectroscope:
 
 @dataclass
 class TrackEditorWidget:
+    editor : Editor
     grid : Grid
     rect : pygame.Rect
     config : Dict[str, Value]
     brush : BrushEntity
     views : Dict[str, Dict[str, Value]]
     detail : Finger | BrushEntity
+    selection : Command
     widget_id : Any
 
     def behavior(self, ui):
+        editor = self.editor
         if self.rect.collidepoint(ui.mouse_pos):
             if ui.mouse_just_pressed and ui.active_id is None:
                 ui.active_id = self.widget_id
@@ -1039,10 +1042,58 @@ class TrackEditorWidget:
                 ox - round((ui.mouse_pos[0]-mx) / self.grid.w),
                 oy - round((ui.mouse_pos[1]-my) / self.grid.h))
             return ("scroll", editor.track_scroll)
+        output = None
+
+        ui.grab_focus(self)
+
+        selection = self.selection
+
+        if ui.focused_id == self.widget_id:
+            count = None
+            if isinstance(self.detail, RootFinger):
+                if isinstance(self.detail.top, Indexer):
+                    count = self.detail.top.top.tree.length
+            elif isinstance(self.detail, Indexer):
+                count = self.detail.top.tree.length
+            if count is not None and isinstance(selection, (RangeOf, IndexOf)):
+                if ui.keyboard_key == pygame.K_LEFT:
+                    if isinstance(selection, IndexOf):
+                        selection = RangeOf(selection.command, selection.index, selection.index)
+                    elif isinstance(selection, RangeOf):
+                        head = max(0, selection.head-1)
+                        if ui.keyboard_mod & pygame.KMOD_SHIFT:
+                            selection = RangeOf(selection.command, head, selection.tail)
+                        else:
+                            selection = RangeOf(selection.command, head, head)
+                    editor.run_command(selection)
+                    return "run", selection
+                if ui.keyboard_key == pygame.K_RIGHT:
+                    if isinstance(selection, IndexOf):
+                        selection = RangeOf(selection.command, selection.index+1, selection.index+1)
+                    elif isinstance(selection, RangeOf):
+                        head = min(count, selection.head+1)
+                        if ui.keyboard_mod & pygame.KMOD_SHIFT:
+                            selection = RangeOf(selection.command, head, selection.tail)
+                        else:
+                            selection = RangeOf(selection.command, head, head)
+                    editor.run_command(selection)
+                    return "run", selection
+                if ui.keyboard_text in note_durations:
+                    cmd = WriteSoup(selection, [
+                        NoteProto(Duration(ui.keyboard_text,0), None, [])
+                    ], [])
+                    editor.run_command(cmd)
+                    return "run", cmd
+                    
+                    
+
+        selection = self.selection
+        while isinstance(selection, (IndexOf,RangeOf,LhsOf,RhsOf)):
+            selection = selection.command
 
         k = 0
         def point_header(header, t):
-            nonlocal k
+            nonlocal k, output
             i = t
             rect = self.grid(k,i,(k+1),i+1)
             i += 1
@@ -1051,13 +1102,18 @@ class TrackEditorWidget:
                 i += 1
             k += 1
             return i
-        def point_notes(exprs, t, header):
-            nonlocal k
+        def point_notes(exprs, t, header, selection):
+            nonlocal k, output
             h = t
-            for node in exprs:
+            for ix, node in enumerate(exprs):
+                this = IndexOf(selection, ix)
+                
                 if isinstance(node, Note):
                     i = t
                     rect = self.grid(k,i,(k+1),i+1)
+                    if ui.mouse_just_pressed and rect.collidepoint(ui.mouse_pos):
+                        editor.run_command(this)
+                        output = "run", this
                     i += 1
                     for name, dtype, view in header:
                         data = node.group.get(name, None)
@@ -1066,58 +1122,81 @@ class TrackEditorWidget:
                             H = compute_view_height(config)
                             rect = self.grid(k,i,(k+1),i+H)
                             pitch = point_view(config, rect, ui.mouse_pos)
+                            if ui.mouse_just_pressed and rect.collidepoint(ui.mouse_pos):
+                                print(pitch)
                             i += H
                         else:
                             rect = self.grid(k,i,(k+1),i+1)
+                            if ui.mouse_just_pressed and rect.collidepoint(ui.mouse_pos):
+                                editor.run_command(this)
+                                output = "run", this
                             i += 1
                     k += 1
                     h = max(h,i)
                 elif isinstance(node, Tuplet):
                     s = k
-                    i = point_notes(node.mhs, t, header)
+                    i = point_notes(node.mhs, t, header, LhsOf(this))
                     e = k = max(k,s+2)
-                    g=self.grid(s,i,(k),i+1)
+                    g = self.grid(s,i,(k),i+1)
+                    if ui.mouse_just_pressed and g.collidepoint(ui.mouse_pos):
+                        editor.run_command(this)
+                        output = "run", this
                     h = max(h,i+1)
                     k = e
                 elif isinstance(node, Fx):
                     s = k
-                    i = point_notes(node.lhs, t, header)
+                    i = point_notes(node.lhs, t, header, LhsOf(this))
                     e = k = max(k,s+2)
                     g = self.grid(s,i,(k),i+1)
                     k = s
                     if node.rhs != empty:
                         hdr = decorated_header(node.header, node.rhs)
-                        p = point_notes(node.rhs, i+1, hdr)
+                        p = point_notes(node.rhs, i+1, hdr, RhsOf(this))
                         q = point_header(hdr, i+1)
                         h = max(h,p,q)
                     else:
                         h = max(h,i+1)
                     k = max(k,e)
+                    if ui.mouse_just_pressed and g.collidepoint(ui.mouse_pos):
+                        editor.run_command(this)
+                        output = "run", this
             return h
 
         hdr = decorated_header(self.brush.header, self.brush.expr)
         point_header(hdr, 0)
-        point_notes(self.brush.expr, 0, hdr)
-
-        return None
+        point_notes(self.brush.expr, 0, hdr, selection)
+        return output
 
     def draw(self, ui, screen):
         sel = self.brush.expr
+        sel_slot  = None
         sel_start = 0
         sel_stop  = sel.length
+        top = None
         if isinstance(self.detail, RootFinger):
             if isinstance(self.detail.top, Indexer):
                 sel = self.detail.top.top.tree
                 sel_start = self.detail.top.start
                 sel_stop  = self.detail.top.stop
-            if isinstance(self.detail.top, (Side, Middle)):
+                if sel is empty:
+                    top = self.detail.top.top
+            if isinstance(self.detail.top, (Side,Middle)):
                 sel = self.detail.tree
                 sel_start = 0
                 sel_stop  = sel.length
+                if sel is empty:
+                    top = self.detail.top
         elif isinstance(self.detail, Indexer):
             sel = self.detail.top.tree
             sel_start = self.detail.start
             sel_stop  = self.detail.stop
+            if sel is empty:
+                top = self.detail.top.top
+        sel_par = None,None
+        if isinstance(top, Side):
+            sel_par = top.top.tree, top.side
+        if isinstance(top, Middle):
+            sel_par = top.top.tree, None
 
         k = 0
         def draw_header(header, t):
@@ -1178,6 +1257,9 @@ class TrackEditorWidget:
                     s = k
                     i = draw_notes(node.mhs, t, header)
                     e = k = max(k,s+2)
+                    if sel_par[0] is node and sel_par[1] == False:
+                        g = self.grid(s, t, k, i)
+                        pygame.draw.rect(screen, (100, 200, 200), g, 4, 3)
                     g=self.grid(s,i,(k),i+1)
                     pygame.draw.rect(screen, (200, 200, 200), g)
                     surf = ui.font16.render(str(node.duration) if node.duration else "*", True, (30,30,30))
@@ -1189,6 +1271,9 @@ class TrackEditorWidget:
                     s = k
                     i = draw_notes(node.lhs, t, header)
                     e = k = max(k,s+2)
+                    if sel_par[0] is node and sel_par[1] == False:
+                        g = self.grid(s, t, k, i)
+                        pygame.draw.rect(screen, (100, 200, 200), g, 4, 3)
                     g = self.grid(s,i,(k),i+1)
                     pygame.draw.rect(screen, (100, 200, 100), g)
                     surf = ui.font16.render("/ " + " ".join(str(a) for a in node.args), True, (30,30,30))
@@ -1202,6 +1287,8 @@ class TrackEditorWidget:
                         h = max(h,p,q)
                     else:
                         h = max(h,i+1)
+                        if sel_par[0] is node and sel_par[1] == True:
+                            pygame.draw.rect(screen, (100, 200, 200), g, 4, 3)
                     k = max(k,e)
                 if sel is exprs and sel_start == pos+1:
                     sel_start_k = k
