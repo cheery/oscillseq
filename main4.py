@@ -410,7 +410,7 @@ class Editor:
         try:
             if was_none:
                 com = command_from_string(self.prompt.text)
-            self.selection, self.detail, self.epath = com.apply(self.doc, self.selection, self.doc)
+            self.selection, self.detail, self.epath = com.apply(self.doc, self.selection, self.doc, self)
             self.response = ""
         except Exception as e:
             import traceback

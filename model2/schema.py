@@ -335,10 +335,10 @@ class Cont(Command):
     def __pretty__(self):
         return text("cont")
 
-    def apply(self, target, cont, doc):
+    def apply(self, target, cont, doc, editor):
         if cont is None:
             raise Exception("cannot continue from no selection")
-        return cont.apply(target, None, doc)
+        return cont.apply(target, None, doc, editor)
 
 @dataclass(eq=False, repr=False)
 class Mk(Command):
@@ -347,7 +347,7 @@ class Mk(Command):
     def __pretty__(self):
         return text("mk ") + pretty(self.name)
 
-    def apply(self, target, cont, doc):
+    def apply(self, target, cont, doc, editor):
         target.declarations.append(clip := ClipDef(self.name, [], {}))
         return ByName(self.name), clip, []
 
@@ -357,7 +357,7 @@ class ByName(Command):
     def __pretty__(self):
         return text(":" + self.name)
 
-    def apply(self, target, cont, doc):
+    def apply(self, target, cont, doc, editor):
         for declaration in target.declarations:
             if declaration.name == self.name:
                 return self, declaration, []
@@ -367,7 +367,7 @@ class ByName(Command):
     def assign(self, target, value):
         raise Exception("cannot assign to clip")
 
-    def remove(self, target, doc):
+    def remove(self, target, doc, editor):
         for i, declaration in enumerate(list(target.declarations)):
             if declaration.name == self.name:
                 del target.declarations[i]
@@ -383,8 +383,8 @@ class AttrOf(Command):
     def __pretty__(self):
         return pretty(self.command) + text(f".{self.name}")
 
-    def apply(self, target, cont, doc):
-        sel, obj, epath = self.command.apply(target, cont, doc)
+    def apply(self, target, cont, doc, editor):
+        sel, obj, epath = self.command.apply(target, cont, doc, editor)
         epath.append(obj)
         if isinstance(obj, (ClipDef, Entity)):
             val = obj.properties.get(self.name, Unk("none"))
@@ -392,8 +392,8 @@ class AttrOf(Command):
         else:
             raise Exception("no attributes on: " + str(self.command))
 
-    def assign(self, target, value, doc):
-        sel, obj, epath = self.command.apply(target, None, doc)
+    def assign(self, target, value, doc, editor):
+        sel, obj, epath = self.command.apply(target, None, doc, editor)
         epath.append(obj)
         if isinstance(obj, (ClipDef,Entity)):
             obj.properties[self.name] = value
@@ -401,8 +401,8 @@ class AttrOf(Command):
         else:
             raise Exception("no attributes on: " + str(self.command))
 
-    def remove(self, target, doc):
-        sel, obj, epath = self.command.apply(target, None, doc)
+    def remove(self, target, doc, editor):
+        sel, obj, epath = self.command.apply(target, None, doc, editor)
         if isinstance(obj, (ClipDef,Entity)):
             if self.name in obj.properties:
                 obj.properties.pop(self.name)
@@ -417,11 +417,11 @@ class Assign(Command):
     command : Command
     value : Value
 
-    def apply(self, target, cont, doc):
-        sel, obj, epath = self.command.apply(target, cont, doc)
+    def apply(self, target, cont, doc, editor):
+        sel, obj, epath = self.command.apply(target, cont, doc, editor)
         if isinstance(self.value, Unk) and self.value.name == "none":
             return sel.remove(target)
-        return sel.assign(target, self.value, doc)
+        return sel.assign(target, self.value, doc, editor)
 
     def __pretty__(self):
         return pretty(self.command) + text(" = ") + pretty(self.value)
@@ -433,9 +433,9 @@ class Remove(Command):
     def __pretty__(self):
         return pretty(self.command) + text(" remove")
 
-    def apply(self, target, cont, doc):
-        sel, obj, epath = self.command.apply(target, cont, doc)
-        return sel.remove(target, doc)
+    def apply(self, target, cont, doc, editor):
+        sel, obj, epath = self.command.apply(target, cont, doc, editor)
+        return sel.remove(target, doc, editor)
 
 @dataclass(eq=False, repr=False)
 class Up(Command):
@@ -444,10 +444,10 @@ class Up(Command):
     def __pretty__(self):
         return pretty(self.command) + text(" up")
 
-    def apply(self, target, cont, doc):
-        sel, obj, epath = self.command.apply(target, cont, doc)
+    def apply(self, target, cont, doc, editor):
+        sel, obj, epath = self.command.apply(target, cont, doc, editor)
         if hasattr(sel, "command"):
-            return sel.command.apply(target, None, doc)
+            return sel.command.apply(target, None, doc, editor)
         raise Exception("cannot ascend from: " + str(sel))
 
 @dataclass(eq=False, repr=False)
@@ -457,8 +457,8 @@ class AttachClip(Command):
     def __pretty__(self):
         return pretty(self.command) + text(f" &{self.name}")
 
-    def apply(self, target, cont, doc):
-        sel, obj, epath = self.command.apply(target, cont, doc)
+    def apply(self, target, cont, doc, editor):
+        sel, obj, epath = self.command.apply(target, cont, doc, editor)
         if hasattr(sel, "attach"):
             return sel.attach(target, doc, ClipEntity, self.name)
         raise Exception("cannot attach entity at: " + str(self.command))
@@ -470,8 +470,8 @@ class AttachView(Command):
     def __pretty__(self):
         return pretty(self.command) + text(f" @{self.name}")
 
-    def apply(self, target, cont, doc):
-        sel, obj, epath = self.command.apply(target, cont, doc)
+    def apply(self, target, cont, doc, editor):
+        sel, obj, epath = self.command.apply(target, cont, doc, editor)
         if hasattr(sel, "attach"):
             return sel.attach(target, doc, ViewEntity, self.name)
         raise Exception("cannot attach entity at: " + str(self.command))
@@ -488,8 +488,8 @@ class AttachBrush(Command):
         out += sp + self.expr.formatted(self.header, False)
         return out
 
-    def apply(self, target, cont, doc):
-        sel, obj, epath = self.command.apply(target, cont, doc)
+    def apply(self, target, cont, doc, editor):
+        sel, obj, epath = self.command.apply(target, cont, doc, editor)
         if hasattr(sel, "attach"):
             return sel.attach(target, doc, BrushEntity, self.header, self.expr)
         raise Exception("cannot attach entity at: " + str(self.command))
@@ -500,14 +500,14 @@ class WriteSoup(Command):
     soup : List[Any]
     fxs  : List[Any]
 
-    def apply(self, target, cont, doc):
-        sel, obj, epath = self.command.apply(target, cont, doc)
+    def apply(self, target, cont, doc, editor):
+        sel, obj, epath = self.command.apply(target, cont, doc, editor)
         if hasattr(sel, "write"):
-            return sel.write(target, doc, self.soup, self.fxs)
+            return sel.write(target, doc, editor, self.soup, self.fxs)
         raise Exception("cannot write to: " + str(sel))
 
-def deep_apply(command, target, cont, doc):
-    sel, obj, epath = command.apply(target, cont, doc)
+def deep_apply(command, target, cont, doc, editor):
+    sel, obj, epath = command.apply(target, cont, doc, editor)
     if isinstance(obj, ClipEntity):
         epath.append(obj)
         for clip in doc.declarations:
@@ -525,8 +525,8 @@ class ByCoords(Command):
     def __pretty__(self):
         return pretty(self.command) + sp + format_coordinates(self.x, self.y)
 
-    def apply(self, target, cont, doc):
-        sel, obj, epath = deep_apply(self.command, target, cont, doc)
+    def apply(self, target, cont, doc, editor):
+        sel, obj, epath = deep_apply(self.command, target, cont, doc, editor)
         epath.append(obj)
         if isinstance(obj, ClipDef):
             for entity in sorted(obj.entities, key=lambda x: x.shift):
@@ -538,7 +538,7 @@ class ByCoords(Command):
             raise Exception("not canvaic at: " + str(self.command))
 
     def attach(self, target, doc, cls, *args):
-        sel, obj, epath = deep_apply(self.command, target, None, doc)
+        sel, obj, epath = deep_apply(self.command, target, None, doc, editor)
         epath.append(obj)
         if isinstance(obj, ClipDef):
             ent = cls(self.x, self.y, {}, *args)
@@ -549,11 +549,11 @@ class ByCoords(Command):
         else:
             raise Exception("not canvaic at: " + str(self.command))
 
-    def assign(self, target, value, doc):
+    def assign(self, target, value, doc, editor):
         raise Exception("cannot assign at coordinates")
 
-    def remove(self, target, doc):
-        sel, obj, epath = self.command.apply(target, None, doc)
+    def remove(self, target, doc, editor):
+        sel, obj, epath = self.command.apply(target, None, doc, editor)
         epath.append(obj)
         if isinstance(obj, ClipEntity):
             for clip in doc.declarations:
@@ -597,8 +597,8 @@ class MoveTo(Command):
     def __pretty__(self):
         return pretty(self.command) + text(" ... ") + format_coordinates(self.x, self.y)
 
-    def apply(self, target, cont, doc):
-        sel, obj, epath = self.command.apply(target, cont, doc)
+    def apply(self, target, cont, doc, editor):
+        sel, obj, epath = self.command.apply(target, cont, doc, editor)
         epath.append(obj)
         if isinstance(obj, Entity):
             obj.shift = self.x
@@ -617,8 +617,8 @@ class SearchCoords(Command):
     def __pretty__(self):
         return pretty(self.command) + text(" ... ") + format_coordinates(self.x, self.y)
 
-    def apply(self, target, cont, doc):
-        sel, obj, epath = deep_apply(self.command, target, None, doc)
+    def apply(self, target, cont, doc, editor):
+        sel, obj, epath = deep_apply(self.command, target, None, doc, editor)
         epath.append(obj)
         if isinstance(obj, ClipDef):
             unvisited = [(sel, obj, self.x, self.y, epath)]
@@ -730,8 +730,8 @@ class IndexOf(Command):
     def __pretty__(self):
         return pretty(self.command) + text(f" [{self.index}]")
 
-    def apply(self, target, cont, doc):
-        sel, obj, epath = self.command.apply(target, cont, doc)
+    def apply(self, target, cont, doc, editor):
+        sel, obj, epath = self.command.apply(target, cont, doc, editor)
         epath.append(obj)
         if isinstance(obj, BrushEntity):
             obj = RootFinger(obj, obj.expr)
@@ -740,8 +740,8 @@ class IndexOf(Command):
             return IndexOf(sel, self.index), obj, epath
         assert False, "TODO: something wrong"
 
-    def write(self, target, doc, soup, fxs):
-        sel, obj, epath = self.command.apply(target, None, doc)
+    def write(self, target, doc, editor, soup, fxs):
+        sel, obj, epath = self.command.apply(target, None, doc, editor)
         epath.append(obj)
         if isinstance(obj, BrushEntity):
             obj = RootFinger(obj, obj.expr)
@@ -773,8 +773,8 @@ class RangeOf(Command):
     def __pretty__(self):
         return pretty(self.command) + text(f" [{self.head}:{self.tail}]")
 
-    def apply(self, target, cont, doc):
-        sel, obj, epath = self.command.apply(target, cont, doc)
+    def apply(self, target, cont, doc, editor):
+        sel, obj, epath = self.command.apply(target, cont, doc, editor)
         epath.append(obj)
         if isinstance(obj, BrushEntity):
             obj = RootFinger(obj, obj.expr)
@@ -786,8 +786,8 @@ class RangeOf(Command):
             return RangeOf(sel, self.head, self.tail), obj, epath
         assert False, "TODO: something wrong"
 
-    def write(self, target, doc, soup, fxs):
-        sel, obj, epath = self.command.apply(target, None, doc)
+    def write(self, target, doc, editor, soup, fxs):
+        sel, obj, epath = self.command.apply(target, None, doc, editor)
         epath.append(obj)
         if isinstance(obj, BrushEntity):
             obj = RootFinger(obj, obj.expr)
@@ -809,8 +809,8 @@ class LhsOf(Command):
     def __pretty__(self):
         return pretty(self.command) + text(f" <")
 
-    def apply(self, target, cont, doc):
-        sel, obj, epath = self.command.apply(target, cont, doc)
+    def apply(self, target, cont, doc, editor):
+        sel, obj, epath = self.command.apply(target, cont, doc, editor)
         epath.append(obj)
         if isinstance(obj, BrushEntity):
             obj = RootFinger(obj, obj.expr)
@@ -823,8 +823,8 @@ class LhsOf(Command):
                 return LhsOf(sel), obj, epath
         raise Exception("selection not an FX: " + str(sel))
 
-    def write(self, target, doc, soup, fxs):
-        sel, obj, epath = self.command.apply(target, None, doc)
+    def write(self, target, doc, editor, soup, fxs):
+        sel, obj, epath = self.command.apply(target, None, doc, editor)
         epath.append(obj)
         if isinstance(obj, BrushEntity):
             obj = RootFinger(obj, obj.expr)
@@ -850,8 +850,8 @@ class RhsOf(Command):
     def __pretty__(self):
         return pretty(self.command) + text(f" >")
 
-    def apply(self, target, cont, doc):
-        sel, obj, epath = self.command.apply(target, cont, doc)
+    def apply(self, target, cont, doc, editor):
+        sel, obj, epath = self.command.apply(target, cont, doc, editor)
         epath.append(obj)
         if isinstance(obj, BrushEntity):
             obj = RootFinger(obj, obj.expr)
@@ -864,8 +864,8 @@ class RhsOf(Command):
                 return RhsOf(sel), o, epath
         raise Exception("selection not an FX: " + str(sel))
 
-    def write(self, target, doc, soup, fxs):
-        sel, obj, epath = self.command.apply(target, None, doc)
+    def write(self, target, doc, editor, soup, fxs):
+        sel, obj, epath = self.command.apply(target, None, doc, editor)
         epath.append(obj)
         if isinstance(obj, BrushEntity):
             obj = RootFinger(obj, obj.expr)
@@ -894,7 +894,7 @@ class SetConnection(Command):
         return pretty(self.command) + text(f" >")
 
     def apply(self, target, cont, doc):
-        sel, obj, epath = self.command.apply(target, cont, doc)
+        sel, obj, epath = self.command.apply(target, cont, doc, editor)
         epath.append(obj)
         if self.connect:
             doc.connections.add(self.connection)
@@ -911,7 +911,7 @@ class SelectSynth(Command):
         out += text(self.name)
         return out
 
-    def apply(self, target, cont, doc):
+    def apply(self, target, cont, doc, editor):
         assert False, "TODO"
 
 @dataclass(eq=False, repr=False)
@@ -926,7 +926,7 @@ class SetSynth(Command):
         out += sp + text(self.synth)
         return out
 
-    def apply(self, target, cont, doc):
+    def apply(self, target, cont, doc, editor):
         assert False, "TODO"
 
 @dataclass(eq=False, repr=False)
@@ -936,7 +936,7 @@ class ToggleMulti(Command):
     def __pretty__(self):
         return pretty(self.command) + text(f" multi")
 
-    def apply(self, target, cont, doc):
+    def apply(self, target, cont, doc, editor):
         assert False, "TODO"
 
 @dataclass(eq=False, repr=False)
@@ -947,7 +947,7 @@ class SetTypeParam(Command):
     def __pretty__(self):
         return pretty(self.command) + text(f" *= ") + text(self.type_param)
 
-    def apply(self, target, cont, doc):
+    def apply(self, target, cont, doc, editor):
         assert False, "TODO"
 
 @dataclass(eq=False, repr=False)
@@ -957,8 +957,48 @@ class Eval(Command):
     def __pretty__(self):
         return pretty(self.command) + text(" eval")
 
-    def apply(self, target, cont, doc):
+    def apply(self, target, cont, doc, editor):
         assert False, "TODO"
+
+@dataclass(eq=False, repr=False)
+class LoopAll(Command):
+    command : Command
+
+    def __pretty__(self):
+        return pretty(self.command) + text(" loop all")
+
+    def apply(self, target, cont, doc, editor):
+        editor.transport.playback_range = None
+        editor.after_rewrite()
+        return self.command.apply(target, cont, doc, editor)
+
+@dataclass(eq=False, repr=False)
+class Loop(Command):
+    command : Command
+    start : int | float
+    stop  : int | float
+
+    def __pretty__(self):
+        return pretty(self.command) + text(f" eval {self.start} : {self.stop}")
+
+    def apply(self, target, cont, doc, editor):
+        editor.transport.playback_range = self.start, self.stop
+        editor.after_rewrite()
+        return self.command.apply(target, cont, doc, editor)
+
+@dataclass(eq=False, repr=False)
+class CursorTo(Command):
+    command : Command
+    point : int | float
+
+    def __pretty__(self):
+        return pretty(self.command) + text(" cursor " + str(self.point))
+
+    def apply(self, target, cont, doc, editor):
+        editor.transport.cursor_head = self.point
+        editor.transport.cursor_tail = self.point
+        return self.command.apply(target, cont, doc, editor)
+
 
 ## ENTITIES
 def format_coordinates(x, y):

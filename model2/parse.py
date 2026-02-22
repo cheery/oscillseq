@@ -43,6 +43,9 @@ grammar = r"""
        | cmd "multi" -> toggle_multi
        | cmd "*" "=" identifier -> set_type_param
        | cmd "eval" -> _eval_
+       | cmd "loop" "all" -> all_loop
+       | cmd "loop" value [":" value] -> loop_range
+       | cmd "cursor" value -> cursor_to
 
     declarations: declaration+ -> as_list
     declaration: identifier "{" [entities] [properties] "}" -> clipdef
@@ -206,6 +209,15 @@ class ModelTransformer(Transformer):
     @v_args(inline=True)
     def _eval_(self, cmd):
         return Eval(cmd)
+
+    def all_loop(self, cmd):
+        return LoopAll(cmd)
+
+    def loop_range(self, cmd, start, stop=None):
+        return Loop(cmd, start, stop or start + 1)
+
+    def cursor_to(self, cmd, head):
+        return CursorTo(cmd, head)
 
     def clipdef(self, name, entities, properties):
         return ClipDef(name, entities or [], properties or {})
