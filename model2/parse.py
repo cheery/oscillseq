@@ -20,7 +20,7 @@ grammar = r"""
     cmd: "cont" -> cont
        | () -> cont
        | "mk" identifier -> mk
-       | ":" identifier  -> by_name
+       | cmd ":" identifier  -> by_name
        | cmd "." identifier -> attr_of
        | cmd "=" value -> assign
        | cmd "remove" -> remove
@@ -33,6 +33,7 @@ grammar = r"""
        | bigcmd ">>" -> as_it
        | cmd "[" value "]" -> index_of
        | cmd "[" value ":" value "]" -> range_of
+       | cmd "*" -> by_ref
        | cmd "<" -> lhs_of
        | cmd ">" -> rhs_of
        | cmd "rename" identifier -> rename
@@ -136,8 +137,8 @@ class ModelTransformer(Transformer):
     def mk(self, name):
         return Mk(name)
 
-    def by_name(self, name):
-        return ByName(name)
+    def by_name(self, cmd, name):
+        return ByName(cmd, name)
 
     def attr_of(self, sel, a):
         return AttrOf(sel, a)
@@ -166,6 +167,9 @@ class ModelTransformer(Transformer):
  
     def by_coords(self, cmd, xy):
         return ByCoords(cmd, *xy)
+
+    def by_ref(self, cmd):
+        return ByRef(cmd)
 
     def move_to(self, cmd, xy):
         return MoveTo(cmd, *xy)
@@ -220,7 +224,7 @@ class ModelTransformer(Transformer):
         return CursorTo(cmd, head)
 
     def clipdef(self, name, entities, properties):
-        return ClipDef(name, entities or [], properties or {})
+        return ClipDef(name, properties or {}, entities or [])
 
     def with_properties(self, entity, properties):
         entity.properties.update(properties)

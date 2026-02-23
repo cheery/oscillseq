@@ -399,30 +399,37 @@ class Editor:
         self.midi_status = False
         self.midi_controllers = []
 
-        self.selection = None
-        self.detail = None
-        self.epath = []
-        self.prompt = Text("", 0, None)
+        self.selection = Cont()
         self.response = ""
+        self.prompt = Text("", 0, None)
 
     def run_command(self, com=None):
         was_none = com is None
         try:
             if was_none:
                 com = command_from_string(self.prompt.text)
-            self.selection, self.detail, self.epath = com.apply(self.doc, self.selection, self.doc, self)
-            self.response = ""
+            finger = com.apply(self.selection, self.doc, self)
+            self.doc = finger.writeback()
+            self.selection = finger.to_command()
+            self.response = str(self.selection)
+            if was_none:
+                self.prompt = Text("", 0, None)
+            if isinstance(finger, AttributeFinger):
+                self.response += " = " + str(finger.value)
+            elif isinstance(finger, CoordsFinger):
+                self.response += " : " + type(finger.entity).__name__
+            elif isinstance(finger, (SequenceFinger, IndexFinger, RangeFinger)):
+                f = formatted(finger.get_header(), finger.get_selection(), False)
+                self.response += " := " + pformat_doc(f, 80)
+                if pygame.key.get_mods() & pygame.KMOD_SHIFT:
+                    txt = ":= " + pformat_doc(f, 80)
+                    self.prompt = Text(txt, len(txt), None)
         except Exception as e:
             import traceback
             traceback.print_exc()
             self.response = repr(e)
         else:
-            if was_none:
-                self.prompt = Text("", 0, None)
             self.after_rewrite()
-            self.response = str(self.selection)
-            if self.detail is not None:
-                self.response += str(" >>> ") + str(self.detail).replace("\n", " ")
 
     def after_rewrite(self):
         self.proc = DocumentProcessing(self.doc)
@@ -453,7 +460,7 @@ class Editor:
 
         side_rect = pygame.Rect(0, 24, self.MARGIN, self.screen_height - 48)
 
-        if self.mode == "track" and isinstance(self.detail, (BrushEntity, Finger)):
+        if self.mode == "track" and False: #isinstance(self.detail, (BrushEntity, Finger)):
             main_grid = Grid(
                 self.MARGIN - self.track_scroll[0] * self.BAR_WIDTH / 4,
                 24 - self.track_scroll[1] * self.LANE_HEIGHT, self.BAR_WIDTH / 4, self.LANE_HEIGHT)
@@ -539,7 +546,7 @@ class Editor:
                 "transport-visual"))
             if what := ui.widget(Scroller(self, main_rect, main_grid, "scroller")):
                 if what[0] == "pick":
-                    com = SearchCoords(ByName("main"), *what[1])
+                    com = SearchCoords(ByName(Cont(), "main"), *what[1])
                     self.run_command(com)
                 elif what[0] == "scroll":
                     editor.scroll_x = what[1]

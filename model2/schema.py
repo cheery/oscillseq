@@ -42,7 +42,7 @@ class Unk(Object):
     def __pretty__(self):
         return text(self.name)
 
-Value = int | float | music.Pitch | Ref | Dynamic
+Value = int | float | music.Pitch | Ref | Dynamic | Unk
 Number = int | float
 
 ## BASE CLASSES
@@ -53,6 +53,7 @@ class Action(Object):
 @dataclass(eq=False, repr=False)
 class Declaration(Object):
     name : str
+    properties : Dict[str, Value]
 
 @dataclass(eq=False, repr=False)
 class Expr(Object):
@@ -271,6 +272,21 @@ class Synth(Object):
     multi : bool
     type_param : Optional[str]
     params : Dict[str, Value]
+
+    def reset(self, pos=None, name=None, synth=None, multi=None, type_param=None, params=None):
+        if pos is None:
+            pos = self.pos
+        if name is None:
+            name = self.name
+        if synth is None:
+            synth = self.synth
+        if multi is None:
+            multi = self.multi
+        if type_param is None:
+            type_param = self.type_param
+        if params is None:
+            params = self.params
+        return Synth(pos, name, synth, multi, type_param, params)
  
     def __pretty__(self):
         header = format_coordinates(*self.xy) + sp + text(self.name) + sp + text(self.synth)
@@ -288,6 +304,15 @@ class Document(Object):
     declarations : List[Declaration]
     synths : List[Synth]
     connections : Set[Connection]
+
+    def reset(self, declarations=None, synths=None, connections=None):
+        if declarations is None:
+            declarations = self.declarations
+        if synths is None:
+            synths = self.synths
+        if connections is None:
+            connections = self.connections
+        return Document(declarations, synths, connections)
 
     def __pretty__(self):
         out = text("oscillseq aqua")
@@ -309,7 +334,15 @@ class Document(Object):
 @dataclass(eq=False, repr=False)
 class ClipDef(Declaration):
     entities : List[Entity]
-    properties : Dict[str, Value]
+
+    def reset(self, name=None, properties=None, entities=None):
+        if name is None:
+            name = self.name
+        if properties is None:
+            properties = self.properties
+        if entities is None:
+            entities = self.entities
+        return ClipDef(name, properties, entities)
 
     def __pretty__(self):
         head = text(self.name + " {")
@@ -329,16 +362,467 @@ def format_entity_properties(e):
             for n, p in e.properties.items()]
         return text(" {") + text("").join(properties).nest(2) + nl + text("}")
 
+## FINGERS
+@dataclass(eq=False, repr=False)
+class Finger:
+    def to_command(self):
+        raise NotImplemented
+
+    def write(self):
+        raise NotImplemented
+
+    def writeback(self):
+        raise NotImplemented
+
+    def reapply(self, doc):
+        raise Exception(f"reapply not supported on: {self.to_command()}")
+
+    #def by_coords(self, shift, lane):
+    #    raise Exception(f"Cannot coordinate from: {self.to_command()}")
+
+    #def read_value(self):
+    #    raise Exception(f"Cannot present as value: {self.to_command()}")
+
+    #def attach(self, cls, *args):
+    #    raise Exception(f"Cannot attach to: {self.to_command()}")
+
+    def assign(self, value):
+        raise Exception(f"Cannot assign to: {self.to_command()}")
+
+    def remove(self):
+        raise Exception(f"Cannot remove: {self.to_command()}")
+
+    def get_header(self):
+        raise Exception(f"Cannot sequence to: {self.to_command()}")
+
+    #def write_attribute(self, name, value):
+    #    raise Exception(f"Cannot write attribute to: {self.to_command()}")
+
+    #def write_entity(self, name, value):
+    #    raise Exception(f"Cannot write entity to: {self.to_command()}")
+
+@dataclass(eq=False, repr=False)
+class DeepFinger(Finger):
+    parent : Finger
+
+    def writeback(this):
+        while isinstance(this, DeepFinger):
+            this = this.write()
+        return this.write()
+
+    def read_attribute(self, name):
+        return self.write().read_attribute(name)
+
+    def read_declaration(self, name):
+        return self.write().read_declaration(name)
+
+    def write_declaration(self, name, declaration):
+        return self.write().write_declaration(name, declaration)
+
+@dataclass(eq=False, repr=False)
+class DocumentFinger(Finger):
+    doc : Document
+
+    def __post_init__(self):
+        assert isinstance(self.doc, Document)
+
+    def to_command(self):
+        return Cont()
+
+    def write(self):
+        return self.doc
+
+    def writeback(self):
+        return self.write()
+
+    def reapply(self, doc):
+        return DocumentFinger(doc)
+
+    def read_declaration(self, name):
+        for this in self.doc.declarations:
+            if this.name == name:
+                return DeclarationFinger(self, this)
+        raise Exception(f"No such declaration as {name!r}")
+
+    def write_declaration(self, name, declaration):
+        new_declarations = []
+        for this in self.doc.declarations:
+            if this.name == name:
+                if declaration is not None:
+                    new_declarations.append(declaration)
+                name = None
+            else:
+                new_declarations.append(this)
+        if name is not None and declaration is not None:
+            new_declarations.append(declaration)
+        return DocumentFinger(self.doc.reset(declarations=new_declarations))
+
+def get_by_coords(clip, shift, lane):
+    for entity in reversed(clip.entities):
+        if entity.shift <= shift and entity.lane == lane:
+            return entity
+    return None
+
+def do_search(root, shift, lane):
+    doc  = root.writeback()
+    root = root.reapply(doc)
+    if isinstance(root, DeclarationFinger) and not isinstance(root.declaration, ClipDef):
+        raise Exception(f"cannot initiate search from non-clip declaration: {root.to_command()}")
+    def by_clip(finger, entity):
+        finger = CoordsFinger(finger, entity.shift, entity.lane, entity)
+        if isinstance(entity, ClipEntity):
+            for declaration in doc.declarations:
+                if isinstance(declaration, ClipDef) and declaration.name == entity.name:
+                    return ClipFinger(finger, declaration)
+        return None
+    unvisited = [(root, shift, lane)]
+    best = None
+    this = None
+    while unvisited:
+        finger, shift, lane = unvisited.pop()
+        if isinstance(finger, DeclarationFinger):
+            entities = finger.declaration.entities
+        else:
+            entities = finger.clip.entities
+        for entity in entities:
+            if entity.shift <= shift and entity.lane <= lane:
+                dist = lane-entity.lane, shift-entity.shift
+                if deeper := by_clip(finger, entity):
+                    unvisited.append((deeper, shift - entity.shift, lane - entity.lane))
+                elif best is None or dist < best:
+                    best = dist
+                    this = CoordsFinger(finger, entity.shift, entity.lane, entity)
+    if this is None:
+        raise Exception(f"the given clip is empty at this location: {root.to_command()}")
+    return this
+
+def check_cycles(entity, doc, target):
+    if isinstance(entity, ClipEntity):
+        if entity.name == target:
+            return True
+        for declaration in doc.declarations:
+            if declaration.name == entity.name:
+                for subentity in declaration.entities:
+                    if check_cycles(subentity, doc, target):
+                        return True
+    return False
+
+@dataclass(eq=False, repr=False)
+class DeclarationFinger(DeepFinger):
+    declaration : Declaration
+
+    def to_command(self):
+        cmd = self.parent.to_command()
+        return ByName(cmd, self.declaration.name)
+
+    def write(self):
+        return self.parent.write_declaration(self.declaration.name, self.declaration)
+
+    def reapply(self, doc):
+        return self.parent.reapply(doc).read_declaration(self.declaration.name)
+
+    def read_attribute(self, name):
+        return AttributeFinger(self, name, self.declaration.properties.get(name, Unk("none")))
+
+    def write_attribute(self, name, value):
+        properties = self.declaration.properties.copy()
+        properties.pop(name, None)
+        if value != Unk("none"):
+            properties[name] = value
+        return DeclarationFinger(self.parent, self.declaration.reset(properties=properties))
+
+    def remove(self):
+        return self.parent.write_declaration(self.declaration.name, None)
+
+    def by_coords(self, shift, lane):
+        if not isinstance(self.declaration, ClipDef):
+            return super().by_coords(shift, lane)
+        entity = get_by_coords(self.declaration, shift, lane)
+        return CoordsFinger(self, shift, lane, entity)
+
+    def search(self, shift, lane):
+        return do_search(self, shift, lane)
+
+    def check_entity(self, entity):
+        if not isinstance(self.declaration, ClipDef):
+            return super().check_entity(entity)
+        doc = self.writeback()
+        if check_cycles(entity, doc, self.declaration.name):
+            raise Exception(f"Attaching clip entity here would cause a cycle")
+        return CoordsFinger(self, entity.shift, entity.lane, entity)
+
+    def write_entity(self, entity, new_entity=None):
+        if not isinstance(self.declaration, ClipDef):
+            return super().write_entity(entity, new_entity)
+        new_entities = [e for e in self.declaration.entities if e is not entity]
+        if new_entity is not None:
+            new_entities.append(new_entity)
+            new_entities.sort(key=lambda e: (e.lane, e.shift))
+        return DeclarationFinger(self.parent, self.declaration.reset(entities=new_entities))
+
+@dataclass(eq=False, repr=False)
+class AttributeFinger(DeepFinger):
+    name : str
+    value : Value
+
+    def to_command(self):
+        cmd = self.parent.to_command()
+        return AttrOf(cmd, self.name)
+
+    def write(self):
+        return self.parent.write_attribute(self.name, self.value)
+
+    def reapply(self, doc):
+        return self.parent.reapply(doc).read_attribute(self.name)
+
+    def assign(self, value):
+        return AttributeFinger(self.parent, self.name, value)
+
+    def remove(self):
+        return AttributeFinger(self.parent, self.name, Unk("none"))
+
+@dataclass(eq=False, repr=False)
+class ClipFinger(DeepFinger):
+    clip : ClipDef
+
+    def to_command(self):
+        return ByRef(self.parent.to_command())
+
+    def writeback(self):
+        return self.parent.write_declaration(self.clip.name, self.clip).writeback()
+
+    def write(self):
+        doc = self.parent.write_declaration(self.clip.name, self.clip).writeback()
+        return self.parent.reapply(doc)
+
+    def reapply(self, doc):
+        return self.parent.reapply(doc).by_ref()
+
+    def by_coords(self, shift, lane):
+        entity = get_by_coords(self.clip, shift, lane)
+        return CoordsFinger(self, shift, lane, entity)
+
+    def search(self, shift, lane):
+        return do_search(self, shift, lane)
+
+    def check_entity(self, entity):
+        doc = self.writeback()
+        if check_cycles(entity, doc, self.clip.name):
+            raise Exception(f"Attaching clip entity here would cause a cycle")
+        return CoordsFinger(self, entity.shift, entity.lane, entity)
+
+    def write_entity(self, entity, new_entity=None):
+        new_entities = [e for e in self.clip.entities if e is not entity]
+        if new_entity is not None:
+            new_entities.append(new_entity)
+            new_entities.sort(key=lambda e: (e.lane, e.shift))
+        return ClipFinger(self.parent, self.clip.reset(entities=new_entities))
+
+@dataclass(eq=False, repr=False)
+class CoordsFinger(DeepFinger):
+    shift : int | float
+    lane : int
+    entity : Entity | None
+
+    def to_command(self):
+        return ByCoords(self.parent.to_command(), self.shift, self.lane)
+
+    def write(self):
+        return self.parent.write_entity(self.entity, self.entity)
+
+    def reapply(self, doc):
+        return self.parent.reapply(doc).by_coords(self.shift, self.lane)
+
+    def remove(self):
+        finger = self.parent.write_entity(self.entity, None)
+        return CoordsFinger(finger, self.shift, self.lane, None)
+
+    def by_ref(self):
+        if isinstance(self.entity, ClipEntity):
+            decl = self.read_declaration(self.entity.name)
+            if not isinstance(decl.declaration, ClipDef):
+                raise Exception(f"Declaration is not a clip: {self.to_command()}")
+            return ClipFinger(self, decl.declaration)
+        if isinstance(self.entity, BrushEntity):
+            return SequenceFinger(self, "root", self.entity.expr)
+        return super().by_ref()
+
+    def attach(self, cls, *args):
+        entity = cls(self.shift, self.lane, {}, *args)
+        return self.parent.check_entity(entity)
+
+    def move_to(self, shift, lane):
+        if self.entity is None:
+            raise Exception(f"Nothing to move here: {self.to_command()}")
+        entity = self.entity.reset(shift=shift, lane=lane)
+        finger = self.parent.write_entity(self.entity, entity)
+        return CoordsFinger(finger, shift, lane, entity)
+
+    def store_expr(self, expr, flavor):
+        if isinstance(self.entity, BrushEntity) and flavor == "root":
+            entity = self.entity.reset(expr=expr)
+            finger = self.parent.write_entity(self.entity, entity)
+            return CoordsFinger(finger, self.shift, self.lane, entity)
+        return super().store_expr(expr, flavor)
+
+@dataclass(eq=False, repr=False)
+class SequenceFinger(DeepFinger):
+    flavor : str
+    expr : SequenceNode
+
+    def to_command(self):
+        cmd = self.parent.to_command()
+        if self.flavor == "root":
+            return ByRef(cmd)
+        if self.flavor == "mhs" or self.flavor == "lhs":
+            return LhsOf(cmd)
+        if self.flavor == "rhs":
+            return RhsOf(cmd)
+
+    def write(self):
+        return self.parent.store_expr(self.expr, self.flavor)
+
+    def store_range(self, start, stop, expr):
+        new_expr = self.expr.erase(start, stop).insert(start, expr)
+        return SequenceFinger(self.parent, self.flavor, new_expr)
+
+    def index_of(self, index):
+        if index < self.expr.length:
+            return IndexFinger(self, index, self.expr.pick(index).retain(empty, empty))
+        raise IndexError
+
+    def range_of(self, head, tail):
+        if 0 <= head <= self.expr.length and 0 <= tail <= self.expr.length:
+            return RangeFinger(self, head, tail)
+        raise IndexError
+
+    def lhs_of(self):
+        if self.expr.length == 1:
+            return self.index_of(0).lhs_of()
+        raise Exception(f"cannot access: {self.to_command()}")
+
+    def rhs_of(self):
+        if self.expr.length == 1:
+            return self.index_of(0).rhs_of()
+        raise Exception(f"cannot access: {self.to_command()}")
+
+    def write_sequence(self, expr):
+        return SequenceFinger(self.parent, self.flavor, expr)
+
+    def write_sequence_range(self, start, stop, expr):
+        new_expr = self.expr.erase(start, stop).insert(start, expr)
+        return SequenceFinger(self.parent, self.flavor, new_expr)
+
+    def get_header(self):
+        if self.flavor == "root":
+            return self.parent.entity.header
+        if self.flavor == "rhs":
+            return self.parent.expr.header
+        return self.parent.get_header()
+
+    def get_selection(self):
+        return self.expr
+
+@dataclass(eq=False, repr=False)
+class IndexFinger(DeepFinger):
+    index : int
+    expr : SequenceNode
+
+    def to_command(self):
+        return IndexOf(self.parent.to_command(), self.index)
+
+    def write(self):
+        return self.parent.store_range(self.index, self.index+1, self.expr)
+
+    def store_expr(self, expr, flavor):
+        if flavor == "mhs":
+            return IndexFinger(self.parent, self.index, Tuplet.mk(self.expr.duration, expr))
+        if flavor == "lhs":
+            fx = self.expr
+            return IndexFinger(self.parent, self.index, Fx.mk(expr, fx.args, fx.header, fx.rhs))
+        if flavor == "rhs":
+            fx = self.expr
+            return IndexFinger(self.parent, self.index, Fx.mk(fx.lhs, fx.args, fx.header, expr))
+        super().stope_expr(expr, flavor)
+
+    def lhs_of(self):
+        if isinstance(self.expr, Tuplet):
+            return SequenceFinger(self, "mhs", self.expr.mhs)
+        if isinstance(self.expr, Fx):
+            return SequenceFinger(self, "lhs", self.expr.lhs)
+        raise Exception(f"cannot access: {self.to_command()}")
+
+    def rhs_of(self):
+        if isinstance(self.expr, Fx):
+            return SequenceFinger(self, "rhs", self.expr.rhs)
+        raise Exception(f"cannot access: {self.to_command()}")
+
+    def write_sequence(self, expr):
+        finger = self.parent.write_sequence_range(self.index, self.index+1, expr)
+        if expr.length == 1:
+            return IndexFinger(finger, self.index)
+        return RangeFinger(finger, self.index+expr.length, self.index)
+
+    def get_header(self):
+        return self.parent.get_header()
+
+    def get_selection(self):
+        return self.expr
+
+@dataclass(eq=False, repr=False)
+class RangeFinger(DeepFinger):
+    head : int
+    tail : int
+
+    def to_range(self):
+        return min(self.head, self.tail), max(self.head, self.tail)
+
+    def to_command(self):
+        return RangeOf(self.parent.to_command(), self.head, self.tail)
+
+    def write(self):
+        return self.parent
+
+    def write_sequence(self, expr):
+        start, stop = self.to_range()
+        finger = self.parent.write_sequence_range(start, stop, expr)
+        if self.head < self.tail:
+            return RangeFinger(finger, start, start+expr.length)
+        else:
+            return RangeFinger(finger, start+expr.length, start)
+
+    def lhs_of(self):
+        start, stop = self.to_range()
+        if start+1 == stop:
+            return self.parent.index_of(start).lhs_of()
+        raise Exception(f"cannot access: {self.to_command()}")
+
+    def rhs_of(self):
+        start, stop = self.to_range()
+        if start+1 == stop:
+            return self.parent.index_of(start).rhs_of()
+        raise Exception(f"cannot access: {self.to_command()}")
+
+    def get_header(self):
+        return self.parent.get_header()
+
+    def get_selection(self):
+        start, stop = self.to_range()
+        selection = empty
+        for n in self.parent.expr.sequence(start, stop):
+            selection = selection.insert(selection.length, n.retain(empty, empty))
+        return selection
+
 ## COMMANDS
 @dataclass(eq=False, repr=False)
 class Cont(Command):
     def __pretty__(self):
         return text("cont")
 
-    def apply(self, target, cont, doc, editor):
+    def apply(self, cont, doc, editor):
         if cont is None:
-            raise Exception("cannot continue from no selection")
-        return cont.apply(target, None, doc, editor)
+            return DocumentFinger(doc)
+        return cont.apply(None, doc, editor)
 
 @dataclass(eq=False, repr=False)
 class Mk(Command):
@@ -347,33 +831,21 @@ class Mk(Command):
     def __pretty__(self):
         return text("mk ") + pretty(self.name)
 
-    def apply(self, target, cont, doc, editor):
-        target.declarations.append(clip := ClipDef(self.name, [], {}))
-        return ByName(self.name), clip, []
+    def apply(self, cont, doc, editor):
+        clip = ClipDef(self.name, {}, [])
+        finger = DocumentFinger(doc)
+        return DeclarationFinger(finger, clip)
 
 @dataclass(eq=False, repr=False)
 class ByName(Command):
+    command : Command
     name : str
     def __pretty__(self):
-        return text(":" + self.name)
+        return pretty(self.command) + text(" :" + self.name)
 
-    def apply(self, target, cont, doc, editor):
-        for declaration in target.declarations:
-            if declaration.name == self.name:
-                return self, declaration, []
-        else:
-            raise Exception("not present: " + str(self))
-
-    def assign(self, target, value):
-        raise Exception("cannot assign to clip")
-
-    def remove(self, target, doc, editor):
-        for i, declaration in enumerate(list(target.declarations)):
-            if declaration.name == self.name:
-                del target.declarations[i]
-                return None, None, None
-        else:
-            raise Exception("not present: " + str(self))
+    def apply(self, cont, doc, editor):
+        finger = self.command.apply(cont, doc, editor)
+        return finger.read_declaration(self.name)
 
 @dataclass(eq=False, repr=False)
 class AttrOf(Command):
@@ -383,45 +855,18 @@ class AttrOf(Command):
     def __pretty__(self):
         return pretty(self.command) + text(f".{self.name}")
 
-    def apply(self, target, cont, doc, editor):
-        sel, obj, epath = self.command.apply(target, cont, doc, editor)
-        epath.append(obj)
-        if isinstance(obj, (ClipDef, Entity)):
-            val = obj.properties.get(self.name, Unk("none"))
-            return AttrOf(sel, self.name), val, epath
-        else:
-            raise Exception("no attributes on: " + str(self.command))
-
-    def assign(self, target, value, doc, editor):
-        sel, obj, epath = self.command.apply(target, None, doc, editor)
-        epath.append(obj)
-        if isinstance(obj, (ClipDef,Entity)):
-            obj.properties[self.name] = value
-            return AttrOf(sel, self.name), value, epath
-        else:
-            raise Exception("no attributes on: " + str(self.command))
-
-    def remove(self, target, doc, editor):
-        sel, obj, epath = self.command.apply(target, None, doc, editor)
-        if isinstance(obj, (ClipDef,Entity)):
-            if self.name in obj.properties:
-                obj.properties.pop(self.name)
-                return sel, obj, epath
-            else:
-                raise Exception("no such attribute: " + str(self))
-        else:
-            raise Exception("no attributes on: " + str(self.command))
+    def apply(self, cont, doc, editor):
+        finger = self.command.apply(cont, doc, editor)
+        return finger.read_attribute(self.name)
 
 @dataclass(eq=False, repr=False)
 class Assign(Command):
     command : Command
     value : Value
 
-    def apply(self, target, cont, doc, editor):
-        sel, obj, epath = self.command.apply(target, cont, doc, editor)
-        if isinstance(self.value, Unk) and self.value.name == "none":
-            return sel.remove(target)
-        return sel.assign(target, self.value, doc, editor)
+    def apply(self, cont, doc, editor):
+        finger = self.command.apply(cont, doc, editor)
+        return finger.assign(self.value)
 
     def __pretty__(self):
         return pretty(self.command) + text(" = ") + pretty(self.value)
@@ -433,9 +878,9 @@ class Remove(Command):
     def __pretty__(self):
         return pretty(self.command) + text(" remove")
 
-    def apply(self, target, cont, doc, editor):
-        sel, obj, epath = self.command.apply(target, cont, doc, editor)
-        return sel.remove(target, doc, editor)
+    def apply(self, cont, doc, editor):
+        finger = self.command.apply(cont, doc, editor)
+        return finger.remove()
 
 @dataclass(eq=False, repr=False)
 class Up(Command):
@@ -444,11 +889,11 @@ class Up(Command):
     def __pretty__(self):
         return pretty(self.command) + text(" up")
 
-    def apply(self, target, cont, doc, editor):
-        sel, obj, epath = self.command.apply(target, cont, doc, editor)
-        if hasattr(sel, "command"):
-            return sel.command.apply(target, None, doc, editor)
-        raise Exception("cannot ascend from: " + str(sel))
+    def apply(self, cont, doc, editor):
+        finger = self.command.apply(cont, doc, editor)
+        if isinstance(finger, DeepFinger):
+            return finger.write()
+        raise Exception(f"Cannot ascend from: {finger.to_command()}")
 
 @dataclass(eq=False, repr=False)
 class AttachClip(Command):
@@ -457,11 +902,9 @@ class AttachClip(Command):
     def __pretty__(self):
         return pretty(self.command) + text(f" &{self.name}")
 
-    def apply(self, target, cont, doc, editor):
-        sel, obj, epath = self.command.apply(target, cont, doc, editor)
-        if hasattr(sel, "attach"):
-            return sel.attach(target, doc, ClipEntity, self.name)
-        raise Exception("cannot attach entity at: " + str(self.command))
+    def apply(self, cont, doc, editor):
+        finger = self.command.apply(cont, doc, editor)
+        return finger.attach(ClipEntity, self.name)
 
 @dataclass(eq=False, repr=False)
 class AttachView(Command):
@@ -470,11 +913,9 @@ class AttachView(Command):
     def __pretty__(self):
         return pretty(self.command) + text(f" @{self.name}")
 
-    def apply(self, target, cont, doc, editor):
-        sel, obj, epath = self.command.apply(target, cont, doc, editor)
-        if hasattr(sel, "attach"):
-            return sel.attach(target, doc, ViewEntity, self.name)
-        raise Exception("cannot attach entity at: " + str(self.command))
+    def apply(self, cont, doc, editor):
+        finger = self.command.apply(cont, doc, editor)
+        return finger.attach(ViewEntity, self.name)
 
 @dataclass(eq=False, repr=False)
 class AttachBrush(Command):
@@ -488,240 +929,148 @@ class AttachBrush(Command):
         out += sp + self.expr.formatted(self.header, False)
         return out
 
-    def apply(self, target, cont, doc, editor):
-        sel, obj, epath = self.command.apply(target, cont, doc, editor)
-        if hasattr(sel, "attach"):
-            return sel.attach(target, doc, BrushEntity, self.header, self.expr)
-        raise Exception("cannot attach entity at: " + str(self.command))
+    def apply(self, cont, doc, editor):
+        finger = self.command.apply(cont, doc, editor)
+        return finger.attach(BrushEntity, self.header, self.expr)
 
 @dataclass(eq=False, repr=False)
 class WriteSoup(Command):
     command : Command
     soup : List[Any]
-    fxs  : List[Any]
+    fxs : List[Any]
 
-    def apply(self, target, cont, doc, editor):
-        sel, obj, epath = self.command.apply(target, cont, doc, editor)
-        if hasattr(sel, "write"):
-            return sel.write(target, doc, editor, self.soup, self.fxs)
-        raise Exception("cannot write to: " + str(sel))
-
-def deep_apply(command, target, cont, doc, editor):
-    sel, obj, epath = command.apply(target, cont, doc, editor)
-    if isinstance(obj, ClipEntity):
-        epath.append(obj)
-        for clip in doc.declarations:
-            if clip.name == obj.name:
-                return sel, clip, epath
-        else:
-            raise Exception("clip not present at: " + str(self.command))
-    return sel, obj, epath
-
+    def apply(self, cont, doc, editor):
+        finger = self.command.apply(cont, doc, editor)
+        header = finger.get_header()
+        selection = finger.get_selection()
+        expr = read_soup(header, self.soup, self.fxs, selection)
+        return finger.write_sequence(expr)
+ 
 @dataclass(eq=False, repr=False)
 class ByCoords(Command):
     command : Command
-    x : int | float
-    y : int
+    shift : int | float
+    lane : int
+
     def __pretty__(self):
-        return pretty(self.command) + sp + format_coordinates(self.x, self.y)
+        return pretty(self.command) + sp + format_coordinates(self.shift, self.lane)
 
-    def apply(self, target, cont, doc, editor):
-        sel, obj, epath = deep_apply(self.command, target, cont, doc, editor)
-        epath.append(obj)
-        if isinstance(obj, ClipDef):
-            for entity in sorted(obj.entities, key=lambda x: x.shift):
-                if entity.shift <= self.x and entity.lane == self.y:
-                    return ByCoords(sel, entity.shift, entity.lane), entity, epath
-            else:
-                return ByCoords(sel, self.x, self.y), None, epath
-        else:
-            raise Exception("not canvaic at: " + str(self.command))
+    def apply(self, cont, doc, editor):
+        finger = self.command.apply(cont, doc, editor)
+        return finger.by_coords(self.shift, self.lane)
 
-    def attach(self, target, doc, cls, *args):
-        sel, obj, epath = deep_apply(self.command, target, None, doc, editor)
-        epath.append(obj)
-        if isinstance(obj, ClipDef):
-            ent = cls(self.x, self.y, {}, *args)
-            if check_cycles(ent, doc, obj.name):
-                raise Exception("creation of (" + str(ent) + ") would cause cycle issues into: " + str(self.command))
-            obj.entities.append(ent)
-            return ByCoords(sel, self.x, self.y), ent, epath
-        else:
-            raise Exception("not canvaic at: " + str(self.command))
+@dataclass(eq=False, repr=False)
+class ByRef(Command):
+    command : Command
+    def __pretty__(self):
+        return pretty(self.command) + sp + text("*")
 
-    def assign(self, target, value, doc, editor):
-        raise Exception("cannot assign at coordinates")
-
-    def remove(self, target, doc, editor):
-        sel, obj, epath = self.command.apply(target, None, doc, editor)
-        epath.append(obj)
-        if isinstance(obj, ClipEntity):
-            for clip in doc.declarations:
-                if clip.name == obj.name:
-                    obj = clip
-                    break
-            else:
-                raise Exception("clip not present at: " + str(self))
-        if isinstance(obj, ClipDef):
-            for entity in sorted(obj.entities, key=lambda x: x.shift):
-                if entity.shift <= self.x and entity.lane == self.y:
-                    obj.entities.remove(entity)
-                    return ByCoords(sel, entity.shift, entity.lane), None, epath
-            else:
-                raise Exception("nothing to remove: " + str(self))
-        else:
-            raise Exception("not canvaic at: " + str(self.command))
-
-def check_cycles(entity, doc, target):
-    if isinstance(entity, ClipEntity) and entity.name == target:
-        return True
-    if cd := non_leaf(entity, doc):
-        for e in cd.entities:
-            if check_cycles(e, doc, target):
-                return True
-    return False
-
-def non_leaf(entity, doc):
-    if not isinstance(entity, ClipEntity):
-        return None
-    for cd in doc.declarations:
-        if cd.name == entity.name and cd.entities:
-            return cd
-    return None
+    def apply(self, cont, doc, editor):
+        finger = self.command.apply(cont, doc, editor)
+        return finger.by_ref()
 
 @dataclass(eq=False, repr=False)
 class MoveTo(Command):
     command : Command
-    x : int | float
-    y : int
+    shift : int | float
+    lane : int
     def __pretty__(self):
         return pretty(self.command) + text(" ... ") + format_coordinates(self.x, self.y)
 
-    def apply(self, target, cont, doc, editor):
-        sel, obj, epath = self.command.apply(target, cont, doc, editor)
-        epath.append(obj)
-        if isinstance(obj, Entity):
-            obj.shift = self.x
-            obj.lane = self.y
-            if isinstance(sel, ByCoords):
-                sel.x = self.x
-                sel.y = self.y
-            return sel, obj, epath
-        raise Exception("not supporting movement of: " + str(obj))
+    def apply(self, cont, doc, editor):
+        finger = self.command.apply(cont, doc, editor)
+        return finger.move_to(self.shift, self.lane)
 
 @dataclass(eq=False, repr=False)
 class SearchCoords(Command):
     command : Command
-    x : int | float
-    y : int
+    shift : int | float
+    lane : int
+
     def __pretty__(self):
         return pretty(self.command) + text(" ... ") + format_coordinates(self.x, self.y)
 
-    def apply(self, target, cont, doc, editor):
-        sel, obj, epath = deep_apply(self.command, target, None, doc, editor)
-        epath.append(obj)
-        if isinstance(obj, ClipDef):
-            unvisited = [(sel, obj, self.x, self.y, epath)]
-            best = None
-            this = None
-            while unvisited:
-                asel, obj, x, y, epath = unvisited.pop()
-                epath = epath + [obj]
-                for entity in obj.entities:
-                    if entity.shift <= x and entity.lane <= y:
-                        dist = (y-entity.lane, x-entity.shift)
-                        if cd := non_leaf(entity, doc):
-                            bsel = ByCoords(asel, entity.shift, entity.lane)
-                            unvisited.append((bsel, cd, x - entity.shift, y - entity.lane, epath))
-                        elif best is None or dist < best:
-                            best = dist
-                            this = ByCoords(asel, entity.shift, entity.lane), entity, epath
-            if this is not None:
-                return this
-            else:
-                raise Exception("the clip at this location is empty: " + str(self))
+    def apply(self, cont, doc, editor):
+        finger = self.command.apply(cont, doc, editor)
+        return finger.search(self.shift, self.lane)
 
-@dataclass(eq=False, repr=False)
-class Finger:
-    pass
-
-def header_of(thing):
-    while isinstance(thing, Finger):
-        if isinstance(thing, Side) and thing.side:
-            return thing.top.tree.header
-        thing = thing.top
-    return thing.header
-
-def topmost(thing):
-    while isinstance(thing, Finger):
-        thing = thing.top
-    return thing
-
-@dataclass(eq=False, repr=False)
-class RootFinger(Finger):
-    top : Any
-    tree : SequenceNode
-    def __post_init(self):
-        assert isinstance(tree, SequenceNode)
-
-    def writeback(self):
-        if isinstance(self.top, BrushEntity):
-            self.top.expr = self.tree
-        else:
-            self.top.writeback(self.tree)
-
-    def __str__(self):
-        p = formatted([], self.tree, False)
-        return pformat_doc(p, 80)
-
-@dataclass(eq=False, repr=False)
-class Indexer(Finger):
-    top : RootFinger
-    start : int
-    stop : int
-
-    def writeback(self, tree):
-        count = tree.length
-        self.top.tree = self.top.tree.erase(self.start, self.stop).insert(self.start, tree)
-        self.stop = self.start + count
-        self.top.writeback()
-
-    def __str__(self):
-        p = formatted_range([], self.top.tree, False, self.start, self.stop)
-        return pformat_doc(p, 80)
-
-@dataclass(eq=False, repr=False)
-class Side(Finger):
-    top : RootFinger
-    side : bool
-
-    def writeback(self, tree):
-        fx = self.top.tree
-        if self.side:
-            self.top.tree = Fx.mk(fx.lhs, fx.args, fx.header, tree)
-        else:
-            self.top.tree = Fx.mk(tree, fx.args, fx.header, fx.rhs)
-        self.top.writeback()
-
-    def __str__(self):
-        if self.side:
-            p = formatted([], self.top.tree.rhs, False)
-        else:
-            p = formatted([], self.top.tree.lhs, False)
-        return pformat_doc(p, 80)
-
-@dataclass(eq=False, repr=False)
-class Middle(Finger):
-    top : RootFinger
-
-    def writeback(self, tree):
-        tuplet = self.top.tree
-        self.top.tree = Tuplet.mk(tuplet.duration, tree)
-        self.top.writeback()
-
-    def __str__(self):
-        p = formatted([], self.top.tree.mhs, False)
-        return pformat_doc(p, 80)
+#def header_of(thing):
+#    while isinstance(thing, Finger):
+#        if isinstance(thing, Side) and thing.side:
+#            return thing.top.tree.header
+#        thing = thing.top
+#    return thing.header
+#
+#def topmost(thing):
+#    while isinstance(thing, Finger):
+#        thing = thing.top
+#    return thing
+#
+#@dataclass(eq=False, repr=False)
+#class RootFinger(Finger):
+#    top : Any
+#    tree : SequenceNode
+#    def __post_init(self):
+#        assert isinstance(tree, SequenceNode)
+#
+#    def writeback(self):
+#        if isinstance(self.top, BrushEntity):
+#            self.top.expr = self.tree
+#        else:
+#            self.top.writeback(self.tree)
+#
+#    def __str__(self):
+#        p = formatted([], self.tree, False)
+#        return pformat_doc(p, 80)
+#
+#@dataclass(eq=False, repr=False)
+#class Indexer(Finger):
+#    top : RootFinger
+#    start : int
+#    stop : int
+#
+#    def writeback(self, tree):
+#        count = tree.length
+#        self.top.tree = self.top.tree.erase(self.start, self.stop).insert(self.start, tree)
+#        self.stop = self.start + count
+#        self.top.writeback()
+#
+#    def __str__(self):
+#        p = formatted_range([], self.top.tree, False, self.start, self.stop)
+#        return pformat_doc(p, 80)
+#
+#@dataclass(eq=False, repr=False)
+#class Side(Finger):
+#    top : RootFinger
+#    side : bool
+#
+#    def writeback(self, tree):
+#        fx = self.top.tree
+#        if self.side:
+#            self.top.tree = Fx.mk(fx.lhs, fx.args, fx.header, tree)
+#        else:
+#            self.top.tree = Fx.mk(tree, fx.args, fx.header, fx.rhs)
+#        self.top.writeback()
+#
+#    def __str__(self):
+#        if self.side:
+#            p = formatted([], self.top.tree.rhs, False)
+#        else:
+#            p = formatted([], self.top.tree.lhs, False)
+#        return pformat_doc(p, 80)
+#
+#@dataclass(eq=False, repr=False)
+#class Middle(Finger):
+#    top : RootFinger
+#
+#    def writeback(self, tree):
+#        tuplet = self.top.tree
+#        self.top.tree = Tuplet.mk(tuplet.duration, tree)
+#        self.top.writeback()
+#
+#    def __str__(self):
+#        p = formatted([], self.top.tree.mhs, False)
+#        return pformat_doc(p, 80)
 
 @dataclass(eq=False, repr=False)
 class IndexOf(Command):
@@ -730,31 +1079,34 @@ class IndexOf(Command):
     def __pretty__(self):
         return pretty(self.command) + text(f" [{self.index}]")
 
-    def apply(self, target, cont, doc, editor):
-        sel, obj, epath = self.command.apply(target, cont, doc, editor)
-        epath.append(obj)
-        if isinstance(obj, BrushEntity):
-            obj = RootFinger(obj, obj.expr)
-        if isinstance(obj, RootFinger):
-            obj = RootFinger(Indexer(obj, self.index, self.index+1), obj.tree.pick(self.index))
-            return IndexOf(sel, self.index), obj, epath
-        assert False, "TODO: something wrong"
+    def apply(self, cont, doc, editor):
+        return self.command.apply(cont, doc, editor).index_of(self.index)
 
-    def write(self, target, doc, editor, soup, fxs):
-        sel, obj, epath = self.command.apply(target, None, doc, editor)
-        epath.append(obj)
-        if isinstance(obj, BrushEntity):
-            obj = RootFinger(obj, obj.expr)
-        if isinstance(obj, RootFinger):
-            selection = obj.tree.pick(self.index).retain(empty, empty)
-            nodes = read_soup(header_of(obj), soup, fxs, selection)
-            obj.tree = obj.tree.erase(self.index, self.index+1).insert(self.index, nodes)
-            obj.writeback()
-            if nodes.length == 1:
-                return IndexOf(sel, self.index), Indexer(obj, self.index, self.index+nodes.length), epath
-            else:
-                return RangeOf(sel, self.index, self.index+nodes.length), Indexer(obj, self.index, self.index+nodes.length), epath
-        assert False, "TODO: something wrong"
+    #def apply(self, target, cont, doc, editor):
+    #    sel, obj, epath = self.command.apply(target, cont, doc, editor)
+    #    epath.append(obj)
+    #    if isinstance(obj, BrushEntity):
+    #        obj = RootFinger(obj, obj.expr)
+    #    if isinstance(obj, RootFinger):
+    #        obj = RootFinger(Indexer(obj, self.index, self.index+1), obj.tree.pick(self.index))
+    #        return IndexOf(sel, self.index), obj, epath
+    #    assert False, "TODO: something wrong"
+
+    #def write(self, target, doc, editor, soup, fxs):
+    #    sel, obj, epath = self.command.apply(target, None, doc, editor)
+    #    epath.append(obj)
+    #    if isinstance(obj, BrushEntity):
+    #        obj = RootFinger(obj, obj.expr)
+    #    if isinstance(obj, RootFinger):
+    #        selection = obj.tree.pick(self.index).retain(empty, empty)
+    #        nodes = read_soup(header_of(obj), soup, fxs, selection)
+    #        obj.tree = obj.tree.erase(self.index, self.index+1).insert(self.index, nodes)
+    #        obj.writeback()
+    #        if nodes.length == 1:
+    #            return IndexOf(sel, self.index), Indexer(obj, self.index, self.index+nodes.length), epath
+    #        else:
+    #            return RangeOf(sel, self.index, self.index+nodes.length), Indexer(obj, self.index, self.index+nodes.length), epath
+    #    assert False, "TODO: something wrong"
 
 @dataclass(eq=False, repr=False)
 class RangeOf(Command):
@@ -762,45 +1114,40 @@ class RangeOf(Command):
     head : int
     tail : int
 
-    @property
-    def start(self):
-        return min(self.head, self.tail)
-
-    @property
-    def stop(self):
-        return max(self.head, self.tail)
-
     def __pretty__(self):
         return pretty(self.command) + text(f" [{self.head}:{self.tail}]")
 
-    def apply(self, target, cont, doc, editor):
-        sel, obj, epath = self.command.apply(target, cont, doc, editor)
-        epath.append(obj)
-        if isinstance(obj, BrushEntity):
-            obj = RootFinger(obj, obj.expr)
-        if isinstance(obj, RootFinger):
-            if self.stop - self.start == 1:
-                obj = RootFinger(Indexer(obj, self.start, self.stop), obj.tree.pick(self.start))
-            else:
-                obj = Indexer(obj, self.head, self.tail)
-            return RangeOf(sel, self.head, self.tail), obj, epath
-        assert False, "TODO: something wrong"
+    def apply(self, cont, doc, editor):
+        return self.command.apply(cont, doc, editor).range_of(self.head, self.tail)
 
-    def write(self, target, doc, editor, soup, fxs):
-        sel, obj, epath = self.command.apply(target, None, doc, editor)
-        epath.append(obj)
-        if isinstance(obj, BrushEntity):
-            obj = RootFinger(obj, obj.expr)
-        if isinstance(obj, RootFinger):
-            selection = empty
-            for n in obj.tree.sequence(self.start, self.stop):
-                selection = selection.insert(selection.length, n.retain(empty, empty))
-            count = selection.length
-            nodes = read_soup(header_of(obj), soup, fxs, selection)
-            obj.tree = obj.tree.erase(self.start, self.stop).insert(self.start, nodes)
-            obj.writeback()
-            return RangeOf(sel, self.start, self.start+nodes.length), Indexer(obj, self.start, self.start+nodes.length), epath
-        assert False, "TODO: something wrong"
+    #def apply(self, target, cont, doc, editor):
+    #    sel, obj, epath = self.command.apply(target, cont, doc, editor)
+    #    epath.append(obj)
+    #    if isinstance(obj, BrushEntity):
+    #        obj = RootFinger(obj, obj.expr)
+    #    if isinstance(obj, RootFinger):
+    #        if self.stop - self.start == 1:
+    #            obj = RootFinger(Indexer(obj, self.start, self.stop), obj.tree.pick(self.start))
+    #        else:
+    #            obj = Indexer(obj, self.head, self.tail)
+    #        return RangeOf(sel, self.head, self.tail), obj, epath
+    #    assert False, "TODO: something wrong"
+
+    #def write(self, target, doc, editor, soup, fxs):
+    #    sel, obj, epath = self.command.apply(target, None, doc, editor)
+    #    epath.append(obj)
+    #    if isinstance(obj, BrushEntity):
+    #        obj = RootFinger(obj, obj.expr)
+    #    if isinstance(obj, RootFinger):
+    #        selection = empty
+    #        for n in obj.tree.sequence(self.start, self.stop):
+    #            selection = selection.insert(selection.length, n.retain(empty, empty))
+    #        count = selection.length
+    #        nodes = read_soup(header_of(obj), soup, fxs, selection)
+    #        obj.tree = obj.tree.erase(self.start, self.stop).insert(self.start, nodes)
+    #        obj.writeback()
+    #        return RangeOf(sel, self.start, self.start+nodes.length), Indexer(obj, self.start, self.start+nodes.length), epath
+    #    assert False, "TODO: something wrong"
 
 @dataclass(eq=False, repr=False)
 class LhsOf(Command):
@@ -809,39 +1156,42 @@ class LhsOf(Command):
     def __pretty__(self):
         return pretty(self.command) + text(f" <")
 
-    def apply(self, target, cont, doc, editor):
-        sel, obj, epath = self.command.apply(target, cont, doc, editor)
-        epath.append(obj)
-        if isinstance(obj, BrushEntity):
-            obj = RootFinger(obj, obj.expr)
-        if isinstance(obj, RootFinger):
-            if isinstance(obj.tree, Tuplet):
-                o = RootFinger(Middle(obj), obj.tree.mhs)
-                return LhsOf(sel), o, epath
-            if isinstance(obj.tree, Fx):
-                obj = RootFinger(Side(obj, False), obj.tree.lhs)
-                return LhsOf(sel), obj, epath
-        raise Exception("selection not an FX: " + str(sel))
+    def apply(self, cont, doc, editor):
+        return self.command.apply(cont, doc, editor).lhs_of()
 
-    def write(self, target, doc, editor, soup, fxs):
-        sel, obj, epath = self.command.apply(target, None, doc, editor)
-        epath.append(obj)
-        if isinstance(obj, BrushEntity):
-            obj = RootFinger(obj, obj.expr)
-        if isinstance(obj, RootFinger):
-            if isinstance(obj.tree, Tuplet):
-                selection = obj.tree.mhs
-                nodes = read_soup(header_of(obj), soup, fxs, selection)
-                o = Middle(obj)
-                o.writeback(nodes)
-                return LhsOf(sel), o, epath
-            if isinstance(obj.tree, Fx):
-                selection = obj.tree.lhs
-                nodes = read_soup(header_of(obj), soup, fxs, selection)
-                o = Side(obj, False)
-                o.writeback(nodes)
-                return LhsOf(sel), o, epath
-        raise Exception("selection not an FX: " + str(sel))
+#    def apply(self, target, cont, doc, editor):
+#        sel, obj, epath = self.command.apply(target, cont, doc, editor)
+#        epath.append(obj)
+#        if isinstance(obj, BrushEntity):
+#            obj = RootFinger(obj, obj.expr)
+#        if isinstance(obj, RootFinger):
+#            if isinstance(obj.tree, Tuplet):
+#                o = RootFinger(Middle(obj), obj.tree.mhs)
+#                return LhsOf(sel), o, epath
+#            if isinstance(obj.tree, Fx):
+#                obj = RootFinger(Side(obj, False), obj.tree.lhs)
+#                return LhsOf(sel), obj, epath
+#        raise Exception("selection not an FX: " + str(sel))
+#
+#    def write(self, target, doc, editor, soup, fxs):
+#        sel, obj, epath = self.command.apply(target, None, doc, editor)
+#        epath.append(obj)
+#        if isinstance(obj, BrushEntity):
+#            obj = RootFinger(obj, obj.expr)
+#        if isinstance(obj, RootFinger):
+#            if isinstance(obj.tree, Tuplet):
+#                selection = obj.tree.mhs
+#                nodes = read_soup(header_of(obj), soup, fxs, selection)
+#                o = Middle(obj)
+#                o.writeback(nodes)
+#                return LhsOf(sel), o, epath
+#            if isinstance(obj.tree, Fx):
+#                selection = obj.tree.lhs
+#                nodes = read_soup(header_of(obj), soup, fxs, selection)
+#                o = Side(obj, False)
+#                o.writeback(nodes)
+#                return LhsOf(sel), o, epath
+#        raise Exception("selection not an FX: " + str(sel))
 
 @dataclass(eq=False, repr=False)
 class RhsOf(Command):
@@ -850,39 +1200,42 @@ class RhsOf(Command):
     def __pretty__(self):
         return pretty(self.command) + text(f" >")
 
-    def apply(self, target, cont, doc, editor):
-        sel, obj, epath = self.command.apply(target, cont, doc, editor)
-        epath.append(obj)
-        if isinstance(obj, BrushEntity):
-            obj = RootFinger(obj, obj.expr)
-        if isinstance(obj, RootFinger):
-            if isinstance(obj.tree, Tuplet):
-                o = RootFinger(Middle(obj), obj.tree.mhs)
-                return RhsOf(sel), o, epath
-            if isinstance(obj.tree, Fx):
-                o = RootFinger(Side(obj, True), obj.tree.rhs)
-                return RhsOf(sel), o, epath
-        raise Exception("selection not an FX: " + str(sel))
+    def apply(self, cont, doc, editor):
+        return self.command.apply(cont, doc, editor).rhs_of()
 
-    def write(self, target, doc, editor, soup, fxs):
-        sel, obj, epath = self.command.apply(target, None, doc, editor)
-        epath.append(obj)
-        if isinstance(obj, BrushEntity):
-            obj = RootFinger(obj, obj.expr)
-        if isinstance(obj, RootFinger):
-            if isinstance(obj.tree, Tuplet):
-                selection = obj.tree.mhs
-                nodes = read_soup(header_of(obj), soup, fxs, selection)
-                o = Middle(obj)
-                o.writeback(nodes)
-                return RhsOf(sel), o, epath
-            if isinstance(obj.tree, Fx):
-                selection = obj.tree.rhs
-                nodes = read_soup(header_of(obj), soup, fxs, selection)
-                o = Side(obj, True)
-                o.writeback(nodes)
-                return RhsOf(sel), o, epath
-        raise Exception("selection not an FX: " + str(sel))
+    #def apply(self, target, cont, doc, editor):
+    #    sel, obj, epath = self.command.apply(target, cont, doc, editor)
+    #    epath.append(obj)
+    #    if isinstance(obj, BrushEntity):
+    #        obj = RootFinger(obj, obj.expr)
+    #    if isinstance(obj, RootFinger):
+    #        if isinstance(obj.tree, Tuplet):
+    #            o = RootFinger(Middle(obj), obj.tree.mhs)
+    #            return RhsOf(sel), o, epath
+    #        if isinstance(obj.tree, Fx):
+    #            o = RootFinger(Side(obj, True), obj.tree.rhs)
+    #            return RhsOf(sel), o, epath
+    #    raise Exception("selection not an FX: " + str(sel))
+
+    #def write(self, target, doc, editor, soup, fxs):
+    #    sel, obj, epath = self.command.apply(target, None, doc, editor)
+    #    epath.append(obj)
+    #    if isinstance(obj, BrushEntity):
+    #        obj = RootFinger(obj, obj.expr)
+    #    if isinstance(obj, RootFinger):
+    #        if isinstance(obj.tree, Tuplet):
+    #            selection = obj.tree.mhs
+    #            nodes = read_soup(header_of(obj), soup, fxs, selection)
+    #            o = Middle(obj)
+    #            o.writeback(nodes)
+    #            return RhsOf(sel), o, epath
+    #        if isinstance(obj.tree, Fx):
+    #            selection = obj.tree.rhs
+    #            nodes = read_soup(header_of(obj), soup, fxs, selection)
+    #            o = Side(obj, True)
+    #            o.writeback(nodes)
+    #            return RhsOf(sel), o, epath
+    #    raise Exception("selection not an FX: " + str(sel))
 
 @dataclass(eq=False, repr=False)
 class SetConnection(Command):
@@ -893,14 +1246,18 @@ class SetConnection(Command):
     def __pretty__(self):
         return pretty(self.command) + text(f" >")
 
-    def apply(self, target, cont, doc):
-        sel, obj, epath = self.command.apply(target, cont, doc, editor)
-        epath.append(obj)
-        if self.connect:
-            doc.connections.add(self.connection)
-        else:
-            doc.connections.discard(self.connection)
-        return sel, obj, epath
+    def apply(self, cont, doc, editor):
+        finger = self.command.apply(cont, doc, editor)
+        return finger.set_connection(self.connection, connect)
+
+        # TODO: recon
+        #sel, obj, epath = self.command.apply(target, cont, doc, editor)
+        #epath.append(obj)
+        #if self.connect:
+        #    doc.connections.add(self.connection)
+        #else:
+        #    doc.connections.discard(self.connection)
+        #return sel, obj, epath
 
 @dataclass(eq=False, repr=False)
 class SelectSynth(Command):
@@ -911,7 +1268,7 @@ class SelectSynth(Command):
         out += text(self.name)
         return out
 
-    def apply(self, target, cont, doc, editor):
+    def apply(self, cont, doc, editor):
         assert False, "TODO"
 
 @dataclass(eq=False, repr=False)
@@ -926,7 +1283,7 @@ class SetSynth(Command):
         out += sp + text(self.synth)
         return out
 
-    def apply(self, target, cont, doc, editor):
+    def apply(self, cont, doc, editor):
         assert False, "TODO"
 
 @dataclass(eq=False, repr=False)
@@ -936,7 +1293,7 @@ class ToggleMulti(Command):
     def __pretty__(self):
         return pretty(self.command) + text(f" multi")
 
-    def apply(self, target, cont, doc, editor):
+    def apply(self, cont, doc, editor):
         assert False, "TODO"
 
 @dataclass(eq=False, repr=False)
@@ -947,7 +1304,7 @@ class SetTypeParam(Command):
     def __pretty__(self):
         return pretty(self.command) + text(f" *= ") + text(self.type_param)
 
-    def apply(self, target, cont, doc, editor):
+    def apply(self, cont, doc, editor):
         assert False, "TODO"
 
 @dataclass(eq=False, repr=False)
@@ -957,7 +1314,7 @@ class Eval(Command):
     def __pretty__(self):
         return pretty(self.command) + text(" eval")
 
-    def apply(self, target, cont, doc, editor):
+    def apply(self, cont, doc, editor):
         assert False, "TODO"
 
 @dataclass(eq=False, repr=False)
@@ -967,10 +1324,10 @@ class LoopAll(Command):
     def __pretty__(self):
         return pretty(self.command) + text(" loop all")
 
-    def apply(self, target, cont, doc, editor):
+    def apply(self, cont, doc, editor):
+        finger = self.command.apply(cont, doc, editor)
         editor.transport.playback_range = None
-        editor.after_rewrite()
-        return self.command.apply(target, cont, doc, editor)
+        return finger
 
 @dataclass(eq=False, repr=False)
 class Loop(Command):
@@ -981,10 +1338,10 @@ class Loop(Command):
     def __pretty__(self):
         return pretty(self.command) + text(f" eval {self.start} : {self.stop}")
 
-    def apply(self, target, cont, doc, editor):
+    def apply(self, cont, doc, editor):
+        finger = self.command.apply(cont, doc, editor)
         editor.transport.playback_range = self.start, self.stop
-        editor.after_rewrite()
-        return self.command.apply(target, cont, doc, editor)
+        return finger
 
 @dataclass(eq=False, repr=False)
 class CursorTo(Command):
@@ -994,11 +1351,11 @@ class CursorTo(Command):
     def __pretty__(self):
         return pretty(self.command) + text(" cursor " + str(self.point))
 
-    def apply(self, target, cont, doc, editor):
+    def apply(self, cont, doc, editor):
+        finger = self.command.apply(cont, doc, editor)
         editor.transport.cursor_head = self.point
         editor.transport.cursor_tail = self.point
-        return self.command.apply(target, cont, doc, editor)
-
+        return finger
 
 ## ENTITIES
 def format_coordinates(x, y):
@@ -1007,6 +1364,17 @@ def format_coordinates(x, y):
 @dataclass(eq=False, repr=False)
 class ClipEntity(Entity):
     name  : str
+    def reset(self, shift=None, lane=None, properties=None, name=None):
+        if shift is None:
+            shift = self.shift
+        if lane is None:
+            lane = self.lane
+        if properties is None:
+            properties = self.properties
+        if name is None:
+            name = self.name
+        return ClipEntity(shift, lane, properties, name)
+
     def __pretty__(self):
         out = format_coordinates(self.shift, self.lane)
         out += text(" &" + self.name)
@@ -1015,6 +1383,17 @@ class ClipEntity(Entity):
 @dataclass(eq=False, repr=False)
 class ViewEntity(Entity):
     name  : str
+    def reset(self, shift=None, lane=None, properties=None, name=None):
+        if shift is None:
+            shift = self.shift
+        if lane is None:
+            lane = self.lane
+        if properties is None:
+            properties = self.properties
+        if name is None:
+            name = self.name
+        return ViewEntity(shift, lane, properties, name)
+
     def __pretty__(self):
         out = format_coordinates(self.shift, self.lane)
         out += text(" @" + self.name)
@@ -1024,6 +1403,18 @@ class ViewEntity(Entity):
 class BrushEntity(Entity):
     header : List[Annotation]
     expr   : Expr
+    def reset(self, shift=None, lane=None, properties=None, header=None, expr=None):
+        if shift is None:
+            shift = self.shift
+        if lane is None:
+            lane = self.lane
+        if properties is None:
+            properties = self.properties
+        if header is None:
+            header = self.header
+        if expr is None:
+            expr = self.expr
+        return BrushEntity(shift, lane, properties, header, expr)
 
     def __pretty__(self):
         out = format_coordinates(self.shift, self.lane)
@@ -1081,7 +1472,7 @@ def format_cell(cell, header):
         out.append(text(name + "=") + pretty(val))
     return sp.join(out)
 
-## EXPRESSIONS
+## EXPRESSION PROTOTYPES
 @dataclass
 class NoteProto:
     duration : Optional[Duration]
@@ -1150,113 +1541,6 @@ def read_soup(header, soup, fxs, selection=None):
         out = Fx.mk(out, fx.args, fx.header, rhs)
     return out
 
-#     out = []
-#     first = None
-#     style = None
-#     header_count = 0
-#     group = []
-#     for node in soup:
-#         if isinstance(node, ListletProto):
-#             out.append(read_soup(header, node.soup, node.fxs))
-#         elif isinstance(node, Unk) and (node.name in note_durations or isinstance(node.name, int)):
-#             if first is not None:
-#                 out.append(Note(first, style, group))
-#             first = Duration(node.name, 0)
-#             style = "n"
-#             header_count = 0
-#             group = [{}]
-#         elif group and isinstance(node, Unk) and node.name == ".":
-#             first.dots += 1
-#         elif group and isinstance(node, Unk) and node.name == "s":
-#             style = "s"
-#         elif group and isinstance(node, Unk) and node.name == "t":
-#             style = "t"
-#         elif group and isinstance(node, Unk) and node.name == "~":
-#             assert len(group) == 1 and len(group[0]) == 0
-#             out.append(Note(first, style, group))
-#             group = []
-#         elif first
-#         else:
-#             assert first
-#             group[-1][header[header_count][0]] = node
-#             header_count += 1
-# 
-#     if first is not None:
-#         out.append(Note(first, style, group))
-# 
-#     out = Listlet(out)
-#     for fx in fxs:
-#         listlet = read_soup(fx.header if fx.header else header, fx.soup, [])
-#         out = Fx(out, fx.args, fx.header, listlet.exprs)
-#     return out
-
-def mk_listlet(exprs, raw=False):
-    out = []
-    def visit(expr):
-        if isinstance(expr, Listlet):
-            for e in expr.exprs:
-                visit(e)
-        else:
-            out.append(expr)
-    for expr in exprs:
-        visit(expr)
-    if raw:
-        return out
-    if len(out) == 1:
-        return out[0]
-    return Listlet(out)
-
-@dataclass(eq=False, repr=False)
-class Listlet(Expr):
-    exprs : List[Expr]
-
-    def formatted(self, header, ins):
-        out = text(", ").join(x.formatted(header, True) for x in self.exprs)
-        if ins:
-            return text("(") + out + text(")")
-        return out
-
-#@dataclass(eq=False, repr=False)
-#class Fx(Expr):
-#    base : Expr
-#    args : List[Value]
-#    header : List[Annotation]
-#    exprs : List[Expr]
-#
-
-# @dataclass(eq=False, repr=False)
-# class Invoke(Expr):
-#     callee : Expr
-#     action : Action
-# 
-#     def __pretty__(self):
-#         return pretty(self.callee) + text(" / ") + pretty(self.action)
-# 
-# @dataclass(eq=False, repr=False)
-# class WestRhythm(Expr):
-#     header : List[Annotation]
-#     elements : List[Element]
-# 
-#     def __pretty__(self):
-#         annotation = format_annotations(self.header)
-#         return annotation + text(", ").join(self.elements)
-# 
-# @dataclass(eq=False, repr=False)
-# class StepRhythm(Expr):
-#     sequence : List[int]
-# 
-#     def __pretty__(self):
-#         return text("step ") + text("").join(self.sequence)
- 
-#     def to_west(self):
-#         out = []
-#         for i in self.sequence:
-#             if i > 0:
-#                 out.append(Note(Duration(i,0), [{}]))
-#             else:
-#                 out.append(Note(Duration(1,0), []))
-#         return WestRhythm(self.header, out)
-
 def random_name():
     return ''.join(random.choices(string.ascii_lowercase + string.digits, k=4))
  
@@ -1283,7 +1567,7 @@ dynamics_to_dbfs = {
     'fff': 0
 }
 
-RhythmConfig = Dict[str, int | float | music.Pitch | Ref | Unk]
+RhythmConfig = Dict[str, Value]
 
 default_rhythm_config = {
     'beats_per_measure': 4,
@@ -1295,114 +1579,6 @@ default_rhythm_config = {
     'synth': Unk("default"),
     'brush': Unk("gate"),
 }
-
-# @dataclass
-# class Pattern:
-#     events : List[Tuple[float, float]]
-#     values : List[List[Dict[str, Any]]]
-#     duration : float
-# #     views : List[Tuple[str, str, str]]
-# #     meta : List[Dict[str, int]]
-# # 
-# #     def overlay(self, other : List[List[Dict[str, Any]]], view : Tuple[str, str, str]):
-# #         out = []
-# #         meta = []
-# #         L = len(other)
-# #         for i,(vg,m) in enumerate(zip(self.values, self.meta)):
-# #             x = []
-# #             for w in other[i%L]:
-# #                 for v in vg:
-# #                     x.append(v | w)
-# #             out.append(x)
-# #             meta.append(m | {view[0]: i%L})
-# #         return Pattern(self.events, out, self.duration, self.views + [view], meta)
-# 
-# @dataclass(repr=False, eq=False)
-# class Skip(Object):
-#     def __pretty__(self):
-#         return text("*")
-# 
-# @dataclass(repr=False, eq=False)
-# class Attrs(Object):
-#     data : List[Tuple[str, Value]]
-# 
-#     def __pretty__(self):
-#         return text("(" + ", ".join(f"{n}={v}" for n,v in self.data) + ")")
-# 
-# def format_cell(cell, header):
-#     if isinstance(cell, list):
-#         return sp.join(cell)
-#     cell = cell.copy()
-#     named = [pretty(cell.pop(a.name, "skip")) for a in header]
-#     if len(cell) > 0:
-#         rest = text(", ").join(text(x + "=") + pretty(v) for x,v in cell.items())
-#         return sp.join(named + [text("(") + rest + text(")")])
-#     return sp.join(named)
-# 
-# def format_values(values, header):
-#     if len(values) == 0:
-#         return text("~")
-#     if len(values) == 1 and len(values[0]) == 0:
-#         return text("")
-#     return sp + text(":").join(format_cell(cell, header) for cell in values)
-# 
-# def canon(values, header):
-#     out = {}
-#     for i, val in enumerate(values):
-#         if isinstance(val, Skip):
-#             continue
-#         if isinstance(val, Attrs):
-#             out.update(val.data)
-#         elif i < len(header):
-#             out[header[i].name] = val
-#     return out
-#     
-# @dataclass(repr=False, eq=False)
-# class Ostinato(Action):
-#     subheader : List[Annotation] | None
-#     values : List[List[Dict[str, Value]]]
-#     default : bool = False
-# 
-#     def canon(self, header):
-#         if self.subheader is not None:
-#             header = self.subheader
-#         return Ostinato(self.subheader,
-#             [[canon(v, header) for v in val] for val in self.values],
-#             self.default)
-# 
-#     def __pretty__(self):
-#         if self.default:
-#             out = [text("default ")]
-#         else:
-#             out = [text("ostinato ")]
-#         if self.subheader:
-#             out.append(format_header(self.subheader))
-#         out.append(text(",").join(format_values(v, self.subheader or []) for v in self.values))
-#         return text("").join(out)
-# 
-# #@dataclass(repr=False)
-# #class Overlay(Component):
-# #    base : Component
-# #    data : List[List[Any]]
-# #    name : str
-# #    dtype : str
-# #    view : str
-# #
-# #    def to_values(self):
-# #        return [[{self.name: v} for v in vg] for vg in self.data]
-# #
-# #    def __pretty__(self):
-# #        base = pretty(self.base)
-# #        def process(x):
-# #            return text(":").join(x) if len(x) > 0 else text("~")
-# #        blob = sp.join(process(x) for x in self.data).group()
-# #        body = (text("/") + sp + blob + sp + text(f"[{self.name}:{self.dtype}:{self.view}]")).group()
-# #        return base + sp + body
-# 
-# @dataclass(repr=False, eq=False)
-# class Retrograde(Action):
-#     def __pretty__(self):
-#         return text("retrograde")
  
 def bjorklund(pulses: int, steps: int) -> list[int]:
     """
