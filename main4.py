@@ -460,32 +460,26 @@ class Editor:
 
         side_rect = pygame.Rect(0, 24, self.MARGIN, self.screen_height - 48)
 
-        if self.mode == "track" and False: #isinstance(self.detail, (BrushEntity, Finger)):
+        fullfinger = self.selection.apply(None, self.doc, self)
+        is_track = isinstance(fullfinger, (SequenceFinger, IndexFinger, RangeFinger))
+        if self.mode == "track" and is_track:
             main_grid = Grid(
                 self.MARGIN - self.track_scroll[0] * self.BAR_WIDTH / 4,
                 24 - self.track_scroll[1] * self.LANE_HEIGHT, self.BAR_WIDTH / 4, self.LANE_HEIGHT)
 
-            config = default_rhythm_config.copy()
-            views = {}
-            for e in self.epath:
-                if isinstance(e, (ClipDef, Entity)):
-                    config |= e.properties
-                if isinstance(e, ClipDef):
-                    for ent in e.entities:
-                        if isinstance(ent, ViewEntity):
-                            views[ent.name] = config | ent.properties
-            brush_entity = topmost(self.detail)
+            config, views = fullfinger.get_config_views(default_rhythm_config)
+            finger, spath = fullfinger.get_track_selection()
+
             ui.label(str(list(views.keys())), top_grid(0,1,10,2))
-            config |= brush_entity.properties
             ui.widget(TrackEditorWidget(
                 self,
                 main_grid,
                 main_rect,
                 config,
-                brush_entity,
+                finger,
+                fullfinger,
+                spath,
                 views,
-                self.detail,
-                self.selection,
                 "track-editor"))
         elif self.mode == "track":
             ui.widget(GridWidget(self, main_rect, "grid"))
@@ -546,7 +540,7 @@ class Editor:
                 "transport-visual"))
             if what := ui.widget(Scroller(self, main_rect, main_grid, "scroller")):
                 if what[0] == "pick":
-                    com = SearchCoords(ByName(Cont(), "main"), *what[1])
+                    com = ByRef(SearchCoords(ByName(Cont(), "main"), *what[1]))
                     self.run_command(com)
                 elif what[0] == "scroll":
                     editor.scroll_x = what[1]
@@ -1024,10 +1018,10 @@ class TrackEditorWidget:
     grid : Grid
     rect : pygame.Rect
     config : Dict[str, Value]
-    brush : BrushEntity
+    finger : Finger
+    fullfinger : Finger
+    spath : List[Any]
     views : Dict[str, Dict[str, Value]]
-    detail : Finger | BrushEntity
-    selection : Command
     widget_id : Any
 
     def behavior(self, ui):
@@ -1038,11 +1032,6 @@ class TrackEditorWidget:
             if ui.r_mouse_just_pressed and ui.r_active_id is None:
                 ui.r_active_id = self.widget_id
                 editor.scroll_ox = ui.mouse_pos, editor.track_scroll
-        #f ui.mouse_just_released and ui.active_id == self.widget_id:
-        #   mx, my = ui.mouse_pos
-        #   x = (mx - self.grid.x) // self.grid.w
-        #   y = (my - self.grid.y) // self.grid.h
-        #    return ("pick", (x, y))
         if ui.r_mouse_pressed and ui.r_active_id == self.widget_id:
             (mx, my), (ox, oy) = editor.scroll_ox
             editor.track_scroll = (
@@ -1053,51 +1042,45 @@ class TrackEditorWidget:
 
         ui.grab_focus(self)
 
-        selection = self.selection
-
+        finger = self.fullfinger
         if ui.focused_id == self.widget_id:
             count = None
-            if isinstance(self.detail, RootFinger):
-                if isinstance(self.detail.top, Indexer):
-                    count = self.detail.top.top.tree.length
-            elif isinstance(self.detail, Indexer):
-                count = self.detail.top.tree.length
-            if count is not None and isinstance(selection, (RangeOf, IndexOf)):
+            if isinstance(finger, SequenceFinger):
+                count = finger.expr.length
+                finger = finger.range_of(count, 0)
+            elif isinstance(finger, IndexFinger):
+                count = finger.parent.expr.length
+            elif isinstance(finger, RangeFinger):
+                count = finger.parent.expr.length
+            if count is not None:
                 if ui.keyboard_key == pygame.K_LEFT:
-                    if isinstance(selection, IndexOf):
-                        selection = RangeOf(selection.command, selection.index, selection.index)
-                    elif isinstance(selection, RangeOf):
-                        head = max(0, selection.head-1)
+                    if isinstance(finger, IndexFinger):
+                        finger = finger.parent.range_of(finger.index, finger.index)
+                    elif isinstance(finger, RangeFinger):
+                        head = max(0, finger.head-1)
                         if ui.keyboard_mod & pygame.KMOD_SHIFT:
-                            selection = RangeOf(selection.command, head, selection.tail)
+                            finger = finger.parent.range_of(head, finger.tail)
                         else:
-                            selection = RangeOf(selection.command, head, head)
-                    editor.run_command(selection)
-                    return "run", selection
-                if ui.keyboard_key == pygame.K_RIGHT:
-                    if isinstance(selection, IndexOf):
-                        selection = RangeOf(selection.command, selection.index+1, selection.index+1)
-                    elif isinstance(selection, RangeOf):
-                        head = min(count, selection.head+1)
-                        if ui.keyboard_mod & pygame.KMOD_SHIFT:
-                            selection = RangeOf(selection.command, head, selection.tail)
-                        else:
-                            selection = RangeOf(selection.command, head, head)
-                    editor.run_command(selection)
-                    return "run", selection
-                if ui.keyboard_text in note_durations:
-                    cmd = WriteSoup(selection, [
-                        NoteProto(Duration(ui.keyboard_text,0), None, [])
-                    ], [])
-                    editor.run_command(cmd)
+                            finger = finger.parent.range_of(head, head)
+                    editor.run_command(cmd := finger.to_command())
                     return "run", cmd
-                    
-                    
+                if ui.keyboard_key == pygame.K_RIGHT:
+                    if isinstance(finger, IndexFinger):
+                        finger = finger.parent.range_of(finger.index+1, finger.index+1)
+                    elif isinstance(finger, RangeFinger):
+                        head = min(count, finger.head+1)
+                        if ui.keyboard_mod & pygame.KMOD_SHIFT:
+                            finger = finger.parent.range_of(head, finger.tail)
+                        else:
+                            finger = finger.parent.range_of(head, head)
+                    editor.run_command(cmd := finger.to_command())
+                    return "run", cmd
+                if ui.keyboard_text in note_durations:
+                    finger = finger.write_sequence(Note.mk(Duration(ui.keyboard_text,0), None, {}))
+                    editor.run_command(cmd := finger.to_command())
+                    return "run", cmd
 
-        selection = self.selection
-        while isinstance(selection, (IndexOf,RangeOf,LhsOf,RhsOf)):
-            selection = selection.command
-
+        selection = ByRef(self.finger.to_command())
         k = 0
         def point_header(header, t):
             nonlocal k, output
@@ -1169,42 +1152,13 @@ class TrackEditorWidget:
                         output = "run", this
             return h
 
-        hdr = decorated_header(self.brush.header, self.brush.expr)
+        brush = self.finger.entity
+        hdr = decorated_header(brush.header, brush.expr)
         point_header(hdr, 0)
-        point_notes(self.brush.expr, 0, hdr, selection)
+        point_notes(brush.expr, 0, hdr, selection)
         return output
 
     def draw(self, ui, screen):
-        sel = self.brush.expr
-        sel_slot  = None
-        sel_start = 0
-        sel_stop  = sel.length
-        top = None
-        if isinstance(self.detail, RootFinger):
-            if isinstance(self.detail.top, Indexer):
-                sel = self.detail.top.top.tree
-                sel_start = self.detail.top.start
-                sel_stop  = self.detail.top.stop
-                if sel is empty:
-                    top = self.detail.top.top
-            if isinstance(self.detail.top, (Side,Middle)):
-                sel = self.detail.tree
-                sel_start = 0
-                sel_stop  = sel.length
-                if sel is empty:
-                    top = self.detail.top
-        elif isinstance(self.detail, Indexer):
-            sel = self.detail.top.tree
-            sel_start = self.detail.start
-            sel_stop  = self.detail.stop
-            if sel is empty:
-                top = self.detail.top.top
-        sel_par = None,None
-        if isinstance(top, Side):
-            sel_par = top.top.tree, top.side
-        if isinstance(top, Middle):
-            sel_par = top.top.tree, None
-
         k = 0
         def draw_header(header, t):
             nonlocal k
@@ -1222,15 +1176,41 @@ class TrackEditorWidget:
                 i += 1
             k += 1
             return i
-        def draw_notes(exprs, t, header):
+        def shift(name, spath):
+            if isinstance(spath, list) and len(spath) > 0 and spath[0] == name:
+                return spath[1:]
+            return None
+        def on_start(spath):
+            if isinstance(spath, list) and len(spath) == 1 and isinstance(spath[0], tuple):
+                return spath[0][0]
+        def on_stop(spath):
+            if isinstance(spath, list) and len(spath) == 1 and isinstance(spath[0], tuple):
+                return spath[0][1]
+        def on_empty(spath):
+            if is_here(spath):
+                return True
+            return isinstance(spath, list) and len(spath) == 1 and spath[0] == (0,0)
+        def is_here(spath):
+            return isinstance(spath, list) and len(spath) == 0
+        def draw_notes(exprs, t, header, spath_here):
             nonlocal k
             h = t
             if exprs == empty:
+                if is_here(spath_here) or on_empty(spath_here):
+                    g = self.grid(k - 0.1, t, k + 4 + 0.1, h)
+                    pygame.draw.rect(screen, (100, 100, 200), g, 4, 3)
                 k += 4
                 return t+1
-            sel_start_k = k
-            sel_stop_k = k
+            sel_start_k = None
+            sel_stop_k = None
+            if is_here(spath_here):
+                sel_start_k = k
             for pos, node in enumerate(exprs):
+                spath = shift(pos, spath_here)
+                if is_here(spath) or on_start(spath_here) == pos:
+                    sel_start_k = k
+                if on_stop(spath_here) == pos:
+                    sel_stop_k = k
                 if isinstance(node, Note):
                     i = t
                     D = str(node.duration) if node.duration else "*"
@@ -1262,11 +1242,11 @@ class TrackEditorWidget:
                     h = max(h,i)
                 elif isinstance(node, Tuplet):
                     s = k
-                    i = draw_notes(node.mhs, t, header)
+                    i = draw_notes(node.mhs, t, header, shift("mhs", spath))
                     e = k = max(k,s+2)
-                    if sel_par[0] is node and sel_par[1] == False:
-                        g = self.grid(s, t, k, i)
-                        pygame.draw.rect(screen, (100, 200, 200), g, 4, 3)
+                    #if is_here(spath):
+                    #    g = self.grid(s, t, k, i)
+                    #    pygame.draw.rect(screen, (100, 200, 200), g, 4, 3)
                     g=self.grid(s,i,(k),i+1)
                     pygame.draw.rect(screen, (200, 200, 200), g)
                     surf = ui.font16.render(str(node.duration) if node.duration else "*", True, (30,30,30))
@@ -1276,11 +1256,11 @@ class TrackEditorWidget:
                     k = e
                 elif isinstance(node, Fx):
                     s = k
-                    i = draw_notes(node.lhs, t, header)
+                    i = draw_notes(node.lhs, t, header, shift("lhs", spath))
                     e = k = max(k,s+2)
-                    if sel_par[0] is node and sel_par[1] == False:
-                        g = self.grid(s, t, k, i)
-                        pygame.draw.rect(screen, (100, 200, 200), g, 4, 3)
+                    #if is_here(spath):
+                    #    g = self.grid(s, t, k, i)
+                    #    pygame.draw.rect(screen, (100, 200, 200), g, 4, 3)
                     g = self.grid(s,i,(k),i+1)
                     pygame.draw.rect(screen, (100, 200, 100), g)
                     surf = ui.font16.render("/ " + " ".join(str(a) for a in node.args), True, (30,30,30))
@@ -1289,26 +1269,29 @@ class TrackEditorWidget:
                     k = s
                     if node.rhs != empty:
                         hdr = decorated_header(node.header, node.rhs)
-                        p = draw_notes(node.rhs, i+1, hdr)
+                        p = draw_notes(node.rhs, i+1, hdr, shift("rhs", spath))
                         q = draw_header(hdr, i+1)
                         h = max(h,p,q)
                     else:
                         h = max(h,i+1)
-                        if sel_par[0] is node and sel_par[1] == True:
+                        if on_empty(shift("rhs", spath)):
                             pygame.draw.rect(screen, (100, 200, 200), g, 4, 3)
                     k = max(k,e)
-                if sel is exprs and sel_start == pos+1:
+                if on_start(spath_here) == pos+1:
                     sel_start_k = k
-                if sel is exprs and sel_stop == pos+1:
+                if is_here(spath) or on_stop(spath_here) == pos+1:
                     sel_stop_k = k
-            if sel is exprs:
+            if is_here(spath_here):
+                sel_stop_k = k
+            if sel_start_k is not None and sel_stop_k is not None:
                 g = self.grid(sel_start_k - 0.1, t, sel_stop_k + 0.1, h)
                 pygame.draw.rect(screen, (100, 100, 200), g, 4, 3)
             return h
 
-        hdr = decorated_header(self.brush.header, self.brush.expr)
+        brush = self.finger.entity
+        hdr = decorated_header(brush.header, brush.expr)
         draw_header(hdr, 0)
-        draw_notes(self.brush.expr, 0, hdr)
+        draw_notes(brush.expr, 0, hdr, self.spath)
 
 def decorated_header(header, exprs):
     def decorate_header(headset, exprs):

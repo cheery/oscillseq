@@ -395,6 +395,12 @@ class Finger:
     def get_header(self):
         raise Exception(f"Cannot sequence to: {self.to_command()}")
 
+    def get_config_views(self, base):
+        return base, {}
+
+    def get_track_selection(self):
+        raise Exception(f"No track selection: {self.to_command()}")
+
     #def write_attribute(self, name, value):
     #    raise Exception(f"Cannot write attribute to: {self.to_command()}")
 
@@ -418,6 +424,9 @@ class DeepFinger(Finger):
 
     def write_declaration(self, name, declaration):
         return self.write().write_declaration(name, declaration)
+
+    def get_config_views(self, base):
+        return self.parent.get_config_views(base)
 
 @dataclass(eq=False, repr=False)
 class DocumentFinger(Finger):
@@ -560,6 +569,15 @@ class DeclarationFinger(DeepFinger):
             new_entities.sort(key=lambda e: (e.lane, e.shift))
         return DeclarationFinger(self.parent, self.declaration.reset(entities=new_entities))
 
+    def get_config_views(self, base):
+        config, views = self.parent.get_config_views(base)
+        config = config | self.declaration.properties
+        if isinstance(self.declaration, ClipDef):
+            for entity in self.declaration.entities:
+                if isinstance(entity, ViewEntity):
+                    views[entity.name] = config | entity.properties
+        return config, views
+
 @dataclass(eq=False, repr=False)
 class AttributeFinger(DeepFinger):
     name : str
@@ -618,6 +636,15 @@ class ClipFinger(DeepFinger):
             new_entities.sort(key=lambda e: (e.lane, e.shift))
         return ClipFinger(self.parent, self.clip.reset(entities=new_entities))
 
+    def get_config_views(self, base):
+        config, views = self.parent.get_config_views(base)
+        config = config | self.clip.properties
+        if isinstance(self.clip, ClipDef):
+            for entity in self.clip.entities:
+                if isinstance(entity, ViewEntity):
+                    views[entity.name] = config | entity.properties
+        return config, views
+
 @dataclass(eq=False, repr=False)
 class CoordsFinger(DeepFinger):
     shift : int | float
@@ -664,6 +691,12 @@ class CoordsFinger(DeepFinger):
             finger = self.parent.write_entity(self.entity, entity)
             return CoordsFinger(finger, self.shift, self.lane, entity)
         return super().store_expr(expr, flavor)
+
+    def get_config_views(self, base):
+        config, views = self.parent.get_config_views(base)
+        if self.entity is not None:
+            config = config | self.entity.properties
+        return config, views
 
 @dataclass(eq=False, repr=False)
 class SequenceFinger(DeepFinger):
@@ -723,6 +756,14 @@ class SequenceFinger(DeepFinger):
     def get_selection(self):
         return self.expr
 
+    def get_track_selection(self):
+        if self.flavor == "root":
+            return self.parent, []
+        else:
+            root, path = self.parent.get_track_selection()
+            path.append(self.flavor)
+            return root, path
+
 @dataclass(eq=False, repr=False)
 class IndexFinger(DeepFinger):
     index : int
@@ -732,7 +773,10 @@ class IndexFinger(DeepFinger):
         return IndexOf(self.parent.to_command(), self.index)
 
     def write(self):
-        return self.parent.store_range(self.index, self.index+1, self.expr)
+        finger = self.parent.store_range(self.index, self.index+1, self.expr)
+        if finger.expr.length == 1:
+            return finger.write()
+        return finger
 
     def store_expr(self, expr, flavor):
         if flavor == "mhs":
@@ -760,7 +804,7 @@ class IndexFinger(DeepFinger):
     def write_sequence(self, expr):
         finger = self.parent.write_sequence_range(self.index, self.index+1, expr)
         if expr.length == 1:
-            return IndexFinger(finger, self.index)
+            return IndexFinger(finger, self.index, expr)
         return RangeFinger(finger, self.index+expr.length, self.index)
 
     def get_header(self):
@@ -768,6 +812,11 @@ class IndexFinger(DeepFinger):
 
     def get_selection(self):
         return self.expr
+
+    def get_track_selection(self):
+        root, path = self.parent.get_track_selection()
+        path.append(self.index)
+        return root, path
 
 @dataclass(eq=False, repr=False)
 class RangeFinger(DeepFinger):
@@ -812,6 +861,11 @@ class RangeFinger(DeepFinger):
         for n in self.parent.expr.sequence(start, stop):
             selection = selection.insert(selection.length, n.retain(empty, empty))
         return selection
+
+    def get_track_selection(self):
+        root, path = self.parent.get_track_selection()
+        path.append(self.to_range())
+        return root, path
 
 ## COMMANDS
 @dataclass(eq=False, repr=False)
