@@ -289,7 +289,7 @@ class Synth(Object):
         return Synth(pos, name, synth, multi, type_param, params)
  
     def __pretty__(self):
-        header = format_coordinates(*self.xy) + sp + text(self.name) + sp + text(self.synth)
+        header = format_coordinates(*self.pos) + sp + text(self.name) + sp + text(self.synth)
         if self.multi:
             header += sp + text("multi")
         if self.type_param:
@@ -563,7 +563,7 @@ class DeclarationFinger(DeepFinger):
     def write_entity(self, entity, new_entity=None):
         if not isinstance(self.declaration, ClipDef):
             return super().write_entity(entity, new_entity)
-        new_entities = [e for e in self.declaration.entities if e is not entity]
+        new_entities = [e for e in self.declaration.entities if (e.shift,e.lane) != (entity.shift,entity.lane)]
         if new_entity is not None:
             new_entities.append(new_entity)
             new_entities.sort(key=lambda e: (e.lane, e.shift))
@@ -616,6 +616,16 @@ class ClipFinger(DeepFinger):
     def reapply(self, doc):
         return self.parent.reapply(doc).by_ref()
 
+    def read_attribute(self, name):
+        return AttributeFinger(self, name, self.clip.properties.get(name, Unk("none")))
+
+    def write_attribute(self, name, value):
+        properties = self.clip.properties.copy()
+        properties.pop(name, None)
+        if value != Unk("none"):
+            properties[name] = value
+        return ClipFinger(self.parent, self.clip.reset(properties=properties))
+
     def by_coords(self, shift, lane):
         entity = get_by_coords(self.clip, shift, lane)
         return CoordsFinger(self, shift, lane, entity)
@@ -630,7 +640,7 @@ class ClipFinger(DeepFinger):
         return CoordsFinger(self, entity.shift, entity.lane, entity)
 
     def write_entity(self, entity, new_entity=None):
-        new_entities = [e for e in self.clip.entities if e is not entity]
+        new_entities = [e for e in self.declaration.entities if (e.shift,e.lane) != (entity.shift,entity.lane)]
         if new_entity is not None:
             new_entities.append(new_entity)
             new_entities.sort(key=lambda e: (e.lane, e.shift))
@@ -659,6 +669,16 @@ class CoordsFinger(DeepFinger):
 
     def reapply(self, doc):
         return self.parent.reapply(doc).by_coords(self.shift, self.lane)
+
+    def read_attribute(self, name):
+        return AttributeFinger(self, name, self.entity.properties.get(name, Unk("none")))
+
+    def write_attribute(self, name, value):
+        properties = self.entity.properties.copy()
+        properties.pop(name, None)
+        if value != Unk("none"):
+            properties[name] = value
+        return CoordsFinger(self.parent, self.shift, self.lane, self.entity.reset(properties=properties))
 
     def remove(self):
         finger = self.parent.write_entity(self.entity, None)
@@ -725,6 +745,8 @@ class SequenceFinger(DeepFinger):
         raise IndexError
 
     def range_of(self, head, tail):
+        head = max(0, min(self.expr.length, head))
+        tail = max(0, min(self.expr.length, tail))
         if 0 <= head <= self.expr.length and 0 <= tail <= self.expr.length:
             return RangeFinger(self, head, tail)
         raise IndexError
@@ -1592,9 +1614,9 @@ def read_soup(header, soup, fxs, selection=None):
             gs = process(expr.group)
             add(Note.mk(expr.duration, expr.style, gs))
         elif isinstance(expr, ListletProto):
-            add(read_soup(header, expr.soup, expr.fxs))
+            add(read_soup(header, expr.soup, expr.fxs, selection))
         elif isinstance(expr, TupletProto):
-            add(Tuplet.mk(expr.duration, read_soup(header, expr.soup, expr.fxs)))
+            add(Tuplet.mk(expr.duration, read_soup(header, expr.soup, expr.fxs, selection)))
         elif isinstance(expr, Placeholder) and selection is not None:
             add(selection)
         else:

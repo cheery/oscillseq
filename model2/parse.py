@@ -95,7 +95,7 @@ grammar = r"""
     coordinates: "(" number "," number ")" -> as_tuple
 
     synths: "@" "synths" synth+ -> as_list
-    synth: coordinates identifier identifier [multi] [type_param] "{" [properties] "}"
+    synth: coordinates identifier identifier multi [type_param] "{" [properties] "}"
     multi: "multi" -> as_true
          | ()      -> as_false
     type_param: "[" identifier "]" -> as_it

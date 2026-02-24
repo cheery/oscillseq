@@ -27,7 +27,9 @@ class Pitch:
         return self.position, self.accidental
 
     def __eq__(self, other):
-        return self.to_pair() == other.to_pair()
+        if isinstance(other, Pitch):
+            return self.to_pair() == other.to_pair()
+        return False
 
     def __hash__(self):
         return hash(self.to_pair())

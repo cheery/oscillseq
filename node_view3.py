@@ -421,7 +421,7 @@ class Intros:
                 pos = view.synth_to_add[0].move((dx[0]-view.pan_x, dx[1]-view.pan_y)).center
                 pos = int(pos[0]), int(pos[1])
                 synth = view.synth_to_add[1]
-                cell = Synth(random_name(), multi=False, synth=synth, pos=pos, params={}, type_param=None)
+                cell = Synth(name=random_name(), multi=False, synth=synth, pos=pos, params={}, type_param=None)
                 view.editor.doc.synths.append(cell)
                 view.editor.transport.refresh(view.editor.proc)
                 view.editor.transport.restart_fabric()

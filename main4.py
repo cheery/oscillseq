@@ -129,6 +129,36 @@ main {
   snare:out  system:out
 """
 
+demo_seq = """
+oscillseq aqua
+
+main {
+}
+"""
+
+# demo_seq = """
+# oscillseq aqua
+# 
+# main {
+#     (0,0) %note:pitch@a% q c4, q c4, q c4, q c4 {
+#         synth=easyfm;
+#     }
+#     (0,1) @a {
+#         view=pianoroll;
+#         top=a6;
+#         bot=a1;
+#     }
+# }
+# 
+# @synths
+#   (0,0) easyfm easyfm2 multi {
+#   }
+# 
+# @connections
+#   easyfm:out system:out
+# 
+# """
+
 
 def compute_view_height(config):
     mode = unwrap(config.get('view', Unk('staves')))
@@ -182,8 +212,8 @@ class DocumentProcessing:
         return duration, height
 
     def construct(self, sb, decl, shift, key, rhythm_config):
-        assert Unk("gate") == default_rhythm_config['brush']
         bound = shift+1
+        rhythm_config = rhythm_config | decl.properties
         for i, e in enumerate(decl.entities):
             k = key + (i,)
             s = shift + e.shift
@@ -540,7 +570,7 @@ class Editor:
                 "transport-visual"))
             if what := ui.widget(Scroller(self, main_rect, main_grid, "scroller")):
                 if what[0] == "pick":
-                    com = ByRef(SearchCoords(ByName(Cont(), "main"), *what[1]))
+                    com = SearchCoords(ByName(Cont(), "main"), *what[1])
                     self.run_command(com)
                 elif what[0] == "scroll":
                     editor.scroll_x = what[1]
