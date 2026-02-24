@@ -999,6 +999,15 @@ class WriteSoup(Command):
         selection = finger.get_selection()
         expr = read_soup(header, self.soup, self.fxs, selection)
         return finger.write_sequence(expr)
+
+@dataclass(eq=False, repr=False)
+class WriteSequence(Command):
+    command : Command
+    expr : SequenceNode
+
+    def apply(self, cont, doc, editor):
+        finger = self.command.apply(cont, doc, editor)
+        return finger.write_sequence(self.expr)
  
 @dataclass(eq=False, repr=False)
 class ByCoords(Command):

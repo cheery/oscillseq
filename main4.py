@@ -1075,8 +1075,12 @@ class TrackEditorWidget:
                             finger = finger.parent.range_of(head, head)
                     editor.run_command(cmd := finger.to_command())
                     return "run", cmd
+                if ui.keyboard_key == pygame.K_UP:
+                    editor.run_command(cmd := Up(finger.to_command()))
+                    return "run", cmd
                 if ui.keyboard_text in note_durations:
                     finger = finger.write_sequence(Note.mk(Duration(ui.keyboard_text,0), None, {}))
+                    self.editor.doc = finger.writeback()
                     editor.run_command(cmd := finger.to_command())
                     return "run", cmd
 
@@ -1111,9 +1115,31 @@ class TrackEditorWidget:
                             config = self.views[view]
                             H = compute_view_height(config)
                             rect = self.grid(k,i,(k+1),i+H)
-                            pitch = point_view(config, rect, ui.mouse_pos)
                             if ui.mouse_just_pressed and rect.collidepoint(ui.mouse_pos):
-                                print(pitch)
+                                on_pianoroll, pitch = point_view(config, rect, ui.mouse_pos)
+                                group = node.group.copy()
+                                previous = group.pop(name, [])
+                                now = []
+                                if on_pianoroll:
+                                    m = int(pitch)
+                                    for n in previous:
+                                        if int(n) != m:
+                                            now.append(n)
+                                    if len(now) == len(previous):
+                                        now.append(pitch)
+                                else:
+                                    m = pitch.position
+                                    for n in previous:
+                                        p = (n if isinstance(n, music.Pitch) else music.Pitch.from_midi(int(n))).position
+                                        if p != m:
+                                            now.append(n)
+                                    if len(now) == len(previous):
+                                        now.append(pitch)
+                                now.sort(key=int)
+                                group[name] = now
+                                that = WriteSequence(this, Note.mk(node.duration, node.style, group))
+                                editor.run_command(that)
+                                output = "run", that
                             i += H
                         else:
                             rect = self.grid(k,i,(k+1),i+1)
@@ -1553,8 +1579,6 @@ def draw_view_data(screen, config, rect, data, grid):
 
 def point_view(config, rect, mouse_pos):
     mode = unwrap(config.get("view", Unk("staves")))
-    if not rect.collidepoint(mouse_pos):
-        return None
     if mode == "pianoroll":
         top = int(config.get('top', 69 + 12))
         bot = int(config.get('bot', 69 - 12))
@@ -1563,6 +1587,7 @@ def point_view(config, rect, mouse_pos):
         k = rect.height / (top - bot + 1)
         note_pos = int(round((rect.bottom - mouse_pos[1])/k)) + bot
         note_edited = music.Pitch.from_midi(note_pos)
+        return True, note_edited
     else:
         above = int(config.get('above', 0))
         count = int(config.get('count', 1))
@@ -1572,7 +1597,7 @@ def point_view(config, rect, mouse_pos):
         k = rect.height / (count + above + below)
         note_pos = int(round((oy + above*k - mouse_pos[1]) / (k / 12) + 40))
         note_edited = music.Pitch(note_pos, 0)
-    return note_edited
+        return False, note_edited
 
 @dataclass
 class TransportVisual:
