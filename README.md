@@ -145,6 +145,16 @@ And we got commands to move in the note selection:
     >               -- descends in a selection (sideways)
     eval            -- evaluates the selection. (not implemented yet)
 
+### MISCELLANEOUS USEFUL COMMANDS
+
+These control the track playback:
+
+    loop all        -- allow looping through whole track
+    loop 2          -- loop the third bar.
+    loop 2:4        -- loop between bar 2 and 4.
+    cursor 4        -- position start of playback to bar 4.
+
+
 ## SCREENSHOTS
 
  ![screenshot from timeline](doc/2026-screenshot-timeline.png)
