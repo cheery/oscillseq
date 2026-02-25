@@ -404,9 +404,15 @@ class Editor:
         self.wav_filename = os.path.abspath(
             os.path.splitext(self.filename)[0] + ".wav")
         directory = os.path.dirname(os.path.abspath(self.filename))
+        synthdef_directory = os.path.join(directory,"synthdefs")
+        # may also accept one level lower.
+        if not os.path.exists(synthdef_directory):
+            directory = os.path.dirname(directory)
+            synthdef_directory = os.path.join(directory,"synthdefs")
+
 
         self.transport = Transport(
-            synthdef_directory = os.path.join(directory,"synthdefs"))
+            synthdef_directory = synthdef_directory)
         self.transport.set_online()
         self.transport.refresh(self.proc)
         self.transport.set_fabric()

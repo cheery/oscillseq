@@ -219,6 +219,17 @@ save(easyfm2,
     roughness = unipolar,
     volume = db)
 
+@synthdef()
+def demo_kick(out=0, volume=-6, gate=1):
+    env = EnvGen.kr(envelope=Envelope.percussive(), gate=gate, done_action=2)
+    sig = SinOsc.ar(frequency=env * 600.0)
+    sig *= env
+    sig *= volume.db_to_amplitude()
+    Out.ar(bus=out, source=(sig,sig))
+save(demo_kick,
+    out = bus("ar", "out", 2),
+    volume = db)
+
 if False:
     import supriya, time, os
     if "SC_JACK_DEFAULT_INPUTS" not in os.environ:
@@ -227,9 +238,9 @@ if False:
         os.environ["SC_JACK_DEFAULT_OUTPUTS"] = "system"
     
     s = supriya.Server().boot()
-    s.add_synthdefs(easyfm)
+    s.add_synthdefs(demo_kick)
     s.sync()
-    s.add_synth(fm, gate=1)
+    s.add_synth(demo_kick, gate=1)
     time.sleep(2)
     
     s.quit()

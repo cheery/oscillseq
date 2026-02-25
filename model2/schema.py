@@ -1657,7 +1657,6 @@ RhythmConfig = Dict[str, Value]
 default_rhythm_config = {
     'beats_per_measure': 4,
     'beat_division': 4,
-    'volume': -6.0,
     'staccato': 0.25,
     'normal': 0.85,
     'tenuto': 1.00,

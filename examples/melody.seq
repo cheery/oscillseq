@@ -1,0 +1,48 @@
+oscillseq aqua
+
+main {
+  (0, 0) %% 
+    q, e, e, s, s, s, s, q / repeat 2 {
+    synth=kick;
+    brush=gate;
+  }
+  (2, 0) %% 
+    q, e, e, s, s, s, s, q / repeat 2 {
+    synth=kick;
+  }
+  (0, 1) %note:pitch@a, velocity:db% 
+    q d5, q b4, s a4, s b4, s a4, s b4, e g4, e g4, e. e4, s g4, e. e4, s b4, e. e4, s g4, e. e4, s b4 {
+    synth=fm;
+  }
+  (2, 1) %note:pitch@a, velocity:db% 
+    q d5, q b4, s a4, s b4, s a4, s b4, e g4, e g4, e. e4, s g4, e. e4, s b4, e. e4, s g4, e. e4, s b4 {
+    synth=pluck;
+  }
+  (0, 2) %note:pitch@a, velocity:db% 
+    s / repeat 16 / repeat 4 / ostinato %note:pitch% (* cs3, * b2, * d3, * b2 / repeat 3), * e3, * d3, * f3, * g3 {
+    synth=fm;
+  }
+  (0, 3) @a {
+    above=1;
+    below=1;
+    key=2;
+  }
+}
+
+@synths
+  (12, -161) kick demo_kick multi {
+    
+  }
+  (-200, -92) pluck pluck multi {
+    note=56;
+    volume=-8.75;
+  }
+  (9, 100) fm easyfm2 multi {
+    note=68;
+    volume=-11.5625;
+  }
+
+@connections
+  kick:out system:out,
+  fm:out system:out,
+  pluck:out system:out
