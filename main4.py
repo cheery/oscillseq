@@ -1304,7 +1304,7 @@ class TrackEditorWidget:
                     #    g = self.grid(s, t, k, i)
                     #    pygame.draw.rect(screen, (100, 200, 200), g, 4, 3)
                     g=self.grid(s,i,(k),i+1)
-                    pygame.draw.rect(screen, (200, 200, 200), g)
+                    pygame.draw.rect(screen, (200, 200, 200), g, 0, 4)
                     surf = ui.font16.render(str(node.duration) if node.duration else "*", True, (30,30,30))
                     rect = surf.get_rect(center=g.center)
                     screen.blit(surf, rect)
@@ -1318,7 +1318,7 @@ class TrackEditorWidget:
                     #    g = self.grid(s, t, k, i)
                     #    pygame.draw.rect(screen, (100, 200, 200), g, 4, 3)
                     g = self.grid(s,i,(k),i+1)
-                    pygame.draw.rect(screen, (100, 200, 100), g)
+                    pygame.draw.rect(screen, (100, 200, 100), g, 0, 4)
                     surf = ui.font16.render("/ " + " ".join(str(a) for a in node.args), True, (30,30,30))
                     rect = surf.get_rect(center=g.center)
                     screen.blit(surf, rect)
@@ -1626,7 +1626,8 @@ def point_view(config, rect, mouse_pos):
         ox, oy = rect.topleft
         k = rect.height / (count + above + below)
         note_pos = int(round((oy + above*k - mouse_pos[1]) / (k / 12) + 40))
-        note_edited = music.Pitch(note_pos, 0)
+        note_acc = music.accidentals(key)[note_pos % 7]
+        note_edited = music.Pitch(note_pos, note_acc)
         return False, note_edited
 
 @dataclass
