@@ -5,8 +5,6 @@ from descriptors import bus, kinds
 from fabric2 import Definitions, Fabric
 #from model import Document, Cell, from_file, stringify, reader, to_file
 from sequencer import Player, Sequencer, SequenceBuilder2
-from track_view3 import TrackView
-from view_view3 import ViewView
 from node_view3 import NodeView
 import numpy as np
 import math
