@@ -4,6 +4,7 @@ from controllers import quick_connect
 from descriptors import bus, kinds
 from fabric2 import Definitions, Fabric
 #from model import Document, Cell, from_file, stringify, reader, to_file
+from model2 import synthlang
 from sequencer import Player, Sequencer, SequenceBuilder2
 from node_view3 import NodeView
 import numpy as np
@@ -437,6 +438,7 @@ class Editor:
         self.response = ""
         self.prompt = Text("", 0, None)
         self.refresh_in = None
+        self.query_info_text = Text("", 0, None)
 
     def run_command(self, com=None):
         was_none = com is None
@@ -508,6 +510,11 @@ class Editor:
         fullfinger = self.selection.apply(None, self.doc, self)
         is_track = isinstance(fullfinger, (SequenceFinger, IndexFinger, RangeFinger))
         if self.mode == "synthdef":
+            if ui.textbox(self.query_info_text, pygame.Rect(0, 48, self.MARGIN, 32), "query-info"):
+                tx = self.query_info_text.text
+                for name in synthlang.available_libraries:
+                    if name.startswith(tx):
+                        print(synthlang.available_libraries[name])
             if ui.widget(SynthdefEditor(self, main_rect, "synthdef-editor")):
                 self.refresh_in = 0.5
         elif self.mode == "track" and is_track:
@@ -2003,8 +2010,8 @@ class SynthdefEditor:
         data = dfs.temp_data
         y = self.rect.top
 
-        start = min(dfs.temp_head, dfs.temp_tail)
-        stop  = max(dfs.temp_head, dfs.temp_tail)
+        start = min(data.length, max(0, min(dfs.temp_head, dfs.temp_tail)))
+        stop  = min(data.length, max(0, max(dfs.temp_head, dfs.temp_tail)))
         y0 = data.row(start)
         y1 = data.row(stop)
 

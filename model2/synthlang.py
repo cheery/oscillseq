@@ -17,15 +17,15 @@ synth_grammar = """
             | "+" -> plus_op
             | "-" -> minus_op
 
-    ?expr: product
+    ?expr: sum
 
-    ?product: sum
-        | product "*" sum -> multiply
-        | product "/" sum -> divide
+    ?sum: product
+        | sum "+" product -> add
+        | sum "-" product -> sub
 
-    ?sum: repeat
-        | sum "+" repeat -> add
-        | sum "-" repeat -> sub
+    ?product: repeat
+        | product "*" repeat -> multiply
+        | product "/" repeat -> divide
     
     ?repeat: ann
            | repeat "!" ann -> repeat
@@ -314,6 +314,8 @@ class Var(Expr):
         elif local or self.name in env.var:
             return Local(env, self.name)
         else:
+            if self.name not in available_libraries:
+                print(list(available_libraries.keys()))
             obj = available_libraries[self.name]
             if isinstance(obj, SemiLocal):
                 return obj.lift(env)

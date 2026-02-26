@@ -575,7 +575,7 @@ class DeclarationFinger(DeepFinger):
     def write_entity(self, entity, new_entity=None):
         if not isinstance(self.declaration, ClipDef):
             return super().write_entity(entity, new_entity)
-        new_entities = [e for e in self.declaration.entities if (e.shift,e.lane) != (entity.shift,entity.lane)]
+        new_entities = [e for e in self.declaration.entities if entity is None or (e.shift,e.lane) != (entity.shift,entity.lane)]
         if new_entity is not None:
             new_entities.append(new_entity)
             new_entities.sort(key=lambda e: (e.lane, e.shift))
