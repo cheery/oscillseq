@@ -230,6 +230,16 @@ class NodeView:
         self.editor.transport.refresh(self.editor.proc)
         self.editor.transport.restart_fabric()
 
+    def load_current(self, synth_name):
+        temp = self.editor.transport.definitions.load_synth_file_contents(synth_name)
+        if temp is None:
+            return
+        else:
+            temp = balanced.RopeSegment(temp, balanced.blank, balanced.blank)
+            self.editor.transport.definitions.temp_name = synth_name
+            self.editor.transport.definitions.temp_data = temp
+            self.editor.transport.definitions.temp_refresh()
+
     def present(self, ui):
         # SET CLIP (0, 24, WIDTH, HEIGHT-24-24)
         layouter = Layouter(self,
@@ -243,9 +253,9 @@ class NodeView:
         ui.widget(Ports(layouter))
         if ui.button("new", pygame.Rect(0, 36, 24*3, 24), "new_node"):
             self.intros = True
-        if ui.button("fresh", pygame.Rect(0, self.editor.screen_height - 24*3, 24*3, 24), "fresh_node"):
+        if ui.button("fresh", pygame.Rect(0, self.editor.screen_height - 24*12, 24*3, 24), "fresh_node"):
             self.freshen()
-
+        
         if self.selection is not None:
             cell = None
             cell_index = None
@@ -253,6 +263,8 @@ class NodeView:
                 if synth.name == self.selection:
                     cell = synth
                     cell_index = k
+                    if ui.button("load-current", pygame.Rect(0, self.editor.screen_height - 24*11, 24*3, 24), "load-current-into-memory"):
+                        self.load_current(synth.synth)
             if isinstance(cell, Synth):
                 if ui.textbox(self.label_ctl, pygame.Rect(0, 36+24*1+12, 24*6, 24*2), "label_ctl"):
                     newtext = self.label_ctl.text

@@ -33,6 +33,13 @@ class Definitions:
             traceback.print_exc()
             return False
 
+    def load_synth_file_contents(self, name):
+        filename = os.path.join(self.synthdef_directory, name)
+        if os.path.exists(filename + ".synth"):
+            with open(filename + ".synth", "r", encoding="utf-8") as fd:
+                data = fd.read()
+            return data
+
     def definition(self, name):
         if name == self.temp_name and self.temp_name is not None:
             return self.temp
