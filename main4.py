@@ -436,6 +436,7 @@ class Editor:
         self.selection = Cont()
         self.response = ""
         self.prompt = Text("", 0, None)
+        self.refresh_in = None
 
     def run_command(self, com=None):
         was_none = com is None
@@ -474,10 +475,20 @@ class Editor:
 
         while ui.running:
             dt = self.clock.tick(self.fps) / 1000.0
+            if self.refresh_in is not None:
+                self.refresh_in -= dt
+                if self.refresh_in <= 0.0:
+                    self.refresh_in = None
+                    if self.transport.definitions.temp_refresh():
+                        self.transport.refresh(self.proc)
+                        self.transport.restart_fabric()
+                    
+
             ui.process_events()
             self.screen.fill((30, 30, 30))
             ui.draw(self.screen)
             pygame.display.flip()
+
 
         self.transport.set_offline()
         self.set_midi_off()
@@ -496,7 +507,10 @@ class Editor:
 
         fullfinger = self.selection.apply(None, self.doc, self)
         is_track = isinstance(fullfinger, (SequenceFinger, IndexFinger, RangeFinger))
-        if self.mode == "track" and is_track:
+        if self.mode == "synthdef":
+            if ui.widget(SynthdefEditor(self, main_rect, "synthdef-editor")):
+                self.refresh_in = 0.5
+        elif self.mode == "track" and is_track:
             main_grid = Grid(
                 self.MARGIN - self.track_scroll[0] * self.BAR_WIDTH / 4,
                 24 - self.track_scroll[1] * self.LANE_HEIGHT, self.BAR_WIDTH / 4, self.LANE_HEIGHT)
@@ -791,10 +805,12 @@ class Editor:
             self.mode = "file"
         elif ui.tab_button(self.mode, "track", bot_grid(5, 0, 10, 1),  "track-tab", allow_focus=False):
             self.mode = "track"
-        elif ui.tab_button(self.mode, "cell", bot_grid(10, 0, 15, 1),  "cell-tab", allow_focus=False):
+        elif ui.tab_button(self.mode, "synth", bot_grid(10, 0, 15, 1),  "cell-tab", allow_focus=False):
             self.mode = "synth"
+        elif ui.tab_button(self.mode, "synthdef", bot_grid(15, 0, 20, 1),  "edit-tab", allow_focus=False):
+            self.mode = "synthdef"
         ui.label(self.response, bot_grid(0, -1, 50, 0))
-        if ui.textbox(self.prompt, bot_grid(15, 0, 50, 1), "prompt"):
+        if ui.textbox(self.prompt, bot_grid(20, 0, 50, 1), "prompt"):
             if self.prompt.return_pressed:
                 self.run_command()
 
@@ -1860,6 +1876,179 @@ def draw_diamond(screen, color, center, size):
         (center_x - half_width, center_y),   # left
     ]
     pygame.draw.polygon(screen, color, points)
+
+@dataclass
+class SynthdefEditor:
+    editor : Editor
+    rect : pygame.Rect
+    widget_id : Any
+
+    def __post_init__(self):
+        if self.editor.transport.definitions.temp_name is None:
+            self.editor.cell_view.freshen()
+
+    def behavior(self, ui):
+        text_changed = False
+
+        ui.grab_active(self)
+        ui.grab_focus(self)
+        dfs = self.editor.transport.definitions
+        shift = ui.keyboard_mod & pygame.KMOD_SHIFT
+
+        if ui.mouse_just_pressed and ui.hot_id == self.widget_id:
+            dfs.temp_head = self._pos_from_mouse(ui)
+            dfs.temp_tail = dfs.temp_head
+        
+        if ui.active_id == self.widget_id and ui.mouse_pressed and self.rect.collidepoint(ui.mouse_pos):
+            dfs.temp_head = self._pos_from_mouse(ui)
+
+        if ui.focused_id != self.widget_id:
+            return text_changed
+
+        if ui.keyboard_key == pygame.K_LEFT:
+            if dfs.temp_head > 0:
+                dfs.temp_head -= 1
+                if not shift:
+                    dfs.temp_tail = dfs.temp_head
+        elif ui.keyboard_key == pygame.K_RIGHT:
+            if dfs.temp_head < dfs.temp_data.length:
+                dfs.temp_head += 1
+                if not shift:
+                    dfs.temp_tail = dfs.temp_head
+        elif ui.keyboard_key == pygame.K_UP:
+            row = dfs.temp_data.row(dfs.temp_head)
+            if row > 0:
+                dfs.temp_head = dfs.temp_head - dfs.temp_data.rowpos(row) + dfs.temp_data.rowpos(row-1)
+                if not shift:
+                    dfs.temp_tail = dfs.temp_head
+        elif ui.keyboard_key == pygame.K_DOWN:
+            row = dfs.temp_data.row(dfs.temp_head)
+            if row < dfs.temp_data.newlines:
+                dfs.temp_head = dfs.temp_head - dfs.temp_data.rowpos(row) + dfs.temp_data.rowpos(row+1)
+                if not shift:
+                    dfs.temp_tail = dfs.temp_head
+
+        elif ui.keyboard_key == pygame.K_HOME:
+            dfs.temp_head = dfs.temp_data.rowpos(dfs.temp_data.row(dfs.temp_head))
+            if not shift:
+                dfs.temp_tail = dfs.temp_head
+        elif ui.keyboard_key == pygame.K_END:
+            row = dfs.temp_data.row(dfs.temp_head)
+            if row < dfs.temp_data.newlines:
+                dfs.temp_head = dfs.temp_data.rowpos(row + 1)
+            else:
+                dfs.temp_head = dfs.temp_data.length
+            if not shift:
+                dfs.temp_tail = dfs.temp_head
+        elif ui.keyboard_key == pygame.K_BACKSPACE:
+            start = min(dfs.temp_head, dfs.temp_tail)
+            stop  = max(dfs.temp_head, dfs.temp_tail)
+            if start > 0 and start==stop:
+                start -= 1
+            dfs.temp_data = dfs.temp_data.erase(start,stop)
+            dfs.temp_head = start
+            dfs.temp_tail = start
+            text_changed = True
+        elif ui.keyboard_key == pygame.K_DELETE:
+            start = min(dfs.temp_head, dfs.temp_tail)
+            stop  = max(dfs.temp_head, dfs.temp_tail)
+            if stop < dfs.temp_data.length and start==stop:
+                stop += 1
+            dfs.temp_data = dfs.temp_data.erase(start,stop)
+            dfs.temp_head = start
+            dfs.temp_tail = start
+            text_changed = True
+        elif ui.keyboard_key == pygame.K_RETURN:
+            start = min(dfs.temp_head, dfs.temp_tail)
+            stop  = max(dfs.temp_head, dfs.temp_tail)
+            dfs.temp_data = dfs.temp_data.erase(start,stop).insert(start, "\n")
+            dfs.temp_head = start + 1
+            dfs.temp_tail = start + 1
+            text_changed = True
+        elif ui.keyboard_text:
+            start = min(dfs.temp_head, dfs.temp_tail)
+            stop  = max(dfs.temp_head, dfs.temp_tail)
+            dfs.temp_data = dfs.temp_data.erase(start,stop).insert(start, ui.keyboard_text)
+            dfs.temp_head = start + len(ui.keyboard_text)
+            dfs.temp_tail = start + len(ui.keyboard_text)
+            text_changed = True
+        return text_changed
+
+    def _pos_from_mouse(self, ui):
+        dfs = self.editor.transport.definitions
+        data = dfs.temp_data
+        lines = "".join(data).splitlines()
+        row = (ui.mouse_pos[1] - self.rect.y) // 24 - 1
+        if 0 <= row < len(lines):
+            rp = data.rowpos(row)
+            text = lines[row]
+            mouse_x = ui.mouse_pos[0] - self.rect.x - 5
+            for i in range(len(text) + 1):
+                width = ui.font24.size(text[:i])[0]
+                if mouse_x < width:
+                    return rp + i
+            return rp + len(text)
+        return 0
+
+    def refresh_synthdef(self):
+        self.editor.transport.definitions.temp_refresh()
+
+    def draw(self, ui, screen):
+        is_focused = ui.focused_id == self.widget_id
+        bg_color = (60, 60, 60) if is_focused else (40, 40, 40)
+        pygame.draw.rect(screen, bg_color, self.rect, 0, 6)
+        pygame.draw.rect(screen, (150, 150, 150) if is_focused else (100, 100, 100), self.rect, 2, 6)
+
+        dfs = self.editor.transport.definitions
+        data = dfs.temp_data
+        y = self.rect.top
+
+        start = min(dfs.temp_head, dfs.temp_tail)
+        stop  = max(dfs.temp_head, dfs.temp_tail)
+        y0 = data.row(start)
+        y1 = data.row(stop)
+
+        for k, line in enumerate("".join(data).splitlines()):
+            y += 24
+            line_surf = ui.font24.render(line, True, (255, 255, 255))
+            z = start - data.rowpos(y0)
+            w = stop  - data.rowpos(y1)
+            if y0 == k and y1 == k:
+                start_x = self.rect.x + 5 + ui.font24.size(line[:z])[0]
+                end_x = self.rect.x + 5 + ui.font24.size(line[:w])[0]
+                sel_rect = pygame.Rect(start_x, y - 5, end_x - start_x + 2, 24)
+                pygame.draw.rect(screen, (80, 120, 180), sel_rect)
+            if y0 < k and k < y1:
+                start_x = self.rect.x + 5
+                end_x = self.rect.x + 5 + ui.font24.size(line)[0]
+                sel_rect = pygame.Rect(start_x, y - 5, end_x - start_x + 2, 24)
+                pygame.draw.rect(screen, (80, 120, 180), sel_rect)
+            if y0 == k and k < y1:
+                start_x = self.rect.x + 5 + ui.font24.size(line[:z])[0]
+                end_x = self.rect.x + 5 + ui.font24.size(line)[0]
+                sel_rect = pygame.Rect(start_x, y - 5, end_x - start_x + 2, 24)
+                pygame.draw.rect(screen, (80, 120, 180), sel_rect)
+            if y0 < k and k == y1:
+                sel_rect = pygame.Rect(start_x, y - 5, end_x - start_x + 2, 24)
+                start_x = self.rect.x + 5
+                end_x = self.rect.x + 5 + ui.font24.size(line[:w])[0]
+                pygame.draw.rect(screen, (80, 120, 180), sel_rect)
+            screen.blit(line_surf, (self.rect.x + 5, y))
+        
+#        if selection is not None and is_focused:
+#            start = min(cursor, selection)
+#            end = max(cursor, selection)
+#            
+#            start_x = self.rect.x + 5 + ui.font24.size(text[:start])[0]
+#            end_x = self.rect.x + 5 + ui.font24.size(text[:end])[0]
+#            
+#        
+#        if is_focused:
+#            cursor_x = self.rect.x + 5 + ui.font24.size(text[:cursor])[0]
+#            pygame.draw.line(screen, (255, 255, 255),
+#                           (cursor_x, self.rect.y + 5),
+#                           (cursor_x, self.rect.y + self.rect.height - 5), 2)
+
 
 if __name__ == '__main__':
     editor = Editor()

@@ -88,8 +88,8 @@ class Rope(BalancedTree):
             raise IndexError
         return RopeSegment(text, self, self)
 
-    def erase(self, pos, length):
-        if self.pos != 0 or length != 0:
+    def erase(self, start, stop):
+        if start != 0 or stop != 0:
             raise IndexError
         return self
 
@@ -102,6 +102,8 @@ class Rope(BalancedTree):
         if row != 0:
             raise IndexError
         return 0
+
+blank = Rope()
 
 @dataclass(eq=False)
 class RopeSegment(Rope):

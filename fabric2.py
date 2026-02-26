@@ -4,7 +4,7 @@ from typing import List, Dict, Set, Optional, Callable, Tuple, Any, Union, Defau
 from descriptors import bus, read_desc, Descriptor
 from supriya import synthdef
 from supriya.ugens import In, Out, LeakDC, Limiter
-from model import Cell
+from model2 import synthlang
 import supriya
 import os
 import music
@@ -18,12 +18,33 @@ class Definitions:
     def __init__(self, synthdef_directory):
         self.synthdef_directory = synthdef_directory
         self.table = {}
+        self.temp_data = None
+        self.temp_name = None
+        self.temp_head = 0
+        self.temp_tail = 0
+        self.temp = None
+
+    def temp_refresh(self):
+        try:
+            self.temp = synthlang.from_string("".join(self.temp_data), self.temp_name)
+            return True
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return False
 
     def definition(self, name):
+        if name == self.temp_name and self.temp_name is not None:
+            return self.temp
         if name in self.table:
             return self.table[name]
         filename = os.path.join(self.synthdef_directory, name)
-        self.table[name] = dfn = load_definition(filename)
+        if os.path.exists(filename + ".synth"):
+            with open(filename + ".synth", "r", encoding="utf-8") as fd:
+                data = fd.read()
+            self.table[name] = dfn = synthlang.from_string(data, name)
+        else:
+            self.table[name] = dfn = load_definition(filename)
         return dfn
 
     def descriptors(self, cells):
@@ -39,6 +60,8 @@ class Definitions:
     def list_available(self):
         for name in os.listdir(self.synthdef_directory):
             if name.endswith(".desc"):
+                yield os.path.splitext(name)[0]
+            elif name.endswith(".synth"):
                 yield os.path.splitext(name)[0]
 
 def load_definition(filename):
@@ -244,7 +267,7 @@ def topological_sort(cells, definitions, assignment):
                     mark(idx, a)
 
     ready = deque(i for i, deg in enumerate(indegree) if deg == 0)
-    sorted_order : List[Cell] = []
+    sorted_order : List[Any] = []
 
     while ready:
         current = ready.popleft()

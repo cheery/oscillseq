@@ -7,6 +7,7 @@ import itertools
 import random
 import string
 import music
+import os
 
 @dataclass
 class Object:
@@ -428,6 +429,9 @@ class DeepFinger(Finger):
     def get_config_views(self, base):
         return self.parent.get_config_views(base)
 
+    def synthdef_rename(self, old, new):
+        return self.write().synthdef_rename(old, new)
+
 @dataclass(eq=False, repr=False)
 class DocumentFinger(Finger):
     doc : Document
@@ -465,6 +469,14 @@ class DocumentFinger(Finger):
         if name is not None and declaration is not None:
             new_declarations.append(declaration)
         return DocumentFinger(self.doc.reset(declarations=new_declarations))
+
+    def synthdef_rename(self, old, new):
+        new_synths = []
+        for synth in self.doc.synths:
+            if synth.synth == old:
+                synth = synth.reset(synth=new)
+            new_synths.append(synth)
+        return DocumentFinger(self.doc.reset(synths=new_synths))
 
 def get_by_coords(clip, shift, lane):
     for entity in reversed(clip.entities):
@@ -1440,6 +1452,30 @@ class CursorTo(Command):
         finger = self.command.apply(cont, doc, editor)
         editor.transport.cursor_head = self.point
         editor.transport.cursor_tail = self.point
+        return finger
+
+@dataclass(eq=False, repr=False)
+class RenameSynthdef(Command):
+    command : Command
+    name : str
+
+    def apply(self, cont, doc, editor):
+        finger = self.command.apply(cont, doc, editor)
+        # TODO: Make things properly
+        prev_name = editor.transport.definitions.temp_name
+        editor.transport.definitions.temp_name = self.name
+        return finger.synthdef_rename(prev_name, self.name)
+
+@dataclass(eq=False, repr=False)
+class SaveSynthdef(Command):
+    command : Command
+
+    def apply(self, cont, doc, editor):
+        finger = self.command.apply(cont, doc, editor)
+        name = editor.transport.definitions.temp_name
+        text = "".join(editor.transport.definitions.temp_data)
+        with open(os.path.join("synthdefs", name + ".synth"), "w", encoding="utf-8") as fd:
+            fd.write(text)
         return finger
 
 ## ENTITIES

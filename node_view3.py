@@ -8,7 +8,11 @@ import numpy as np
 import math
 import music
 import pygame
+import balanced
 from simgui import SIMGUI, Grid, Text, Slider
+
+new_temporary = "out : ar 2 = SinOsc.ar 440 * 0.1;"
+new_temporary = balanced.RopeSegment(new_temporary, balanced.blank, balanced.blank)
 
 @dataclass
 class WirePort:
@@ -213,6 +217,19 @@ class NodeView:
         self.label_ctl = Text("", 0, None)
         self.active_params = []
 
+    def freshen(self):
+        synth_name=random_name()
+        pos = (0, 0)
+        cell = Synth(name=random_name(), multi=False, synth=synth_name, pos=pos, params={}, type_param=None)
+        self.editor.doc.synths.append(cell)
+        self.editor.transport.definitions.temp_name = synth_name
+        self.editor.transport.definitions.temp_data = new_temporary
+        self.editor.transport.definitions.temp_refresh()
+        connections = self.editor.doc.connections
+        connections.add(((cell.name, "out"), ("system", "out")))
+        self.editor.transport.refresh(self.editor.proc)
+        self.editor.transport.restart_fabric()
+
     def present(self, ui):
         # SET CLIP (0, 24, WIDTH, HEIGHT-24-24)
         layouter = Layouter(self,
@@ -226,6 +243,9 @@ class NodeView:
         ui.widget(Ports(layouter))
         if ui.button("new", pygame.Rect(0, 36, 24*3, 24), "new_node"):
             self.intros = True
+        if ui.button("fresh", pygame.Rect(0, self.editor.screen_height - 24*3, 24*3, 24), "fresh_node"):
+            self.freshen()
+
         if self.selection is not None:
             cell = None
             cell_index = None

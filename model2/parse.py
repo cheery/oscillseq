@@ -47,6 +47,8 @@ grammar = r"""
        | cmd "loop" "all" -> all_loop
        | cmd "loop" value [":" value] -> loop_range
        | cmd "cursor" value -> cursor_to
+       | cmd "synthdef" "rename" identifier -> rename_synthdef
+       | cmd "synthdef" "save" -> save_synthdef
 
     declarations: declaration+ -> as_list
     declaration: identifier "{" [entities] [properties] "}" -> clipdef
@@ -222,6 +224,12 @@ class ModelTransformer(Transformer):
 
     def cursor_to(self, cmd, head):
         return CursorTo(cmd, head)
+
+    def rename_synthdef(self, cmd, name):
+        return RenameSynthdef(cmd, name)
+
+    def save_synthdef(self, cmd):
+        return SaveSynthdef(cmd)
 
     def clipdef(self, name, entities, properties):
         return ClipDef(name, properties or {}, entities or [])
