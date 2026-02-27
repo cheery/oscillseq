@@ -169,7 +169,7 @@ def compute_view_height(config):
         above = config.get('above', 0)
         count = config.get('count', 1)
         below = config.get('below', 0)
-        return 2*(above + count + below)
+        return 3*(above + count + below)
 
 class DocumentProcessing:
     def __init__(self, doc):
@@ -1912,6 +1912,8 @@ class SynthdefEditor:
         if ui.focused_id != self.widget_id:
             return text_changed
 
+        dfs.temp_head = min(dfs.temp_data.length, max(0, dfs.temp_head))
+        dfs.temp_tail = min(dfs.temp_data.length, max(0, dfs.temp_tail))
         if ui.keyboard_key == pygame.K_LEFT:
             if dfs.temp_head > 0:
                 dfs.temp_head -= 1

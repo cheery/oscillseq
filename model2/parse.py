@@ -324,7 +324,7 @@ class ModelTransformer(Transformer):
         return True
 
     def as_false(self, *_):
-        return True
+        return False
 
     def as_none(self, *_):
         return None

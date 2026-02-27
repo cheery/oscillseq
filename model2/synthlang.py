@@ -42,6 +42,8 @@ synth_grammar = """
          | NAME     -> var
          | "-" term -> neg
          | term "." NAME -> attr
+         | "[" "]" -> list
+         | "[" expr ("," expr)* "]" -> list
 
     %import common.CNAME -> NAME
     %import common.NUMBER
@@ -214,12 +216,21 @@ available_libraries = {
     "db": ParameterSpec("db"),
     "duration": ParameterSpec("duration"),
     "trigger": ParameterSpec("trigger"),
-    "dbamp": Operator(lambda x: to(x).db_to_amplitude()),
-    "midicps": Operator(lambda x: to(x).midi_to_hz()),
+    "abs": Operator(abs),
+    "dbamp": Operator(lambda x: x.db_to_amplitude()),
+    "midicps": Operator(lambda x: x.midi_to_hz()),
+    "Envelope": Operator(ugens.Envelope),
     "adsr": Operator(ugens.Envelope.adsr),
+    "asr": Operator(ugens.Envelope.asr),
+    "perc": Operator(ugens.Envelope.percussive),
+    "linen": Operator(ugens.Envelope.linen),
+    "triangle": Operator(ugens.Envelope.triangle),
+    "envelope_from_segments": Operator(ugens.Envelope.from_segments),
     "freeself": 2,
     "gate": SemiLocal(make_gate),
 }
+
+# ['__abs__', '__add__', '__and__', '__annotations__', '__ceil__', '__class__', '__delattr__', '__dict__', '__dir__', '__doc__', '__eq__', '__floor__', '__floordiv__', '__format__', '__ge__', '__getattribute__', '__getstate__', '__graph__', '__gt__', '__hash__', '__init__', '__init_subclass__', '__invert__', '__iter__', '__le__', '__lshift__', '__lt__', '__mod__', '__module__', '__mul__', '__ne__', '__neg__', '__new__', '__or__', '__pow__', '__radd__', '__rand__', '__reduce__', '__reduce_ex__', '__repr__', '__rfloordiv__', '__rlshift__', '__rmod__', '__rmul__', '__ror__', '__rpow__', '__rrshift__', '__rshift__', '__rsub__', '__rtruediv__', '__rxor__', '__setattr__', '__sizeof__', '__str__', '__sub__', '__subclasshook__', '__synthdef__', '__truediv__', '__weakref__', '__xor__', 'absdiff', 'acos', 'am_clip', 'amplitude_to_db', 'asin', 'atan', 'atan2', 'bi_lin_rand', 'bi_rand', 'clip', 'clip2', 'cos', 'cosh', 'cubed', 'db_to_amplitude', 'difference_of_squares', 'digit_value', 'distort', 'exceeds', 'excess', 'exponential', 'exponential_rand_range', 'fill', 'fold2', 'fractional_part', 'gcd', 'hanning_window', 'hypot', 'hypotx', 'hz_to_midi', 'hz_to_octave', 'is_equal_to', 'is_not_equal_to', 'lagged', 'lcm', 'lin_rand', 'log', 'log10', 'log2', 'max', 'midi_to_hz', 'min', 'octave_to_hz', 'rand', 'rand_range', 'ratio_to_semitones', 'reciprocal', 'rectangle_window', 'ring1', 'ring2', 'ring3', 'ring4', 'round', 'round_up', 's_curve', 'scale', 'scale_negative', 'semitones_to_ratio', 'sign', 'silence', 'sin', 'sinh', 'softclip', 'sqrt', 'square_of_difference', 'square_of_sum', 'squared', 'sum3_rand', 'sum_of_squares', 'tan', 'tanh', 'through', 'transpose', 'triangle_window', 'truncate', 'unsigned_shift', 'welch_window', 'wrap2']
 
 rate_to_attr = {
     CalculationRate.SCALAR: "ir",
@@ -351,6 +362,13 @@ class ApplyK(Expr):
         kwargs[self.name] = evaluate(env, self.rhs, False)
         return callee, args, kwargs
 
+@dataclass
+class List(Expr):
+    exprs : List[Expr]
+
+    def evaluate(self, env, local):
+        return [to(evaluate(env, x, False)) for x in self.exprs]
+
 def attr(obj, name):
     if isinstance(obj, Object):
         return obj.attr(name)
@@ -431,6 +449,10 @@ class SynthLangTransformer(Transformer):
 
     def attr(self, lhs, name):
         return Attr(lhs, str(name))
+
+    @v_args(inline=False)
+    def list(self, exprs):
+        return List(exprs)
 
 parser = Lark(synth_grammar, parser="lalr", transformer=SynthLangTransformer())
 

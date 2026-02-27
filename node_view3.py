@@ -11,7 +11,7 @@ import pygame
 import balanced
 from simgui import SIMGUI, Grid, Text, Slider
 
-new_temporary = "out : ar 2 = SinOsc.ar 440 * 0.1;"
+new_temporary = "sig = SinOsc.ar 440 * 0.1;\nout : ar 2 = sig ! 2;"
 new_temporary = balanced.RopeSegment(new_temporary, balanced.blank, balanced.blank)
 
 @dataclass
