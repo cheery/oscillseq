@@ -20,6 +20,7 @@ synth_grammar = """
     ?expr: sum
 
     ?sum: product
+        | "-" sum         -> neg
         | sum "+" product -> add
         | sum "-" product -> sub
 
@@ -40,7 +41,6 @@ synth_grammar = """
     ?term: "(" expr ")"
          | NUMBER   -> number
          | NAME     -> var
-         | "-" term -> neg
          | term "." NAME -> attr
          | "[" "]" -> list
          | "[" expr ("," expr)* "]" -> list
@@ -176,8 +176,8 @@ class ParameterSpec(Object):
 
 def make_gate(env):
     assert "gate" not in env.var
-    parameter = env.builder.add_parameter(name="gate", value=1, rate=CalculationRate.KR)
-    env.par["gate"] = p = parameter
+    parameter = env.builder.add_parameter(name="gate", value=1)
+    env.par["gate"] = parameter
     return parameter
 
 @dataclass
@@ -228,9 +228,99 @@ available_libraries = {
     "envelope_from_segments": Operator(ugens.Envelope.from_segments),
     "freeself": 2,
     "gate": SemiLocal(make_gate),
-}
 
-# ['__abs__', '__add__', '__and__', '__annotations__', '__ceil__', '__class__', '__delattr__', '__dict__', '__dir__', '__doc__', '__eq__', '__floor__', '__floordiv__', '__format__', '__ge__', '__getattribute__', '__getstate__', '__graph__', '__gt__', '__hash__', '__init__', '__init_subclass__', '__invert__', '__iter__', '__le__', '__lshift__', '__lt__', '__mod__', '__module__', '__mul__', '__ne__', '__neg__', '__new__', '__or__', '__pow__', '__radd__', '__rand__', '__reduce__', '__reduce_ex__', '__repr__', '__rfloordiv__', '__rlshift__', '__rmod__', '__rmul__', '__ror__', '__rpow__', '__rrshift__', '__rshift__', '__rsub__', '__rtruediv__', '__rxor__', '__setattr__', '__sizeof__', '__str__', '__sub__', '__subclasshook__', '__synthdef__', '__truediv__', '__weakref__', '__xor__', 'absdiff', 'acos', 'am_clip', 'amplitude_to_db', 'asin', 'atan', 'atan2', 'bi_lin_rand', 'bi_rand', 'clip', 'clip2', 'cos', 'cosh', 'cubed', 'db_to_amplitude', 'difference_of_squares', 'digit_value', 'distort', 'exceeds', 'excess', 'exponential', 'exponential_rand_range', 'fill', 'fold2', 'fractional_part', 'gcd', 'hanning_window', 'hypot', 'hypotx', 'hz_to_midi', 'hz_to_octave', 'is_equal_to', 'is_not_equal_to', 'lagged', 'lcm', 'lin_rand', 'log', 'log10', 'log2', 'max', 'midi_to_hz', 'min', 'octave_to_hz', 'rand', 'rand_range', 'ratio_to_semitones', 'reciprocal', 'rectangle_window', 'ring1', 'ring2', 'ring3', 'ring4', 'round', 'round_up', 's_curve', 'scale', 'scale_negative', 'semitones_to_ratio', 'sign', 'silence', 'sin', 'sinh', 'softclip', 'sqrt', 'square_of_difference', 'square_of_sum', 'squared', 'sum3_rand', 'sum_of_squares', 'tan', 'tanh', 'through', 'transpose', 'triangle_window', 'truncate', 'unsigned_shift', 'welch_window', 'wrap2']
+    "and": Operator(lambda x, y: x & y),
+    "ceil": Operator(lambda x: x.__ceil__()),
+    "eq": Operator(lambda x, y: x.__eq__(y)),
+    "floor": Operator(lambda x: x.__floor__()),
+    "floordiv": Operator(lambda x, y: x.__floordiv__(y)),
+    "ge": Operator(lambda x, y: x.__ge__(y)),
+    "gt": Operator(lambda x, y: x.__gt__(y)),
+    "invert": Operator(lambda x: x.__invert__()),
+    "lsh": Operator(lambda x,y: x.__lshift__(y)),
+    "rsh": Operator(lambda x,y: x.__rshift__(y)),
+    "le": Operator(lambda x, y: x.__le__(y)),
+    "lt": Operator(lambda x, y: x.__lt__(y)),
+    "mod": Operator(lambda x, y: x.__mod__(y)),
+    "ne": Operator(lambda x, y: x.__ne__(y)),
+    "or": Operator(lambda x, y: x.__or__(y)),
+    "pow": Operator(lambda x, y: x.__pow__(y)),
+    "xor": Operator(lambda x, y: x.__xor__(y)),
+    "absdiff": Operator(lambda x, y: x.absdiff(y)),
+    "acos": Operator(lambda x: x.acos()),
+    "asin": Operator(lambda x: x.asin()),
+    "atan": Operator(lambda x: x.atan()),
+    "atan2": Operator(lambda x: x.atan2()),
+    "cos": Operator(lambda x: x.cos()),
+    "cosh": Operator(lambda x: x.cosh()),
+    "cubed": Operator(lambda x: x.cubed()),
+    "am_clip": Operator(lambda x, y: x.am_clip(y)),
+    "ampdb": Operator(lambda x: x.amplitude_to_db()),
+    "bi_lin_rand": Operator(lambda x: x.bi_lin_rand()),
+    "bi_rand": Operator(lambda x: x.bi_rand()),
+    "clip": Operator(lambda x, mi, ma: x.clip(mi, ma)),
+    "clip2": Operator(lambda x, m: x.clip2(m)),
+    "difference_of_squares": Operator(lambda x, y: x.difference_of_squares(y)),
+    "digit_value": Operator(lambda x: x.digit_value()),
+    "distort": Operator(lambda x: x.distort()),
+    "exceeds": Operator(lambda x, y: x.exceeds(y)),
+    "excess": Operator(lambda x, y: x.excess(y)),
+    "exponential": Operator(lambda x: x.exponential()),
+    "exponential_rand_range": Operator(lambda x,y: x.exponential_rand_range(y)),
+    "fold2": Operator(lambda x, m: x.clip2(m)),
+    "fractional_part": Operator(lambda x: x.fractional_part()),
+    "gcd": Operator(lambda x, y: x.gcd(y)),
+    "hanning_window": Operator(lambda x: x.hanning_window()),
+    "hypot": Operator(lambda x, y: x.hypot(y)),
+    "hypotx": Operator(lambda x, y: x.hypotx(y)),
+    "cpsmidi": Operator(lambda x: x.hz_to_midi()),
+    "cpsoct": Operator(lambda x: x.hz_to_octave()),
+    "is_equal_to": Operator(lambda x, y: x.is_equal_to(y)),
+    "is_not_equal_to": Operator(lambda x, y: x.is_not_equal_to(y)),
+    "lagged": Operator(lambda x, *y: x.lagged(*y)),
+    "lcm": Operator(lambda x, y: x.lcm(y)),
+    "lin_rand": Operator(lambda x: x.lin_rand()),
+    "log": Operator(lambda x: x.log()),
+    "log10": Operator(lambda x: x.log10()),
+    "log2": Operator(lambda x: x.log2()),
+    "max": Operator(lambda x, y: x.max(y)),
+    "min": Operator(lambda x, y: x.min(y)),
+    "octcps": Operator(lambda x: x.octave_to_hz()),
+    "rand": Operator(lambda x: x.rand()),
+    "rand_range": Operator(lambda x,y: x.rand_range(y)),
+    "ratiomidi": Operator(lambda x: x.ratio_to_semitones()),
+    "reciprocal": Operator(lambda x: x.reciprocal()),
+    "rectangle_window": Operator(lambda x: x.rectangle_window()),
+    "ring1": Operator(lambda x, y: x.ring1(y)),
+    "ring2": Operator(lambda x, y: x.ring2(y)),
+    "ring3": Operator(lambda x, y: x.ring3(y)),
+    "ring4": Operator(lambda x, y: x.ring4(y)),
+    "round": Operator(lambda x, y: x.round(y)),
+    "round_up": Operator(lambda x, y: x.round_up(y)),
+    "s_curve": Operator(lambda x: x.s_curve()),
+    "scale": Operator(lambda x, *y: x.scale(*y)),
+    "linlin": Operator(lambda x, *y: x.scale_negative(*y)),
+    "midiratio": Operator(lambda x: x.semitones_to_ratio()),
+    "sign": Operator(lambda x: x.sign()),
+    "silence": Operator(lambda x: x.silence()),
+    "sin": Operator(lambda x: x.sin()),
+    "sinh": Operator(lambda x: x.sinh()),
+    "softclip": Operator(lambda x: x.softclip()),
+    "sqrt": Operator(lambda x: x.sqrt()),
+    "square_of_difference": Operator(lambda x, y: x.square_of_difference(y)),
+    "square_of_sum": Operator(lambda x, y: x.square_of_sum(y)),
+    "squared": Operator(lambda x: x.squared()),
+    "sum3_rand": Operator(lambda x: x.sum3_rand()),
+    "sum_of_squares": Operator(lambda x, y: x.sum_of_squares(y)),
+    "tan": Operator(lambda x: x.tan()),
+    "tanh": Operator(lambda x: x.tanh()),
+    "through": Operator(lambda x: x.through()),
+    "triangle_window": Operator(lambda x: x.triangle_window()),
+    "truncate": Operator(lambda x, y: x.truncate(y)),
+    "unsigned_shift": Operator(lambda x, y: x.unsigned_shift(y)),
+    "welch_window": Operator(lambda x: x.welch_window()),
+    "wrap2": Operator(lambda x, y: x.wrap2(y)),
+}
 
 rate_to_attr = {
     CalculationRate.SCALAR: "ir",
