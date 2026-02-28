@@ -320,6 +320,7 @@ available_libraries = {
     "unsigned_shift": Operator(lambda x, y: x.unsigned_shift(y)),
     "welch_window": Operator(lambda x: x.welch_window()),
     "wrap2": Operator(lambda x, y: x.wrap2(y)),
+    "range": Operator(lambda x, low, high: x.scale(-1, +1, low, high)),
 }
 
 rate_to_attr = {
